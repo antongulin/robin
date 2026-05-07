@@ -102,7 +102,7 @@ function getHelpMessage() {
         "| /summary | Concise PR overview -- what changed, key files, notable patterns |",
         "| /help | Show this message |",
         "",
-        "Automatic PR review can also run when the workflow is configured for pull_request events.",
+        "Automatic PR review can run when the workflow is configured for pull_request events. By default, pushes to an existing PR are skipped; comment `/review` when you are ready for another pass.",
         "",
         "This action uses your own LLM endpoint -- no action-level quotas, no vendor lock-in.",
     ].join("\n");

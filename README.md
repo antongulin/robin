@@ -24,10 +24,12 @@ It is built for developers who want AI review without being locked into one SaaS
 
 ## Example Output
 
-The action posts a PR review summary plus inline comments when findings can be mapped to changed lines.
+The action posts a short status comment, then updates that same comment when the review finishes. The actual review is posted as a PR review summary plus inline comments when findings can be mapped to changed lines.
 
 ```md
 ## Code Review
+
+> **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Universal Code Reviewer to run again.
 
 :rotating_light: 1 High | :warning: 1 Medium | :bulb: 2 Suggestions
 
@@ -61,7 +63,7 @@ name: Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
 
@@ -93,7 +95,7 @@ Use the latest release tag for production. During early development you can use 
 
 ### 3. Open A PR Or Comment
 
-Automatic reviews run on PR open/update. Slash commands must be the first non-empty line of a PR comment. Manual trigger comments get an `eyes` reaction when the action accepts the request.
+Automatic reviews run when a PR is opened, reopened, or marked ready for review. New commits pushed to an existing PR are not reviewed automatically by default; comment `/review` after a batch of fixes when you want another pass. Slash commands must be the first non-empty line of a PR comment. Manual trigger comments get an `eyes` reaction when the action accepts the request.
 
 | Command | Result |
 | --- | --- |
@@ -104,6 +106,18 @@ Automatic reviews run on PR open/update. Slash commands must be the first non-em
 Slash commands are maintainer-only by default. The commenter must have at least `write` permission unless you change `min-command-permission`.
 
 Optional: add `.github/code-reviewer.md` to your repository to define project-specific review rules. The action reads this file from the PR base branch so pull requests cannot inject reviewer instructions.
+
+### Review Flow
+
+The default workflow is designed to avoid repeated LLM runs while a contributor is pushing fix commits:
+
+1. PR is opened, reopened, or marked ready for review.
+2. Universal Code Reviewer posts a status comment that it is reviewing.
+3. The action posts the review and updates the status comment with either `I did not find any issues` or `I found N issues`.
+4. The author pushes fixes without triggering another automatic review.
+5. A maintainer comments `/review` when the PR is ready for another pass.
+
+Manual command comments get an `eyes` reaction when accepted, so the user knows the request was picked up.
 
 ## Supported Providers
 
@@ -136,6 +150,7 @@ GitHub-hosted runners cannot reach `localhost` on your laptop. For self-hosted O
 | `max-output-tokens` | No | empty | Optional response token cap; empty uses provider/model default |
 | `llm-timeout-ms` | No | `600000` | LLM request timeout in milliseconds. Default is 10 minutes. Increase if large diffs time out. |
 | `max-comments` | No | `25` | Maximum inline comments; extra findings stay in the review body |
+| `review-on-synchronize` | No | `false` | Run automatic reviews after each new commit pushed to a PR |
 | `min-command-permission` | No | `write` | Minimum permission for slash commands: `read`, `triage`, `write`, `maintain`, or `admin` |
 | `review-instructions` | No | empty | Additional reviewer instructions appended to the built-in prompt |
 | `review-instructions-file` | No | `.github/code-reviewer.md` | File containing reviewer instructions, read from the PR base branch |
@@ -144,7 +159,20 @@ GitHub-hosted runners cannot reach `localhost` on your laptop. For self-hosted O
 
 ### Automatic Review On Every PR
 
-Use the Quick Start workflow. This is best for private repos or repos where PR authors have access to the configured secrets.
+Use the Quick Start workflow. This runs once when the PR enters review, then relies on `/review` for follow-up passes after the author pushes fixes. This avoids repeated LLM runs on every small commit.
+
+### Review On Every Commit
+
+If you intentionally want a full review after every push to a PR, add `synchronize` to the workflow trigger and opt in explicitly:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+with:
+  review-on-synchronize: "true"
+```
 
 ### Manual Review Only
 
@@ -268,7 +296,7 @@ Large diffs are truncated before being sent to the model. For best results, keep
 | `Input required and not supplied: model` | `LLM_MODEL` is missing | Add the secret or set `model` directly |
 | `Input required and not supplied: llm-base-url` | Endpoint URL is missing | Add `LLM_BASE_URL` or set `llm-base-url` directly |
 | `Empty response from LLM` | Model is missing or provider returned no content | Check model name and provider logs |
-| Status comment says the review failed | LLM endpoint, API key, model, or network problem | Open the linked Actions run and check provider configuration |
+| Status comment says the review failed | LLM endpoint, API key, model, network problem, or GitHub API rejection | Open the Actions run and check provider/action configuration |
 | `Request timed out` | LLM provider took too long to respond, usually on large diffs | Increase `llm-timeout-ms` (default 10 min = `600000`) or reduce `max-diff-size` |
 | `Resource not accessible by integration` | Workflow token missing GitHub API permissions | Add `permissions: {contents: read, pull-requests: write}` to the workflow job. See Quick Start for the exact block. |
 | `No comments appear` | Missing workflow permissions | Add `pull-requests: write` |
@@ -300,10 +328,8 @@ The action runs from `dist/index.js`, so runtime changes must be bundled before 
 ## Roadmap
 
 - Config file support with `.github/universal-code-reviewer.yml`.
-- Repository-specific review rules with `.github/code-reviewer.md`.
 - Provider presets for common endpoints.
 - Better large PR chunking by file and hunk.
-- More reliable inline comment mapping.
 - GitHub App version for one-click organization installation.
 
 ## Contributing

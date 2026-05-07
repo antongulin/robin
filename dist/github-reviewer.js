@@ -58,14 +58,32 @@ class GitHubReviewer {
             const body = this.buildReviewBody(findings, postedFindings);
             // Determine review event type
             const event = findings.high.length > 0 ? "REQUEST_CHANGES" : "COMMENT";
-            const { data: review } = await this.octokit.rest.pulls.createReview({
-                owner,
-                repo,
-                pull_number: pullNumber,
-                body,
-                event,
-                comments,
-            });
+            let review;
+            try {
+                const response = await this.octokit.rest.pulls.createReview({
+                    owner,
+                    repo,
+                    pull_number: pullNumber,
+                    body,
+                    event,
+                    comments,
+                });
+                review = response.data;
+            }
+            catch (error) {
+                if (!this.shouldRetryWithoutInlineComments(error) || comments.length === 0) {
+                    throw error;
+                }
+                core.warning("GitHub rejected one or more inline comments; posting summary review without inline comments.");
+                const response = await this.octokit.rest.pulls.createReview({
+                    owner,
+                    repo,
+                    pull_number: pullNumber,
+                    body: this.buildReviewBody(findings, new Set()),
+                    event,
+                });
+                review = response.data;
+            }
             core.info("Posted review #" + review.id + " with " + comments.length + " individual line comments");
         }
         catch (error) {
@@ -100,15 +118,15 @@ class GitHubReviewer {
                 core.warning("Could not find diff for file: " + finding.file);
                 continue;
             }
-            const position = this.mapLineToPosition(diffFile.patch || "", finding.line);
-            if (!position) {
-                core.warning("Could not map line " + finding.line + " to diff position for file: " + finding.file);
+            if (!this.isLineInNewDiff(diffFile.patch || "", finding.line)) {
+                core.warning("Could not find line " + finding.line + " in diff for file: " + finding.file);
                 continue;
             }
             const commentBody = this.formatCommentBody(finding);
             comments.push({
                 path: finding.file,
-                position,
+                line: finding.line,
+                side: "RIGHT",
                 body: commentBody,
             });
             postedFindings.add(finding);
@@ -132,6 +150,11 @@ class GitHubReviewer {
         }
         return body;
     }
+    shouldRetryWithoutInlineComments(error) {
+        const candidate = error;
+        return (candidate.status === 422 &&
+            /position|line|side|diff/i.test(candidate.message || ""));
+    }
     /**
      * Build a concise summary body. Findings are shown here ONLY if they
      * could not be mapped to individual line comments.
@@ -139,6 +162,8 @@ class GitHubReviewer {
     buildReviewBody(findings, postedFindings) {
         const parts = [];
         parts.push("## :robot: Code Review");
+        parts.push("");
+        parts.push("> **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Universal Code Reviewer to run again.");
         parts.push("");
         // Stats summary
         const statBlocks = [];
@@ -203,13 +228,12 @@ class GitHubReviewer {
         return result;
     }
     /**
-     * Map a file line number to the diff position GitHub expects.
-     * Position is the 1-based index from the first @@ hunk header.
+     * Check whether a new-file line number is present in the diff.
+     * GitHub only accepts review comments on lines included in the PR diff.
      */
-    mapLineToPosition(patch, targetLine) {
+    isLineInNewDiff(patch, targetLine) {
         if (!patch)
-            return null;
-        let position = 0;
+            return false;
         let currentLine = 0;
         let inHunk = false;
         for (const line of patch.split("\n")) {
@@ -221,23 +245,19 @@ class GitHubReviewer {
                     currentLine = parseInt(match[1], 10);
                 }
                 inHunk = true;
-                position++; // @@ line counts toward position in GitHub's diff
                 continue;
             }
             if (!inHunk) {
                 // Lines before the first hunk (shouldn't happen in patch)
                 continue;
             }
-            // "\ No newline at end of file" marker doesn't count
             if (line.startsWith("\\")) {
-                position++;
                 continue;
             }
-            position++;
             if (line.startsWith("+")) {
                 // Added line exists in the new file
                 if (currentLine === targetLine) {
-                    return position;
+                    return true;
                 }
                 currentLine++;
             }
@@ -247,12 +267,12 @@ class GitHubReviewer {
             else {
                 // Context line — exists in both old and new file
                 if (currentLine === targetLine) {
-                    return position;
+                    return true;
                 }
                 currentLine++;
             }
         }
-        return null;
+        return false;
     }
 }
 exports.GitHubReviewer = GitHubReviewer;

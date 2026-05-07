@@ -11,6 +11,7 @@ export declare class GitHubReviewer {
      */
     private buildReviewComments;
     private formatCommentBody;
+    private shouldRetryWithoutInlineComments;
     /**
      * Build a concise summary body. Findings are shown here ONLY if they
      * could not be mapped to individual line comments.
@@ -18,9 +19,9 @@ export declare class GitHubReviewer {
     private buildReviewBody;
     private formatUnpostedFinding;
     /**
-     * Map a file line number to the diff position GitHub expects.
-     * Position is the 1-based index from the first @@ hunk header.
+     * Check whether a new-file line number is present in the diff.
+     * GitHub only accepts review comments on lines included in the PR diff.
      */
-    private mapLineToPosition;
+    private isLineInNewDiff;
 }
 //# sourceMappingURL=github-reviewer.d.ts.map
