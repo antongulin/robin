@@ -72,7 +72,7 @@ For non-technical setup:
 
 ### 2. Add A Workflow Manually
 
-Create `.github/workflows/code-review.yml` with the smallest recommended wrapper:
+If you are not using an AI coding agent, create `.github/workflows/code-review.yml` with the smallest recommended wrapper:
 
 ```yaml
 name: Universal Code Reviewer
