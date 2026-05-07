@@ -20,4 +20,7 @@ Recommended workflow practices:
 - Keep workflow permissions minimal: `contents: read` and `pull-requests: write`.
 - Avoid `pull_request_target`; this action intentionally skips that event.
 - Keep slash commands maintainer-only with `min-command-permission: "write"` unless you understand the cost and privacy tradeoffs.
+- Gate `issue_comment` jobs by trusted `author_association` in workflow `if` conditions to avoid starting jobs for untrusted comments.
+- Pin third-party actions to release tags or immutable commit SHAs. Avoid `@main` for workflows that pass secrets.
+- Set a job-level `timeout-minutes` such as `15` to cap runner usage if a provider or network call hangs.
 - Prefer self-hosted runners and private model endpoints for sensitive codebases.

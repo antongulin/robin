@@ -176,15 +176,36 @@ class GitHubReviewer {
             const body = this.buildReviewBody(findings, postedFindings);
             // Determine review event type
             const event = findings.high.length > 0 ? "REQUEST_CHANGES" : "COMMENT";
-            const { data: review } = await this.octokit.rest.pulls.createReview({
-                owner,
-                repo,
-                pull_number: pullNumber,
-                body,
-                event,
-                comments,
-            });
-            core.info("Posted review #" + review.id + " with " + comments.length + " individual line comments");
+            let review;
+            let postedInlineComments = comments.length;
+            try {
+                const response = await this.octokit.rest.pulls.createReview({
+                    owner,
+                    repo,
+                    pull_number: pullNumber,
+                    body,
+                    event,
+                    comments,
+                });
+                review = response.data;
+            }
+            catch (error) {
+                if (!this.shouldRetryWithoutInlineComments(error) || comments.length === 0) {
+                    throw error;
+                }
+                core.warning("GitHub rejected one or more inline comments; posting summary review without inline comments.");
+                const response = await this.octokit.rest.pulls.createReview({
+                    owner,
+                    repo,
+                    pull_number: pullNumber,
+                    // The failed review is not created, so include every finding in the fallback body.
+                    body: this.buildReviewBody(findings, new Set()),
+                    event,
+                });
+                review = response.data;
+                postedInlineComments = 0;
+            }
+            core.info("Posted review #" + review.id + " with " + postedInlineComments + " individual line comments");
         }
         catch (error) {
             core.error("Failed to post review: " + error);
@@ -218,15 +239,15 @@ class GitHubReviewer {
                 core.warning("Could not find diff for file: " + finding.file);
                 continue;
             }
-            const position = this.mapLineToPosition(diffFile.patch || "", finding.line);
-            if (!position) {
-                core.warning("Could not map line " + finding.line + " to diff position for file: " + finding.file);
+            if (!this.isLineInNewDiff(diffFile.patch || "", finding.line)) {
+                core.warning("Could not find line " + finding.line + " in diff for file: " + finding.file);
                 continue;
             }
             const commentBody = this.formatCommentBody(finding);
             comments.push({
                 path: finding.file,
-                position,
+                line: finding.line,
+                side: "RIGHT",
                 body: commentBody,
             });
             postedFindings.add(finding);
@@ -250,6 +271,21 @@ class GitHubReviewer {
         }
         return body;
     }
+    shouldRetryWithoutInlineComments(error) {
+        const candidate = error;
+        if (candidate.status !== 422)
+            return false;
+        const details = [
+            candidate.message,
+            candidate.response?.data?.message,
+            ...(candidate.response?.data?.errors || []).flatMap((item) => [
+                item.message,
+                item.code,
+                item.field,
+            ]),
+        ].filter(Boolean).join(" ");
+        return /position|line|side|diff/i.test(details);
+    }
     /**
      * Build a concise summary body. Findings are shown here ONLY if they
      * could not be mapped to individual line comments.
@@ -257,6 +293,8 @@ class GitHubReviewer {
     buildReviewBody(findings, postedFindings) {
         const parts = [];
         parts.push("## :robot: Code Review");
+        parts.push("");
+        parts.push("> **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Universal Code Reviewer to run again.");
         parts.push("");
         // Stats summary
         const statBlocks = [];
@@ -321,13 +359,12 @@ class GitHubReviewer {
         return result;
     }
     /**
-     * Map a file line number to the diff position GitHub expects.
-     * Position is the 1-based index from the first @@ hunk header.
+     * Check whether a new-file line number is present in the diff.
+     * GitHub only accepts review comments on lines included in the PR diff.
      */
-    mapLineToPosition(patch, targetLine) {
+    isLineInNewDiff(patch, targetLine) {
         if (!patch)
-            return null;
-        let position = 0;
+            return false;
         let currentLine = 0;
         let inHunk = false;
         for (const line of patch.split("\n")) {
@@ -339,23 +376,19 @@ class GitHubReviewer {
                     currentLine = parseInt(match[1], 10);
                 }
                 inHunk = true;
-                position++; // @@ line counts toward position in GitHub's diff
                 continue;
             }
             if (!inHunk) {
                 // Lines before the first hunk (shouldn't happen in patch)
                 continue;
             }
-            // "\ No newline at end of file" marker doesn't count
             if (line.startsWith("\\")) {
-                position++;
                 continue;
             }
-            position++;
             if (line.startsWith("+")) {
                 // Added line exists in the new file
                 if (currentLine === targetLine) {
-                    return position;
+                    return true;
                 }
                 currentLine++;
             }
@@ -365,12 +398,12 @@ class GitHubReviewer {
             else {
                 // Context line — exists in both old and new file
                 if (currentLine === targetLine) {
-                    return position;
+                    return true;
                 }
                 currentLine++;
             }
         }
-        return null;
+        return false;
     }
 }
 exports.GitHubReviewer = GitHubReviewer;
@@ -529,6 +562,7 @@ async function run() {
         const token = core.getInput("github-token", { required: true });
         octokit = github.getOctokit(token);
         const minCommandPermission = core.getInput("min-command-permission") || "write";
+        const reviewOnSynchronize = core.getBooleanInput("review-on-synchronize");
         core.info(`Event: ${eventName}`);
         const owner = github.context.repo.owner;
         const repo = github.context.repo.repo;
@@ -542,6 +576,10 @@ async function run() {
             return;
         }
         if (eventName === "pull_request") {
+            if (payload.action === "synchronize" && !reviewOnSynchronize) {
+                core.info("Skipping pull_request synchronize event. Pushes to an existing PR are reviewed manually with /review unless review-on-synchronize is true.");
+                return;
+            }
             shouldRun = true;
             prNumber = payload.pull_request?.number;
         }
@@ -597,7 +635,7 @@ async function run() {
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
-        statusCommentId = await postStartedComment(octokit, owner, repo, prNumber, command, model || "not configured");
+        statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, model || "not configured");
         if (!baseUrl) {
             throw new Error("Input required and not supplied: llm-base-url");
         }
@@ -633,7 +671,7 @@ async function run() {
                 issue_number: prNumber,
                 body: reviewText,
             });
-            await updateStatusComment(octokit, owner, repo, statusCommentId, "summary");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
         }
         else {
             // Full review parsed and posted as a review
@@ -642,7 +680,7 @@ async function run() {
             core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
             const reviewer = new github_reviewer_1.GitHubReviewer(octokit, maxComments);
             await reviewer.postReview(owner, repo, prNumber, findings);
-            await updateStatusComment(octokit, owner, repo, statusCommentId, "review");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("review", findings));
             if (findings.high.length > 0 && failOnHigh) {
                 core.setFailed(`Found ${findings.high.length} high severity issue(s). Failing check.`);
             }
@@ -651,8 +689,8 @@ async function run() {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (octokit && statusCommentId && statusOwner && statusRepo) {
-            await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, "failed", message, statusCommand);
+        if (octokit && statusOwner && statusRepo && statusCommentId) {
+            await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(message, statusCommand));
         }
         core.setFailed(message);
     }
@@ -671,6 +709,70 @@ async function addEyesReaction(octokit, owner, repo, commentId) {
     catch (error) {
         core.warning(`Could not add eyes reaction to trigger comment: ${error}`);
     }
+}
+async function postStatusComment(octokit, owner, repo, issueNumber, command, model) {
+    try {
+        const { data } = await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: [
+                ":eyes: Universal Code Reviewer is reviewing this pull request.",
+                "",
+                `Mode: ${command === "summary" ? "summary" : "code review"}`,
+                `Model: ${model}`,
+            ].join("\n"),
+        });
+        return data.id;
+    }
+    catch (error) {
+        core.warning(`Could not post status comment: ${error}`);
+        return undefined;
+    }
+}
+async function updateStatusComment(octokit, owner, repo, commentId, body) {
+    if (!commentId)
+        return;
+    try {
+        await octokit.rest.issues.updateComment({
+            owner,
+            repo,
+            comment_id: commentId,
+            body,
+        });
+    }
+    catch (error) {
+        core.warning(`Could not update status comment: ${error}`);
+    }
+}
+function buildCompletedStatusBody(command, findings) {
+    if (command === "summary") {
+        return [
+            ":white_check_mark: Universal Code Reviewer finished the summary.",
+            "",
+            "When you want a full review, comment `/review`.",
+        ].join("\n");
+    }
+    const totalFindings = findings
+        ? findings.high.length + findings.medium.length + findings.low.length + findings.suggestions.length
+        : 0;
+    const result = totalFindings === 0
+        ? "I did not find any issues."
+        : `I found ${totalFindings} issue${totalFindings === 1 ? "" : "s"}.`;
+    return [
+        `:white_check_mark: Universal Code Reviewer finished the review. ${result}`,
+        "",
+        "After you push fixes, comment `/review` when you are ready for another pass.",
+    ].join("\n");
+}
+function buildFailedStatusBody(errorMessage, command) {
+    return [
+        `:warning: Universal Code Reviewer could not finish the ${command === "summary" ? "summary" : "review"}.`,
+        "",
+        `Reason: ${errorMessage}`,
+        "",
+        "No secrets are included in this comment.",
+    ].join("\n");
 }
 async function loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineInstructions, instructionsFile, baseRef) {
     const instructions = inlineInstructions.trim() ? [inlineInstructions.trim()] : [];
@@ -717,88 +819,6 @@ async function isAuthorizedCommenter(octokit, owner, repo, username, minCommandP
         core.warning(`Could not verify permissions for ${username}: ${error}`);
         return false;
     }
-}
-async function postStartedComment(octokit, owner, repo, issueNumber, command, model) {
-    try {
-        const action = command === "summary" ? "summary" : "code review";
-        const { data } = await octokit.rest.issues.createComment({
-            owner,
-            repo,
-            issue_number: issueNumber,
-            body: [
-                ":eyes: Universal Code Reviewer is working on this pull request.",
-                "",
-                `Mode: ${action}`,
-                `Model: ${model}`,
-            ].join("\n"),
-        });
-        return data.id;
-    }
-    catch (error) {
-        core.warning(`Could not post started comment: ${error}`);
-        return undefined;
-    }
-}
-async function updateStatusComment(octokit, owner, repo, commentId, status, errorMessage, attemptedCommand = "review") {
-    if (!commentId)
-        return;
-    try {
-        const result = status === "summary" ? "summary" : "review";
-        const body = status === "failed"
-            ? buildFailedStatusBody(owner, repo, errorMessage, attemptedCommand)
-            : `:white_check_mark: Universal Code Reviewer finished the ${result}.`;
-        await octokit.rest.issues.updateComment({
-            owner,
-            repo,
-            comment_id: commentId,
-            body,
-        });
-    }
-    catch (error) {
-        core.warning(`Could not update status comment: ${error}`);
-    }
-}
-function buildFailedStatusBody(owner, repo, errorMessage, attemptedCommand) {
-    const runUrl = buildRunUrl(owner, repo);
-    const reason = classifyFailure(errorMessage || "");
-    const mode = attemptedCommand === "summary" ? "summary" : "code review";
-    return [
-        ":warning: Universal Code Reviewer could not finish the " + mode + ".",
-        "",
-        `Likely reason: ${reason}`,
-        runUrl ? `Check the [GitHub Actions run](${runUrl}) for details.` : "Check the GitHub Actions run for details.",
-        "",
-        "No secrets are included in this comment.",
-    ].join("\n");
-}
-function classifyFailure(message) {
-    const lower = message.toLowerCase();
-    if (lower.includes("api key") || lower.includes("401") || lower.includes("unauthorized")) {
-        return "the LLM API key was rejected or is missing.";
-    }
-    if (lower.includes("403") || lower.includes("forbidden") || lower.includes("resource not accessible")) {
-        return "the workflow token is missing required permissions. If you see 'Resource not accessible by integration', add 'permissions: contents: read, pull-requests: write' to the workflow job.";
-    }
-    if (lower.includes("model") && (lower.includes("not found") || lower.includes("does not exist") || lower.includes("404"))) {
-        return "the configured model was not found by the provider.";
-    }
-    if (lower.includes("base-url") || lower.includes("invalid url") || lower.includes("unsupported protocol")) {
-        return "the LLM base URL is missing or invalid.";
-    }
-    if (lower.includes("connection") || lower.includes("fetch failed") || lower.includes("enotfound") || lower.includes("econnrefused")) {
-        return "the LLM endpoint could not be reached from GitHub Actions.";
-    }
-    if (lower.includes("timeout") || lower.includes("timed out")) {
-        return "the LLM request timed out.";
-    }
-    return "the LLM provider or action configuration returned an error.";
-}
-function buildRunUrl(owner, repo) {
-    const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
-    const runId = process.env.GITHUB_RUN_ID;
-    if (!runId)
-        return undefined;
-    return `${serverUrl}/${owner}/${repo}/actions/runs/${runId}`;
 }
 async function postHelpComment(octokit, payload) {
     const owner = github.context.repo.owner;
@@ -965,7 +985,8 @@ function getHelpMessage() {
         "| /summary | Concise PR overview -- what changed, key files, notable patterns |",
         "| /help | Show this message |",
         "",
-        "Automatic PR review can also run when the workflow is configured for pull_request events.",
+        "Automatic PR review can run when the workflow is configured for pull_request events. By default, pushes to an existing PR are skipped; comment `/review` when you are ready for another pass.",
+        "Slash commands are permission-checked before the LLM is called.",
         "",
         "This action uses your own LLM endpoint -- no action-level quotas, no vendor lock-in.",
     ].join("\n");

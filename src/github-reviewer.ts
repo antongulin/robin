@@ -37,17 +37,40 @@ export class GitHubReviewer {
       // Determine review event type
       const event = findings.high.length > 0 ? "REQUEST_CHANGES" : "COMMENT";
       
-      const { data: review } = await this.octokit.rest.pulls.createReview({
-        owner,
-        repo,
-        pull_number: pullNumber,
-        body,
-        event,
-        comments,
-      });
+      let review;
+      let postedInlineComments = comments.length;
+      try {
+        const response = await this.octokit.rest.pulls.createReview({
+          owner,
+          repo,
+          pull_number: pullNumber,
+          body,
+          event,
+          comments,
+        });
+        review = response.data;
+      } catch (error) {
+        if (!this.shouldRetryWithoutInlineComments(error) || comments.length === 0) {
+          throw error;
+        }
+
+        core.warning(
+          "GitHub rejected one or more inline comments; posting summary review without inline comments."
+        );
+        const response = await this.octokit.rest.pulls.createReview({
+          owner,
+          repo,
+          pull_number: pullNumber,
+          // The failed review is not created, so include every finding in the fallback body.
+          body: this.buildReviewBody(findings, new Set()),
+          event,
+        });
+        review = response.data;
+        postedInlineComments = 0;
+      }
 
       core.info(
-        "Posted review #" + review.id + " with " + comments.length + " individual line comments"
+        "Posted review #" + review.id + " with " + postedInlineComments + " individual line comments"
       );
 
     } catch (error) {
@@ -90,10 +113,9 @@ export class GitHubReviewer {
         continue;
       }
 
-      const position = this.mapLineToPosition(diffFile.patch || "", finding.line);
-      if (!position) {
+      if (!this.isLineInNewDiff(diffFile.patch || "", finding.line)) {
         core.warning(
-          "Could not map line " + finding.line + " to diff position for file: " + finding.file
+          "Could not find line " + finding.line + " in diff for file: " + finding.file
         );
         continue;
       }
@@ -102,7 +124,8 @@ export class GitHubReviewer {
 
       comments.push({
         path: finding.file,
-        position,
+        line: finding.line,
+        side: "RIGHT",
         body: commentBody,
       });
       postedFindings.add(finding);
@@ -134,6 +157,33 @@ export class GitHubReviewer {
     return body;
   }
 
+  private shouldRetryWithoutInlineComments(error: unknown): boolean {
+    const candidate = error as {
+      status?: number;
+      message?: string;
+      response?: {
+        data?: {
+          message?: string;
+          errors?: Array<{ message?: string; code?: string; field?: string }>;
+        };
+      };
+    };
+
+    if (candidate.status !== 422) return false;
+
+    const details = [
+      candidate.message,
+      candidate.response?.data?.message,
+      ...(candidate.response?.data?.errors || []).flatMap((item) => [
+        item.message,
+        item.code,
+        item.field,
+      ]),
+    ].filter(Boolean).join(" ");
+
+    return /position|line|side|diff/i.test(details);
+  }
+
   /**
    * Build a concise summary body. Findings are shown here ONLY if they
    * could not be mapped to individual line comments.
@@ -142,6 +192,10 @@ export class GitHubReviewer {
     const parts: string[] = [];
 
     parts.push("## :robot: Code Review");
+    parts.push("");
+    parts.push(
+      "> **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Universal Code Reviewer to run again."
+    );
     parts.push("");
 
     // Stats summary
@@ -218,13 +272,12 @@ export class GitHubReviewer {
   }
 
   /**
-   * Map a file line number to the diff position GitHub expects.
-   * Position is the 1-based index from the first @@ hunk header.
+   * Check whether a new-file line number is present in the diff.
+   * GitHub only accepts review comments on lines included in the PR diff.
    */
-  private mapLineToPosition(patch: string, targetLine: number): number | null {
-    if (!patch) return null;
+  private isLineInNewDiff(patch: string, targetLine: number): boolean {
+    if (!patch) return false;
 
-    let position = 0;
     let currentLine = 0;
     let inHunk = false;
 
@@ -237,7 +290,6 @@ export class GitHubReviewer {
           currentLine = parseInt(match[1], 10);
         }
         inHunk = true;
-        position++; // @@ line counts toward position in GitHub's diff
         continue;
       }
 
@@ -246,18 +298,14 @@ export class GitHubReviewer {
         continue;
       }
 
-      // "\ No newline at end of file" marker doesn't count
       if (line.startsWith("\\")) {
-        position++;
         continue;
       }
-
-      position++;
 
       if (line.startsWith("+")) {
         // Added line exists in the new file
         if (currentLine === targetLine) {
-          return position;
+          return true;
         }
         currentLine++;
       } else if (line.startsWith("-")) {
@@ -265,12 +313,12 @@ export class GitHubReviewer {
       } else {
         // Context line — exists in both old and new file
         if (currentLine === targetLine) {
-          return position;
+          return true;
         }
         currentLine++;
       }
     }
 
-    return null;
+    return false;
   }
 }

@@ -52,6 +52,10 @@ inputs:
     description: "Maximum number of inline review comments to post. Extra findings stay in the review body."
     required: false
     default: "25"
+  review-on-synchronize:
+    description: "Run automatic reviews for pull_request synchronize events, which happen after each new commit pushed to a PR. Set to true only if you want review on every push."
+    required: false
+    default: "false"
   min-command-permission:
     description: "Minimum repository permission required to run slash commands: read, triage, write, maintain, or admin."
     required: false

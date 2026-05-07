@@ -54,6 +54,7 @@ async function run() {
         const token = core.getInput("github-token", { required: true });
         octokit = github.getOctokit(token);
         const minCommandPermission = core.getInput("min-command-permission") || "write";
+        const reviewOnSynchronize = core.getBooleanInput("review-on-synchronize");
         core.info(`Event: ${eventName}`);
         const owner = github.context.repo.owner;
         const repo = github.context.repo.repo;
@@ -67,6 +68,10 @@ async function run() {
             return;
         }
         if (eventName === "pull_request") {
+            if (payload.action === "synchronize" && !reviewOnSynchronize) {
+                core.info("Skipping pull_request synchronize event. Pushes to an existing PR are reviewed manually with /review unless review-on-synchronize is true.");
+                return;
+            }
             shouldRun = true;
             prNumber = payload.pull_request?.number;
         }
@@ -122,7 +127,7 @@ async function run() {
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
-        statusCommentId = await postStartedComment(octokit, owner, repo, prNumber, command, model || "not configured");
+        statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, model || "not configured");
         if (!baseUrl) {
             throw new Error("Input required and not supplied: llm-base-url");
         }
@@ -158,7 +163,7 @@ async function run() {
                 issue_number: prNumber,
                 body: reviewText,
             });
-            await updateStatusComment(octokit, owner, repo, statusCommentId, "summary");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
         }
         else {
             // Full review parsed and posted as a review
@@ -167,7 +172,7 @@ async function run() {
             core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
             const reviewer = new github_reviewer_1.GitHubReviewer(octokit, maxComments);
             await reviewer.postReview(owner, repo, prNumber, findings);
-            await updateStatusComment(octokit, owner, repo, statusCommentId, "review");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("review", findings));
             if (findings.high.length > 0 && failOnHigh) {
                 core.setFailed(`Found ${findings.high.length} high severity issue(s). Failing check.`);
             }
@@ -176,8 +181,8 @@ async function run() {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (octokit && statusCommentId && statusOwner && statusRepo) {
-            await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, "failed", message, statusCommand);
+        if (octokit && statusOwner && statusRepo && statusCommentId) {
+            await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(message, statusCommand));
         }
         core.setFailed(message);
     }
@@ -196,6 +201,70 @@ async function addEyesReaction(octokit, owner, repo, commentId) {
     catch (error) {
         core.warning(`Could not add eyes reaction to trigger comment: ${error}`);
     }
+}
+async function postStatusComment(octokit, owner, repo, issueNumber, command, model) {
+    try {
+        const { data } = await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: [
+                ":eyes: Universal Code Reviewer is reviewing this pull request.",
+                "",
+                `Mode: ${command === "summary" ? "summary" : "code review"}`,
+                `Model: ${model}`,
+            ].join("\n"),
+        });
+        return data.id;
+    }
+    catch (error) {
+        core.warning(`Could not post status comment: ${error}`);
+        return undefined;
+    }
+}
+async function updateStatusComment(octokit, owner, repo, commentId, body) {
+    if (!commentId)
+        return;
+    try {
+        await octokit.rest.issues.updateComment({
+            owner,
+            repo,
+            comment_id: commentId,
+            body,
+        });
+    }
+    catch (error) {
+        core.warning(`Could not update status comment: ${error}`);
+    }
+}
+function buildCompletedStatusBody(command, findings) {
+    if (command === "summary") {
+        return [
+            ":white_check_mark: Universal Code Reviewer finished the summary.",
+            "",
+            "When you want a full review, comment `/review`.",
+        ].join("\n");
+    }
+    const totalFindings = findings
+        ? findings.high.length + findings.medium.length + findings.low.length + findings.suggestions.length
+        : 0;
+    const result = totalFindings === 0
+        ? "I did not find any issues."
+        : `I found ${totalFindings} issue${totalFindings === 1 ? "" : "s"}.`;
+    return [
+        `:white_check_mark: Universal Code Reviewer finished the review. ${result}`,
+        "",
+        "After you push fixes, comment `/review` when you are ready for another pass.",
+    ].join("\n");
+}
+function buildFailedStatusBody(errorMessage, command) {
+    return [
+        `:warning: Universal Code Reviewer could not finish the ${command === "summary" ? "summary" : "review"}.`,
+        "",
+        `Reason: ${errorMessage}`,
+        "",
+        "No secrets are included in this comment.",
+    ].join("\n");
 }
 async function loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineInstructions, instructionsFile, baseRef) {
     const instructions = inlineInstructions.trim() ? [inlineInstructions.trim()] : [];
@@ -242,88 +311,6 @@ async function isAuthorizedCommenter(octokit, owner, repo, username, minCommandP
         core.warning(`Could not verify permissions for ${username}: ${error}`);
         return false;
     }
-}
-async function postStartedComment(octokit, owner, repo, issueNumber, command, model) {
-    try {
-        const action = command === "summary" ? "summary" : "code review";
-        const { data } = await octokit.rest.issues.createComment({
-            owner,
-            repo,
-            issue_number: issueNumber,
-            body: [
-                ":eyes: Universal Code Reviewer is working on this pull request.",
-                "",
-                `Mode: ${action}`,
-                `Model: ${model}`,
-            ].join("\n"),
-        });
-        return data.id;
-    }
-    catch (error) {
-        core.warning(`Could not post started comment: ${error}`);
-        return undefined;
-    }
-}
-async function updateStatusComment(octokit, owner, repo, commentId, status, errorMessage, attemptedCommand = "review") {
-    if (!commentId)
-        return;
-    try {
-        const result = status === "summary" ? "summary" : "review";
-        const body = status === "failed"
-            ? buildFailedStatusBody(owner, repo, errorMessage, attemptedCommand)
-            : `:white_check_mark: Universal Code Reviewer finished the ${result}.`;
-        await octokit.rest.issues.updateComment({
-            owner,
-            repo,
-            comment_id: commentId,
-            body,
-        });
-    }
-    catch (error) {
-        core.warning(`Could not update status comment: ${error}`);
-    }
-}
-function buildFailedStatusBody(owner, repo, errorMessage, attemptedCommand) {
-    const runUrl = buildRunUrl(owner, repo);
-    const reason = classifyFailure(errorMessage || "");
-    const mode = attemptedCommand === "summary" ? "summary" : "code review";
-    return [
-        ":warning: Universal Code Reviewer could not finish the " + mode + ".",
-        "",
-        `Likely reason: ${reason}`,
-        runUrl ? `Check the [GitHub Actions run](${runUrl}) for details.` : "Check the GitHub Actions run for details.",
-        "",
-        "No secrets are included in this comment.",
-    ].join("\n");
-}
-function classifyFailure(message) {
-    const lower = message.toLowerCase();
-    if (lower.includes("api key") || lower.includes("401") || lower.includes("unauthorized")) {
-        return "the LLM API key was rejected or is missing.";
-    }
-    if (lower.includes("403") || lower.includes("forbidden") || lower.includes("resource not accessible")) {
-        return "the workflow token is missing required permissions. If you see 'Resource not accessible by integration', add 'permissions: contents: read, pull-requests: write' to the workflow job.";
-    }
-    if (lower.includes("model") && (lower.includes("not found") || lower.includes("does not exist") || lower.includes("404"))) {
-        return "the configured model was not found by the provider.";
-    }
-    if (lower.includes("base-url") || lower.includes("invalid url") || lower.includes("unsupported protocol")) {
-        return "the LLM base URL is missing or invalid.";
-    }
-    if (lower.includes("connection") || lower.includes("fetch failed") || lower.includes("enotfound") || lower.includes("econnrefused")) {
-        return "the LLM endpoint could not be reached from GitHub Actions.";
-    }
-    if (lower.includes("timeout") || lower.includes("timed out")) {
-        return "the LLM request timed out.";
-    }
-    return "the LLM provider or action configuration returned an error.";
-}
-function buildRunUrl(owner, repo) {
-    const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
-    const runId = process.env.GITHUB_RUN_ID;
-    if (!runId)
-        return undefined;
-    return `${serverUrl}/${owner}/${repo}/actions/runs/${runId}`;
 }
 async function postHelpComment(octokit, payload) {
     const owner = github.context.repo.owner;
