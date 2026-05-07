@@ -70,7 +70,7 @@ For non-technical setup:
 6. Add `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` one at a time.
 7. Do not paste API keys into workflow files or comments.
 
-### 2. Add A Workflow
+### 2. Add A Workflow Manually
 
 Create `.github/workflows/code-review.yml` with the smallest recommended wrapper:
 
