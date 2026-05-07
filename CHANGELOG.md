@@ -15,6 +15,7 @@
 - Added low-cost setup guidance, non-technical secret setup steps, and an AI-agent prompt for generating the workflow file.
 - Added stronger Universal Code Reviewer branding in status, summary, review, and inline comment bodies.
 - Tuned the default review prompt to stay balanced, project-context aware, and avoid noisy findings on generated or formatting-only changes.
+- Documented default review behavior, low-cost diff-size tradeoffs, timeout coordination, and SHA-pinning tradeoffs for the reusable workflow.
 - Updated README workflow guidance to run automatically on PR open/reopen/ready-for-review, use `/review` for follow-up passes, gate comment-triggered jobs by trusted author association, and set `timeout-minutes`.
 - Clarified that the action fetches PR diffs via GitHub API, so `actions/checkout` does not need the PR ref unless other workflow steps use local files.
 - Added parser, command, and diff line-mapping tests.

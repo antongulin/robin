@@ -92,7 +92,9 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
-Use the latest release tag for production. Avoid `@main` in workflows that pass secrets. If you need full commit-SHA pinning, use the Direct Action Workflow below and pin the action there.
+Use the latest release tag for the easiest setup. Avoid `@main` in workflows that pass secrets.
+
+Security note: tags are easier to use but technically mutable. For security-sensitive repositories that require immutable supply-chain pinning, use the Direct Action Workflow below and replace `@v0` with a full commit SHA.
 
 ### 3. Open A PR Or Comment
 
@@ -123,6 +125,15 @@ Manual command comments get an `eyes` reaction when accepted, so the user knows 
 The action reads PR diffs through the GitHub API. `actions/checkout` is not required for review correctness unless your workflow has other local build/test steps that need the PR branch.
 
 GitHub shows comments as `github-actions[bot]` because this is a GitHub Action. Universal Code Reviewer branding appears in the comment and review body.
+
+### Review Behavior
+
+Universal Code Reviewer is intentionally balanced for general-purpose projects:
+
+- Prioritizes correctness, security, reliability, data loss, and workflow safety.
+- Avoids style-only feedback and enterprise-only recommendations unless the risk is real for the repository.
+- Skips generated files, bundled files, lockfiles, and formatting-only changes unless they are stale, unsafe, or directly affect runtime behavior.
+- Prefers small concrete fixes over broad rewrites.
 
 ## Supported Providers
 
@@ -166,6 +177,8 @@ Provider choices:
 | Best quality | A stronger hosted model with the default `max-diff-size` |
 
 Small or cheap models work best with small PRs. If reviews are too shallow, use a stronger model or increase `max-diff-size`.
+
+Lowering `max-diff-size` saves tokens, but very low values can hide important parts of large changes. Start around `25000` for cheap models and increase it if reviews feel incomplete.
 
 ## Inputs
 
@@ -239,6 +252,8 @@ jobs:
           max-comments: "10"
 ```
 
+For maximum supply-chain hardening, replace `@v0` with a full commit SHA from a release commit.
+
 ### Review On Every Commit
 
 If you intentionally want a full review after every push to a PR, add `synchronize` to the wrapper trigger and opt in explicitly:
@@ -296,6 +311,8 @@ Then a maintainer comments `/review` or `/summary` on the PR.
 ### Strict Mode
 
 The snippets below show the `jobs.review` part to change. Keep the triggers, permissions, and secrets from the Quick Start workflow.
+
+If you raise `llm-timeout-ms` above the default 10 minutes, also raise the workflow job timeout. The reusable workflow job timeout is 15 minutes by default.
 
 Fail the workflow when high severity issues are found:
 
