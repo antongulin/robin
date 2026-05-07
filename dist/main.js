@@ -161,7 +161,7 @@ async function run() {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: reviewText,
+                body: ["## :robot: Universal Code Reviewer Summary", "", reviewText].join("\n"),
             });
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
         }
@@ -209,7 +209,9 @@ async function postStatusComment(octokit, owner, repo, issueNumber, command, mod
             repo,
             issue_number: issueNumber,
             body: [
-                ":eyes: Universal Code Reviewer is reviewing this pull request.",
+                "## :robot: Universal Code Reviewer",
+                "",
+                ":eyes: Reviewing this pull request.",
                 "",
                 `Mode: ${command === "summary" ? "summary" : "code review"}`,
                 `Model: ${model}`,
@@ -240,7 +242,9 @@ async function updateStatusComment(octokit, owner, repo, commentId, body) {
 function buildCompletedStatusBody(command, findings) {
     if (command === "summary") {
         return [
-            ":white_check_mark: Universal Code Reviewer finished the summary.",
+            "## :robot: Universal Code Reviewer",
+            "",
+            ":white_check_mark: Finished the summary.",
             "",
             "When you want a full review, comment `/review`.",
         ].join("\n");
@@ -252,14 +256,18 @@ function buildCompletedStatusBody(command, findings) {
         ? "I did not find any issues."
         : `I found ${totalFindings} issue${totalFindings === 1 ? "" : "s"}.`;
     return [
-        `:white_check_mark: Universal Code Reviewer finished the review. ${result}`,
+        "## :robot: Universal Code Reviewer",
+        "",
+        `:white_check_mark: Finished the review. ${result}`,
         "",
         "After you push fixes, comment `/review` when you are ready for another pass.",
     ].join("\n");
 }
 function buildFailedStatusBody(errorMessage, command) {
     return [
-        `:warning: Universal Code Reviewer could not finish the ${command === "summary" ? "summary" : "review"}.`,
+        "## :robot: Universal Code Reviewer",
+        "",
+        `:warning: Could not finish the ${command === "summary" ? "summary" : "review"}.`,
         "",
         `Reason: ${errorMessage}`,
         "",

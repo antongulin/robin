@@ -1,0 +1,95 @@
+name: Universal Code Reviewer
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-high:
+        description: "Fail the workflow when high severity issues are found."
+        required: false
+        type: boolean
+        default: false
+      max-diff-size:
+        description: "Maximum diff characters sent to the model."
+        required: false
+        type: string
+        default: "50000"
+      max-comments:
+        description: "Maximum inline review comments. Extra findings stay in the review body."
+        required: false
+        type: string
+        default: "10"
+      max-output-tokens:
+        description: "Optional maximum tokens for the LLM response. Leave empty to use the provider/model default."
+        required: false
+        type: string
+        default: ""
+      llm-timeout-ms:
+        description: "LLM request timeout in milliseconds."
+        required: false
+        type: string
+        default: "600000"
+      min-command-permission:
+        description: "Minimum repository permission required to run slash commands."
+        required: false
+        type: string
+        default: "write"
+      review-instructions-file:
+        description: "Repository file containing additional reviewer instructions."
+        required: false
+        type: string
+        default: ".github/code-reviewer.md"
+      review-instructions:
+        description: "Additional reviewer instructions appended to the built-in prompt."
+        required: false
+        type: string
+        default: ""
+      review-on-synchronize:
+        description: "Run automatic reviews after each new commit pushed to a PR."
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      LLM_API_KEY:
+        required: true
+      LLM_BASE_URL:
+        required: true
+      LLM_MODEL:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+        (
+          startsWith(github.event.comment.body, '/review') ||
+          startsWith(github.event.comment.body, '/summary') ||
+          startsWith(github.event.comment.body, '/help')
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Universal Code Reviewer
+        uses: antongulin/universal-code-reviewer@v0
+        with:
+          github-token: ${{ github.token }}
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          llm-base-url: ${{ secrets.LLM_BASE_URL }}
+          model: ${{ secrets.LLM_MODEL }}
+          fail-on-high: ${{ inputs.fail-on-high }}
+          max-diff-size: ${{ inputs.max-diff-size }}
+          max-comments: ${{ inputs.max-comments }}
+          max-output-tokens: ${{ inputs.max-output-tokens }}
+          llm-timeout-ms: ${{ inputs.llm-timeout-ms }}
+          min-command-permission: ${{ inputs.min-command-permission }}
+          review-instructions: ${{ inputs.review-instructions }}
+          review-instructions-file: ${{ inputs.review-instructions-file }}
+          review-on-synchronize: ${{ inputs.review-on-synchronize }}

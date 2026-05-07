@@ -67,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
        
-      - name: Run code review command
+      - name: Run Universal Code Reviewer command
         if: env.HAS_LLM == 'true'
         uses: ./
         with:
