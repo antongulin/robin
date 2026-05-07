@@ -54,7 +54,7 @@ async function run() {
         const token = core.getInput("github-token", { required: true });
         octokit = github.getOctokit(token);
         const minCommandPermission = core.getInput("min-command-permission") || "write";
-        const reviewOnSynchronize = core.getInput("review-on-synchronize") === "true";
+        const reviewOnSynchronize = core.getBooleanInput("review-on-synchronize");
         core.info(`Event: ${eventName}`);
         const owner = github.context.repo.owner;
         const repo = github.context.repo.repo;

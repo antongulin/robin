@@ -109,7 +109,7 @@ Automatic reviews run when a PR is opened, reopened, or marked ready for review.
 | `/summary` | Short explanation of what changed |
 | `/help` | List available commands |
 
-Slash commands are maintainer-only by default. The Quick Start workflow skips untrusted comment authors before starting the job, and the action also checks repository permission with `min-command-permission` before calling the LLM. The commenter must have at least `write` permission unless you change `min-command-permission`.
+Slash commands are trusted-user only by default. The Quick Start workflow uses `author_association` as a coarse prefilter so random PR comments do not start jobs, then the action enforces `min-command-permission` before calling the LLM. The commenter must have at least `write` permission unless you change `min-command-permission`.
 
 Optional: add `.github/code-reviewer.md` to your repository to define project-specific review rules. The action reads this file from the PR base branch so pull requests cannot inject reviewer instructions.
 

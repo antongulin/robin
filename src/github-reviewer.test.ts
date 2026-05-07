@@ -65,4 +65,22 @@ describe("GitHubReviewer", () => {
     ]);
     expect(comments[0]).not.toHaveProperty("position");
   });
+
+  it("retries inline comment coordinate errors using response details", () => {
+    const reviewer = new GitHubReviewer({} as any);
+    const shouldRetryWithoutInlineComments = (
+      reviewer as any
+    ).shouldRetryWithoutInlineComments.bind(reviewer) as (error: unknown) => boolean;
+
+    expect(shouldRetryWithoutInlineComments({
+      status: 422,
+      response: {
+        data: {
+          errors: [{ field: "comments.line", code: "invalid" }],
+        },
+      },
+    })).toBe(true);
+
+    expect(shouldRetryWithoutInlineComments({ status: 403, message: "Forbidden" })).toBe(false);
+  });
 });

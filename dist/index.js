@@ -177,6 +177,7 @@ class GitHubReviewer {
             // Determine review event type
             const event = findings.high.length > 0 ? "REQUEST_CHANGES" : "COMMENT";
             let review;
+            let postedInlineComments = comments.length;
             try {
                 const response = await this.octokit.rest.pulls.createReview({
                     owner,
@@ -197,12 +198,14 @@ class GitHubReviewer {
                     owner,
                     repo,
                     pull_number: pullNumber,
+                    // The failed review is not created, so include every finding in the fallback body.
                     body: this.buildReviewBody(findings, new Set()),
                     event,
                 });
                 review = response.data;
+                postedInlineComments = 0;
             }
-            core.info("Posted review #" + review.id + " with " + comments.length + " individual line comments");
+            core.info("Posted review #" + review.id + " with " + postedInlineComments + " individual line comments");
         }
         catch (error) {
             core.error("Failed to post review: " + error);
@@ -270,8 +273,18 @@ class GitHubReviewer {
     }
     shouldRetryWithoutInlineComments(error) {
         const candidate = error;
-        return (candidate.status === 422 &&
-            /position|line|side|diff/i.test(candidate.message || ""));
+        if (candidate.status !== 422)
+            return false;
+        const details = [
+            candidate.message,
+            candidate.response?.data?.message,
+            ...(candidate.response?.data?.errors || []).flatMap((item) => [
+                item.message,
+                item.code,
+                item.field,
+            ]),
+        ].filter(Boolean).join(" ");
+        return /position|line|side|diff/i.test(details);
     }
     /**
      * Build a concise summary body. Findings are shown here ONLY if they
@@ -549,7 +562,7 @@ async function run() {
         const token = core.getInput("github-token", { required: true });
         octokit = github.getOctokit(token);
         const minCommandPermission = core.getInput("min-command-permission") || "write";
-        const reviewOnSynchronize = core.getInput("review-on-synchronize") === "true";
+        const reviewOnSynchronize = core.getBooleanInput("review-on-synchronize");
         core.info(`Event: ${eventName}`);
         const owner = github.context.repo.owner;
         const repo = github.context.repo.repo;
