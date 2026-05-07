@@ -262,7 +262,7 @@ class GitHubReviewer {
                 : finding.severity === "low"
                     ? ":large_blue_circle: LOW"
                     : ":bulb: SUGGESTION";
-        let body = severityEmoji + "\n\n" + finding.description;
+        let body = "**Universal Code Reviewer** — " + severityEmoji + "\n\n" + finding.description;
         if (finding.recommendation) {
             body += "\n\n**Recommendation:** " + finding.recommendation;
         }
@@ -292,7 +292,7 @@ class GitHubReviewer {
      */
     buildReviewBody(findings, postedFindings) {
         const parts = [];
-        parts.push("## :robot: Code Review");
+        parts.push("## :robot: Universal Code Reviewer");
         parts.push("");
         parts.push("> **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Universal Code Reviewer to run again.");
         parts.push("");
@@ -669,7 +669,7 @@ async function run() {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: reviewText,
+                body: ["## :robot: Universal Code Reviewer Summary", "", reviewText].join("\n"),
             });
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
         }
@@ -717,7 +717,9 @@ async function postStatusComment(octokit, owner, repo, issueNumber, command, mod
             repo,
             issue_number: issueNumber,
             body: [
-                ":eyes: Universal Code Reviewer is reviewing this pull request.",
+                "## :robot: Universal Code Reviewer",
+                "",
+                ":eyes: Reviewing this pull request.",
                 "",
                 `Mode: ${command === "summary" ? "summary" : "code review"}`,
                 `Model: ${model}`,
@@ -748,7 +750,9 @@ async function updateStatusComment(octokit, owner, repo, commentId, body) {
 function buildCompletedStatusBody(command, findings) {
     if (command === "summary") {
         return [
-            ":white_check_mark: Universal Code Reviewer finished the summary.",
+            "## :robot: Universal Code Reviewer",
+            "",
+            ":white_check_mark: Finished the summary.",
             "",
             "When you want a full review, comment `/review`.",
         ].join("\n");
@@ -760,14 +764,18 @@ function buildCompletedStatusBody(command, findings) {
         ? "I did not find any issues."
         : `I found ${totalFindings} issue${totalFindings === 1 ? "" : "s"}.`;
     return [
-        `:white_check_mark: Universal Code Reviewer finished the review. ${result}`,
+        "## :robot: Universal Code Reviewer",
+        "",
+        `:white_check_mark: Finished the review. ${result}`,
         "",
         "After you push fixes, comment `/review` when you are ready for another pass.",
     ].join("\n");
 }
 function buildFailedStatusBody(errorMessage, command) {
     return [
-        `:warning: Universal Code Reviewer could not finish the ${command === "summary" ? "summary" : "review"}.`,
+        "## :robot: Universal Code Reviewer",
+        "",
+        `:warning: Could not finish the ${command === "summary" ? "summary" : "review"}.`,
         "",
         `Reason: ${errorMessage}`,
         "",
@@ -939,7 +947,10 @@ function getReviewPrompt(extraInstructions = "") {
         "",
         "Guidelines:",
         "- Every line-specific finding should use a line number that exists in the NEW side of the diff.",
+        "- Be balanced and universal: judge the change in its project context, not against enterprise-only practices unless the risk is real for this repository.",
         "- Be rigorous. Look for subtle correctness, security, data, lifecycle, and integration failures, not just style.",
+        "- Avoid overcomplicated recommendations. Prefer the smallest concrete fix that addresses the risk.",
+        "- Do not comment on generated, bundled, lockfile, or formatting-only changes unless they are stale, unsafe, or directly cause runtime behavior.",
         "- Prefer high-signal findings over noisy exhaustive feedback. Do not invent issues just to fill a severity bucket.",
         "- If a finding would not be useful to a senior maintainer, omit it.",
         "- Always acknowledge what was done well in the summary before highlighting issues.",

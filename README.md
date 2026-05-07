@@ -27,7 +27,7 @@ It is built for developers who want AI review without being locked into one SaaS
 The action posts a short status comment, then updates that same comment when the review finishes. The actual review is posted as a PR review summary plus inline comments when findings can be mapped to changed lines.
 
 ```md
-## Code Review
+## :robot: Universal Code Reviewer
 
 > **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Universal Code Reviewer to run again.
 
@@ -44,6 +44,8 @@ The change is focused and keeps the public API small. The main risk is that time
 
 ## Quick Start
 
+Using an AI coding agent? Ask: `Add Universal Code Reviewer to this repo using https://github.com/antongulin/universal-code-reviewer and configure it with repository secrets LLM_API_KEY, LLM_BASE_URL, and LLM_MODEL.`
+
 ### 1. Add Secrets
 
 In the repository where you want reviews, go to **Settings -> Secrets and variables -> Actions** and add:
@@ -54,12 +56,22 @@ In the repository where you want reviews, go to **Settings -> Secrets and variab
 | `LLM_BASE_URL` | Yes | `https://api.openai.com/v1` |
 | `LLM_MODEL` | Yes | `gpt-4o`, `llama3.2`, `deepseek-coder`, provider-specific model name |
 
+For non-technical setup:
+
+1. Open your repository on GitHub.
+2. Click **Settings**.
+3. Click **Secrets and variables**.
+4. Click **Actions**.
+5. Click **New repository secret**.
+6. Add `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` one at a time.
+7. Do not paste API keys into workflow files or comments.
+
 ### 2. Add A Workflow
 
-Create `.github/workflows/code-review.yml`:
+Create `.github/workflows/code-review.yml` with the smallest recommended wrapper:
 
 ```yaml
-name: Code Review
+name: Universal Code Reviewer
 
 on:
   pull_request:
@@ -73,28 +85,11 @@ permissions:
 
 jobs:
   review:
-    if: |
-      github.event_name == 'pull_request' ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
-        (
-          startsWith(github.event.comment.body, '/review') ||
-          startsWith(github.event.comment.body, '/summary') ||
-          startsWith(github.event.comment.body, '/help')
-        )
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Universal Code Review
-        uses: antongulin/universal-code-reviewer@v0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          llm-api-key: ${{ secrets.LLM_API_KEY }}
-          llm-base-url: ${{ secrets.LLM_BASE_URL }}
-          model: ${{ secrets.LLM_MODEL }}
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
 Use the latest release tag for production. For the strongest supply-chain protection, pin the action to a full commit SHA. Avoid `@main` in workflows that pass secrets.
@@ -127,6 +122,8 @@ Manual command comments get an `eyes` reaction when accepted, so the user knows 
 
 The action reads PR diffs through the GitHub API. `actions/checkout` is not required for review correctness unless your workflow has other local build/test steps that need the PR branch.
 
+GitHub shows comments as `github-actions[bot]` because this is a GitHub Action. Universal Code Reviewer branding appears in the comment and review body.
+
 ## Supported Providers
 
 Use any provider that exposes an OpenAI-compatible Chat Completions API.
@@ -141,6 +138,28 @@ Use any provider that exposes an OpenAI-compatible Chat Completions API.
 | Custom gateway | Your OpenAI-compatible URL | your routed model name |
 
 GitHub-hosted runners cannot reach `localhost` on your laptop. For self-hosted Ollama, use a reachable server, tunnel/private network, or a self-hosted GitHub runner.
+
+## Low-Cost AI Guide
+
+For the cheapest predictable setup, use the reusable workflow above and keep the default review flow: one automatic review when the PR enters review, then manual `/review` after fixes.
+
+Recommended settings for free or low-cost models:
+
+```yaml
+with:
+  max-comments: "10"
+  max-diff-size: "25000"
+```
+
+Provider choices:
+
+| Goal | Good starting point |
+| --- | --- |
+| Lowest hosted cost | Groq, Together AI, or another OpenAI-compatible low-cost provider |
+| Free/self-hosted | Ollama on a reachable server or self-hosted GitHub runner |
+| Best quality | A stronger hosted model with the default `max-diff-size` |
+
+Small or cheap models work best with small PRs. If reviews are too shallow, use a stronger model or increase `max-diff-size`.
 
 ## Inputs
 
@@ -169,6 +188,49 @@ GitHub-hosted runners cannot reach `localhost` on your laptop. For self-hosted O
 
 Use the Quick Start workflow. This runs once when the PR enters review, then relies on `/review` for follow-up passes after the author pushes fixes. This avoids repeated LLM runs on every small commit.
 
+### Direct Action Workflow
+
+Use this only if you want the full workflow logic in each repository instead of the reusable workflow wrapper:
+
+```yaml
+name: Universal Code Reviewer
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+        (
+          startsWith(github.event.comment.body, '/review') ||
+          startsWith(github.event.comment.body, '/summary') ||
+          startsWith(github.event.comment.body, '/help')
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: antongulin/universal-code-reviewer@v0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          llm-base-url: ${{ secrets.LLM_BASE_URL }}
+          model: ${{ secrets.LLM_MODEL }}
+          max-comments: "10"
+```
+
 ### Review On Every Commit
 
 If you intentionally want a full review after every push to a PR, add `synchronize` to the workflow trigger and opt in explicitly:
@@ -187,7 +249,7 @@ with:
 Use this for public repositories, fork-heavy projects, or teams that want to control LLM spend.
 
 ```yaml
-name: Manual Code Review
+name: Universal Code Reviewer
 
 on:
   issue_comment:

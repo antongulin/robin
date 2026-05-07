@@ -144,7 +144,7 @@ class GitHubReviewer {
                 : finding.severity === "low"
                     ? ":large_blue_circle: LOW"
                     : ":bulb: SUGGESTION";
-        let body = severityEmoji + "\n\n" + finding.description;
+        let body = "**Universal Code Reviewer** — " + severityEmoji + "\n\n" + finding.description;
         if (finding.recommendation) {
             body += "\n\n**Recommendation:** " + finding.recommendation;
         }
@@ -174,7 +174,7 @@ class GitHubReviewer {
      */
     buildReviewBody(findings, postedFindings) {
         const parts = [];
-        parts.push("## :robot: Code Review");
+        parts.push("## :robot: Universal Code Reviewer");
         parts.push("");
         parts.push("> **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Universal Code Reviewer to run again.");
         parts.push("");

@@ -10,6 +10,10 @@
 - Switched inline review comments from deprecated diff `position` coordinates to `line`/`side` comments and added a summary-only fallback when GitHub rejects inline coordinates.
 - Added clear review flow status comments that are updated with `I found N issues` or `I did not find any issues`.
 - Added `review-on-synchronize`, defaulting to `false`, so pushes to existing PRs do not trigger repeated LLM reviews unless explicitly enabled.
+- Added a reusable workflow wrapper at `.github/workflows/review.yml` so consuming repositories can use a much smaller setup file.
+- Added low-cost setup guidance, non-technical secret setup steps, and an AI-agent prompt for generating the workflow file.
+- Added stronger Universal Code Reviewer branding in status, summary, review, and inline comment bodies.
+- Tuned the default review prompt to stay balanced, project-context aware, and avoid noisy findings on generated or formatting-only changes.
 - Updated README workflow guidance to run automatically on PR open/reopen/ready-for-review, use `/review` for follow-up passes, gate comment-triggered jobs by trusted author association, and set `timeout-minutes`.
 - Clarified that the action fetches PR diffs via GitHub API, so `actions/checkout` does not need the PR ref unless other workflow steps use local files.
 - Added parser, command, and diff line-mapping tests.
