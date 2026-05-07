@@ -78,7 +78,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Universal Code Reviewer
-        uses: antongulin/universal-code-reviewer@v0
+        uses: antongulin/universal-code-reviewer@main
         with:
           github-token: ${{ github.token }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}
