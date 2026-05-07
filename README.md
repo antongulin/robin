@@ -75,12 +75,18 @@ jobs:
   review:
     if: |
       github.event_name == 'pull_request' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (
-        startsWith(github.event.comment.body, '/review') ||
-        startsWith(github.event.comment.body, '/summary') ||
-        startsWith(github.event.comment.body, '/help')
-      ))
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+        (
+          startsWith(github.event.comment.body, '/review') ||
+          startsWith(github.event.comment.body, '/summary') ||
+          startsWith(github.event.comment.body, '/help')
+        )
+      )
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Universal Code Review
         uses: antongulin/universal-code-reviewer@v0
@@ -91,7 +97,7 @@ jobs:
           model: ${{ secrets.LLM_MODEL }}
 ```
 
-Use the latest release tag for production. During early development you can use `@main`, but pinned release tags are safer.
+Use the latest release tag for production. For the strongest supply-chain protection, pin the action to a full commit SHA. Avoid `@main` in workflows that pass secrets.
 
 ### 3. Open A PR Or Comment
 
@@ -103,7 +109,7 @@ Automatic reviews run when a PR is opened, reopened, or marked ready for review.
 | `/summary` | Short explanation of what changed |
 | `/help` | List available commands |
 
-Slash commands are maintainer-only by default. The commenter must have at least `write` permission unless you change `min-command-permission`.
+Slash commands are maintainer-only by default. The Quick Start workflow skips untrusted comment authors before starting the job, and the action also checks repository permission with `min-command-permission` before calling the LLM. The commenter must have at least `write` permission unless you change `min-command-permission`.
 
 Optional: add `.github/code-reviewer.md` to your repository to define project-specific review rules. The action reads this file from the PR base branch so pull requests cannot inject reviewer instructions.
 
@@ -118,6 +124,8 @@ The default workflow is designed to avoid repeated LLM runs while a contributor 
 5. A maintainer comments `/review` when the PR is ready for another pass.
 
 Manual command comments get an `eyes` reaction when accepted, so the user knows the request was picked up.
+
+The action reads PR diffs through the GitHub API. `actions/checkout` is not required for review correctness unless your workflow has other local build/test steps that need the PR branch.
 
 ## Supported Providers
 
@@ -192,12 +200,15 @@ permissions:
 jobs:
   review:
     if: |
-      github.event.issue.pull_request && (
+      github.event.issue.pull_request &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      (
         startsWith(github.event.comment.body, '/review') ||
         startsWith(github.event.comment.body, '/summary') ||
         startsWith(github.event.comment.body, '/help')
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: antongulin/universal-code-reviewer@v0
         with:
