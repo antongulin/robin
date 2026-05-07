@@ -44,30 +44,10 @@ The change is focused and keeps the public API small. The main risk is that time
 
 ## Quick Start
 
-Using an AI coding agent or terminal? After adding secrets in step 1, copy/paste this as the step 2 workflow setup:
+Using an AI coding agent? After adding secrets in step 1, copy/paste this prompt:
 
 ```bash
-mkdir -p .github/workflows && cat > .github/workflows/code-review.yml <<'YAML'
-name: Universal Code Reviewer
-
-on:
-  pull_request:
-    types: [opened, reopened, ready_for_review]
-  issue_comment:
-    types: [created]
-
-permissions:
-  contents: read
-  pull-requests: write
-
-jobs:
-  review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
-    secrets:
-      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
-      LLM_MODEL: ${{ secrets.LLM_MODEL }}
-YAML
+Add Universal Code Reviewer to this repository using https://github.com/antongulin/universal-code-reviewer. Create .github/workflows/code-review.yml with the reusable workflow setup. Use repository secrets LLM_API_KEY, LLM_BASE_URL, and LLM_MODEL. Do not use pull_request_target or synchronize.
 ```
 
 ### 1. Add Secrets
