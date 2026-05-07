@@ -6,7 +6,7 @@ No hosted review bot. No vendor lock-in. Bring your own key and run reviews as a
 
 [![Self-Test](https://github.com/antongulin/universal-code-reviewer/actions/workflows/self-test.yml/badge.svg)](https://github.com/antongulin/universal-code-reviewer/actions/workflows/self-test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node 20](https://img.shields.io/badge/runtime-node20-brightgreen.svg)](action.yml)
+[![Node 24](https://img.shields.io/badge/runtime-node24-brightgreen.svg)](action.yml)
 
 ## What It Does
 
@@ -92,7 +92,7 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
-Use the latest release tag for production. For the strongest supply-chain protection, pin the action to a full commit SHA. Avoid `@main` in workflows that pass secrets.
+Use the latest release tag for production. Avoid `@main` in workflows that pass secrets. If you need full commit-SHA pinning, use the Direct Action Workflow below and pin the action there.
 
 ### 3. Open A PR Or Comment
 
@@ -143,12 +143,18 @@ GitHub-hosted runners cannot reach `localhost` on your laptop. For self-hosted O
 
 For the cheapest predictable setup, use the reusable workflow above and keep the default review flow: one automatic review when the PR enters review, then manual `/review` after fixes.
 
-Recommended settings for free or low-cost models:
+The reusable workflow already defaults to `max-comments: "10"`. If you use a free or very cheap model, add `with` to the Quick Start job to reduce the diff size:
 
 ```yaml
-with:
-  max-comments: "10"
-  max-diff-size: "25000"
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    with:
+      max-diff-size: "25000"
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
 Provider choices:
@@ -162,6 +168,8 @@ Provider choices:
 Small or cheap models work best with small PRs. If reviews are too shallow, use a stronger model or increase `max-diff-size`.
 
 ## Inputs
+
+These inputs are available when using the direct action workflow. The reusable workflow exposes the common cost and behavior controls with the same names: `fail-on-high`, `max-diff-size`, `max-comments`, `max-output-tokens`, `llm-timeout-ms`, `min-command-permission`, `review-instructions`, `review-instructions-file`, and `review-on-synchronize`.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -233,15 +241,30 @@ jobs:
 
 ### Review On Every Commit
 
-If you intentionally want a full review after every push to a PR, add `synchronize` to the workflow trigger and opt in explicitly:
+If you intentionally want a full review after every push to a PR, add `synchronize` to the wrapper trigger and opt in explicitly:
 
 ```yaml
+name: Universal Code Reviewer
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
 
-with:
-  review-on-synchronize: "true"
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    with:
+      review-on-synchronize: true
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
 ### Manual Review Only
@@ -261,34 +284,27 @@ permissions:
 
 jobs:
   review:
-    if: |
-      github.event.issue.pull_request &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
-      (
-        startsWith(github.event.comment.body, '/review') ||
-        startsWith(github.event.comment.body, '/summary') ||
-        startsWith(github.event.comment.body, '/help')
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: antongulin/universal-code-reviewer@v0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          llm-api-key: ${{ secrets.LLM_API_KEY }}
-          llm-base-url: ${{ secrets.LLM_BASE_URL }}
-          model: ${{ secrets.LLM_MODEL }}
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
 Then a maintainer comments `/review` or `/summary` on the PR.
 
 ### Strict Mode
 
+The snippets below show the `jobs.review` part to change. Keep the triggers, permissions, and secrets from the Quick Start workflow.
+
 Fail the workflow when high severity issues are found:
 
 ```yaml
-with:
-  fail-on-high: "true"
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    with:
+      fail-on-high: true
 ```
 
 ### Let Strong Models Use Their Default Output Budget
@@ -296,8 +312,11 @@ with:
 By default the action does not set `max_tokens`, so stronger models can use their provider default output budget. If you want a hard cap, set it explicitly:
 
 ```yaml
-with:
-  max-output-tokens: "12000"
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    with:
+      max-output-tokens: "12000"
 ```
 
 ### Reduce Inline Noise
@@ -305,8 +324,11 @@ with:
 Keep inline comments focused and put extra findings in the review body:
 
 ```yaml
-with:
-  max-comments: "10"
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    with:
+      max-comments: "10"
 ```
 
 ### Customize The Reviewer
@@ -325,9 +347,12 @@ Add `.github/code-reviewer.md` to your repository:
 Or pass instructions directly:
 
 ```yaml
-with:
-  review-instructions: |
-    Focus on API compatibility and database migration safety.
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    with:
+      review-instructions: |
+        Focus on API compatibility and database migration safety.
 ```
 
 ## Security And Privacy

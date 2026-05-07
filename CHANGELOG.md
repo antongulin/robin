@@ -11,6 +11,7 @@
 - Added clear review flow status comments that are updated with `I found N issues` or `I did not find any issues`.
 - Added `review-on-synchronize`, defaulting to `false`, so pushes to existing PRs do not trigger repeated LLM reviews unless explicitly enabled.
 - Added a reusable workflow wrapper at `.github/workflows/review.yml` so consuming repositories can use a much smaller setup file.
+- Exposed common cost and behavior controls through the reusable workflow.
 - Added low-cost setup guidance, non-technical secret setup steps, and an AI-agent prompt for generating the workflow file.
 - Added stronger Universal Code Reviewer branding in status, summary, review, and inline comment bodies.
 - Tuned the default review prompt to stay balanced, project-context aware, and avoid noisy findings on generated or formatting-only changes.

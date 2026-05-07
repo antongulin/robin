@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: "10"
+      max-output-tokens:
+        description: "Optional maximum tokens for the LLM response. Leave empty to use the provider/model default."
+        required: false
+        type: string
+        default: ""
       llm-timeout-ms:
         description: "LLM request timeout in milliseconds."
         required: false
@@ -33,6 +38,11 @@ on:
         required: false
         type: string
         default: ".github/code-reviewer.md"
+      review-instructions:
+        description: "Additional reviewer instructions appended to the built-in prompt."
+        required: false
+        type: string
+        default: ""
       review-on-synchronize:
         description: "Run automatic reviews after each new commit pushed to a PR."
         required: false
@@ -77,7 +87,9 @@ jobs:
           fail-on-high: ${{ inputs.fail-on-high }}
           max-diff-size: ${{ inputs.max-diff-size }}
           max-comments: ${{ inputs.max-comments }}
+          max-output-tokens: ${{ inputs.max-output-tokens }}
           llm-timeout-ms: ${{ inputs.llm-timeout-ms }}
           min-command-permission: ${{ inputs.min-command-permission }}
+          review-instructions: ${{ inputs.review-instructions }}
           review-instructions-file: ${{ inputs.review-instructions-file }}
           review-on-synchronize: ${{ inputs.review-on-synchronize }}
