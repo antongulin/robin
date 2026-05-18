@@ -89,7 +89,7 @@ permissions:
 
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
@@ -97,8 +97,6 @@ jobs:
 ```
 
 Use the latest release tag for the easiest setup. Avoid `@main` in workflows that pass secrets.
-
-Security note: tags are easier to use but technically mutable. For security-sensitive repositories that require immutable supply-chain pinning, use the Direct Action Workflow below and replace `@v0` with a full commit SHA.
 
 ### 3. Open A PR Or Comment
 
