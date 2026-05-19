@@ -67,7 +67,7 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain(
       "Cannot verify release PR #$number before updating labels.",
     );
-    expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]{1,10}$ ]]");
+    expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]+$ ]]");
     expect(releaseWorkflow).toContain(
       "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number",
     );

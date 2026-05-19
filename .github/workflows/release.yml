@@ -128,8 +128,7 @@ jobs:
           pending_label="$RELEASE_PENDING_LABEL"
           tagged_label="$RELEASE_TAGGED_LABEL"
 
-          # Bound the syntactic check before the current-repo existence check below.
-          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]{1,10}$ ]]; then
+          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
             echo "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number" >&2
             exit 1
           fi
