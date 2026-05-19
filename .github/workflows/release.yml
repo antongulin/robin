@@ -43,6 +43,8 @@ jobs:
       issues: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_PENDING_LABEL: "autorelease: pending"
+      RELEASE_TAGGED_LABEL: "autorelease: tagged"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,9 +125,10 @@ jobs:
 
           merge_sha="${{ steps.merge.outputs.merge_sha }}"
           number="${{ steps.release-pr.outputs.number }}"
-          pending_label="autorelease: pending"
-          tagged_label="autorelease: tagged"
+          pending_label="$RELEASE_PENDING_LABEL"
+          tagged_label="$RELEASE_TAGGED_LABEL"
 
+          # Bound the syntactic check before the current-repo existence check below.
           if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]{1,10}$ ]]; then
             echo "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number" >&2
             exit 1
@@ -191,7 +194,14 @@ jobs:
             exit 1
           fi
 
-          if ! gh pr edit "$number" --remove-label "$pending_label" --add-label "$tagged_label"; then
-            echo "Failed to replace '$pending_label' with '$tagged_label' on release PR #$number." >&2
+          label_action="add '$tagged_label'"
+          label_args=(--add-label "$tagged_label")
+          if gh pr view "$number" --json labels --template '{{range .labels}}{{.name}}{{"\n"}}{{end}}' | grep -Fxq "$pending_label"; then
+            label_action="remove '$pending_label' and add '$tagged_label'"
+            label_args=(--remove-label "$pending_label" "${label_args[@]}")
+          fi
+
+          if ! gh pr edit "$number" "${label_args[@]}"; then
+            echo "Failed to $label_action on release PR #$number." >&2
             exit 1
           fi
