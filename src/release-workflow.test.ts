@@ -11,15 +11,20 @@ const advancedDocs = readFileSync(join(repoRoot, "docs", "ADVANCED.md"), "utf8")
 
 describe("release workflow", () => {
   it("automatically verifies, merges, and publishes release PRs", () => {
-    expect(releaseWorkflow).toContain("prs_created:");
-    expect(releaseWorkflow).toContain("pr: ${{ steps.release.outputs.pr }}");
-    expect(releaseWorkflow).toContain("auto-release:");
+    expect(releaseWorkflow).toMatch(
+      /prs_created:\s*\$\{\{\s*steps\.release\.outputs\.prs_created\s*\}\}/,
+    );
+    expect(releaseWorkflow).toMatch(
+      /pr:\s*\$\{\{\s*steps\.release\.outputs\.pr\s*\}\}/,
+    );
+    expect(releaseWorkflow).toMatch(/\n  auto-release:\n/);
     expect(releaseWorkflow).toContain(
       "if: needs.release-please.outputs.prs_created == 'true'",
     );
     expect(releaseWorkflow).toContain("gh pr merge \"$number\" --merge --delete-branch");
     expect(releaseWorkflow).toContain("gh release create \"$tag\"");
     expect(releaseWorkflow).toContain("git push origin -f \"v$major\" \"v$major.$minor\"");
+    expect(releaseWorkflow).not.toContain("jq ");
   });
 
   it("documents that releases publish automatically after merges to main", () => {

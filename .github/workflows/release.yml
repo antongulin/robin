@@ -59,13 +59,21 @@ jobs:
           RELEASE_PR: ${{ needs.release-please.outputs.pr }}
           RELEASE_PRS: ${{ needs.release-please.outputs.prs }}
         run: |
-          pr_json="$RELEASE_PR"
-          if [ -n "$pr_json" ] && [ "$pr_json" != "null" ]; then
-            number=$(jq -r '.number // empty' <<<"$pr_json")
-          else
-            prs_json="$RELEASE_PRS"
-            number=$(jq -r '.[0].number // empty' <<<"$prs_json")
-          fi
+          number=$(
+            node -e '
+              const pr = process.env.RELEASE_PR;
+              const prs = process.env.RELEASE_PRS;
+              let number = "";
+
+              if (pr && pr !== "null") {
+                number = JSON.parse(pr).number ?? "";
+              } else if (prs && prs !== "null") {
+                number = (JSON.parse(prs)[0] ?? {}).number ?? "";
+              }
+
+              process.stdout.write(String(number));
+            '
+          )
 
           if [ -z "$number" ]; then
             echo "Release Please reported a PR but no PR number was available." >&2
@@ -105,7 +113,16 @@ jobs:
         shell: bash
         run: |
           merge_sha="${{ steps.merge.outputs.merge_sha }}"
-          version=$(git show "$merge_sha:.release-please-manifest.json" | jq -r '."."')
+          version=$(
+            git show "$merge_sha:.release-please-manifest.json" |
+              node -e '
+                let input = "";
+                process.stdin.on("data", chunk => input += chunk);
+                process.stdin.on("end", () => {
+                  process.stdout.write(JSON.parse(input)["."] ?? "");
+                });
+              '
+          )
 
           if [ -z "$version" ] || [ "$version" = "null" ]; then
             echo "Could not read release version from manifest." >&2
