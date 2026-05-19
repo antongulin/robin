@@ -126,8 +126,8 @@ jobs:
           pending_label="autorelease: pending"
           tagged_label="autorelease: tagged"
 
-          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
-            echo "Cannot update release PR labels; invalid PR number: $number" >&2
+          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]{1,10}$ ]]; then
+            echo "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number" >&2
             exit 1
           fi
 
@@ -192,6 +192,6 @@ jobs:
           fi
 
           if ! gh pr edit "$number" --remove-label "$pending_label" --add-label "$tagged_label"; then
-            echo "Failed to update release PR #$number labels." >&2
+            echo "Failed to replace '$pending_label' with '$tagged_label' on release PR #$number." >&2
             exit 1
           fi

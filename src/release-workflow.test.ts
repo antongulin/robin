@@ -65,12 +65,12 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain(
       "Cannot verify release PR #$number before updating labels.",
     );
+    expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]{1,10}$ ]]");
     expect(releaseWorkflow).toContain(
-      "Failed to update release PR #$number labels.",
+      "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number",
     );
-    expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]+$ ]]");
     expect(releaseWorkflow).toContain(
-      "Cannot update release PR labels; invalid PR number: $number",
+      "Failed to replace '$pending_label' with '$tagged_label' on release PR #$number.",
     );
     expect(releaseWorkflow).toContain("set -euo pipefail");
     expect(releaseWorkflow).toContain("Release notes for $tag were empty or malformed.");
