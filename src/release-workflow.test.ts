@@ -10,6 +10,38 @@ const releaseWorkflow = readFileSync(
 const contributing = readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf8");
 const advancedDocs = readFileSync(join(repoRoot, "docs", "ADVANCED.md"), "utf8");
 
+function getWorkflowRunStep(workflow: string, stepName: string): string {
+  const lines = workflow.split("\n");
+  const stepIndex = lines.findIndex((line) => line.trim() === `- name: ${stepName}`);
+
+  if (stepIndex === -1) {
+    throw new Error(`Could not find workflow step: ${stepName}`);
+  }
+
+  const runIndex = lines.findIndex(
+    (line, index) => index > stepIndex && line.trim() === "run: |",
+  );
+
+  if (runIndex === -1) {
+    throw new Error(`Could not find run block for workflow step: ${stepName}`);
+  }
+
+  const runIndent = lines[runIndex].match(/^ */)?.[0].length ?? 0;
+  const runBlock: string[] = [];
+
+  for (const line of lines.slice(runIndex + 1)) {
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+
+    if (line.trim() !== "" && indent <= runIndent) {
+      break;
+    }
+
+    runBlock.push(line.slice(runIndent + 2));
+  }
+
+  return runBlock.join("\n");
+}
+
 describe("release workflow", () => {
   it("automatically verifies, merges, and publishes release PRs", () => {
     expect(releaseWorkflow).toMatch(
@@ -42,15 +74,18 @@ describe("release workflow", () => {
   });
 
   it("extracts release notes with shell syntax that runs on ubuntu-latest", () => {
-    const awkMatch = releaseWorkflow.match(
-      /awk -v version="\$version" '\n([\s\S]*?)\n\s*'/,
+    const releaseStep = getWorkflowRunStep(
+      releaseWorkflow,
+      "Create release and update floating tags",
     );
+    const awkMatch = releaseStep.match(/awk -v version="\$version" '\n([\s\S]*?)\n\s*'/);
 
     expect(awkMatch).not.toBeNull();
+    expect(awkMatch?.[1]).toBeDefined();
 
     const awkProgram = awkMatch![1]
       .split("\n")
-      .map((line) => line.replace(/^ {16}/, ""))
+      .map((line) => line.trimStart())
       .join("\n");
 
     const changelog = [
