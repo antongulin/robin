@@ -60,7 +60,31 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain("gh pr merge \"$number\" --merge --delete-branch");
     expect(releaseWorkflow).toContain("gh release create \"$tag\"");
     expect(releaseWorkflow).toContain("git push origin -f \"v$major\" \"v$major.$minor\"");
+    expect(releaseWorkflow).toContain('RELEASE_PENDING_LABEL: "autorelease: pending"');
+    expect(releaseWorkflow).toContain('RELEASE_TAGGED_LABEL: "autorelease: tagged"');
+    expect(releaseWorkflow).toContain("pending_label=\"$RELEASE_PENDING_LABEL\"");
+    expect(releaseWorkflow).toContain("tagged_label=\"$RELEASE_TAGGED_LABEL\"");
+    expect(releaseWorkflow).toContain(
+      "Cannot verify release PR #$number before updating labels.",
+    );
     expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]+$ ]]");
+    expect(releaseWorkflow).toContain(
+      "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number",
+    );
+    expect(releaseWorkflow).toContain(
+      "label_action=\"add '$tagged_label'\"",
+    );
+    expect(releaseWorkflow).toContain(
+      "label_action=\"remove '$pending_label' and add '$tagged_label'\"",
+    );
+    expect(releaseWorkflow).toContain(
+      "Failed to $label_action on release PR #$number.",
+    );
+    expect(releaseWorkflow).toContain("label_args=(--add-label \"$tagged_label\")");
+    expect(releaseWorkflow).toContain("grep -Fxq \"$pending_label\"");
+    expect(releaseWorkflow).toContain(
+      "label_args=(--remove-label \"$pending_label\" \"${label_args[@]}\")",
+    );
     expect(releaseWorkflow).toContain("set -euo pipefail");
     expect(releaseWorkflow).toContain("Release notes for $tag were empty or malformed.");
     expect(releaseWorkflow).toContain("Existing release tag $tag points to");

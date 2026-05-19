@@ -43,6 +43,8 @@ jobs:
       issues: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_PENDING_LABEL: "autorelease: pending"
+      RELEASE_TAGGED_LABEL: "autorelease: tagged"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -122,6 +124,15 @@ jobs:
           set -euo pipefail
 
           merge_sha="${{ steps.merge.outputs.merge_sha }}"
+          number="${{ steps.release-pr.outputs.number }}"
+          pending_label="$RELEASE_PENDING_LABEL"
+          tagged_label="$RELEASE_TAGGED_LABEL"
+
+          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
+            echo "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number" >&2
+            exit 1
+          fi
+
           version=$(
             git show "$merge_sha:.release-please-manifest.json" |
               node -e '
@@ -176,3 +187,20 @@ jobs:
           git tag -f "v$major" "$merge_sha"
           git tag -f "v$major.$minor" "$merge_sha"
           git push origin -f "v$major" "v$major.$minor"
+
+          if ! gh pr view "$number" --json number >/dev/null 2>&1; then
+            echo "Cannot verify release PR #$number before updating labels." >&2
+            exit 1
+          fi
+
+          label_action="add '$tagged_label'"
+          label_args=(--add-label "$tagged_label")
+          if gh pr view "$number" --json labels --template '{{range .labels}}{{.name}}{{"\n"}}{{end}}' | grep -Fxq "$pending_label"; then
+            label_action="remove '$pending_label' and add '$tagged_label'"
+            label_args=(--remove-label "$pending_label" "${label_args[@]}")
+          fi
+
+          if ! gh pr edit "$number" "${label_args[@]}"; then
+            echo "Failed to $label_action on release PR #$number." >&2
+            exit 1
+          fi
