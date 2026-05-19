@@ -12,11 +12,12 @@
   },
   "homepage": "https://github.com/antongulin/universal-code-reviewer#readme",
   "scripts": {
-    "build": "tsc && ncc build dist/index.js -o dist",
+    "build": "tsc && ncc build dist/index.js -o dist && npm run clean",
+    "clean": "find dist -mindepth 1 ! -name index.js -exec rm -rf {} + 2>/dev/null || true",
     "dev": "ts-node src/main.ts",
     "lint": "eslint src/**/*.ts",
     "test": "jest",
-    "package": "ncc build dist/index.js -o dist --license licenses.txt"
+    "package": "ncc build dist/index.js -o dist --license licenses.txt && npm run clean"
   },
   "keywords": [
     "github-action",
