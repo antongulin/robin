@@ -97,11 +97,52 @@ Commit and push. Open a pull request — you should see a review within a few mi
 > [!IMPORTANT]
 > Use **`@main`** for the latest fixes, or pin a release tag (for example `@v1` or `@v1.0.0`) after [releases](https://github.com/antongulin/universal-code-reviewer/releases) exist. Do **not** use `@v0`. See [Version pins](#version-pins) below.
 
-### Optional — run reviews on a self-hosted runner
+## Running on a self-hosted runner
 
-By default, the reusable workflow runs on GitHub's `ubuntu-latest` runner. To run reviews on your own runner, pass `runner` as valid JSON. Use a JSON string for one label or a JSON array for multiple labels.
+By default, the reusable workflow runs on GitHub's hosted `ubuntu-latest` runner:
 
-For a Coolify self-hosted runner:
+```yaml
+with:
+  runner: '"ubuntu-latest"'
+```
+
+To run reviews on your own machine, Mac mini, home server, local Linux box, or Coolify runner, pass `runner` as valid JSON. Use a JSON string for one label or a JSON array for multiple labels.
+
+To create a local runner, go to:
+
+```text
+Repository Settings -> Actions -> Runners -> New self-hosted runner
+```
+
+Then add labels such as `local`, `linux`, `mac`, or `coolify`, and reference those labels through the `runner` input.
+
+### Does the runner need to run all the time?
+
+A matching self-hosted runner must be online when GitHub starts the review job. It can be a local runner process (`./run.sh`), a service (`./svc.sh start`), a Docker container, or a Coolify-managed service. Docker is optional; it is just one way to run the GitHub Actions runner.
+
+If no matching runner is online, GitHub queues the job until one comes online. It will not fall back to `ubuntu-latest` unless you add a separate fallback job. For reliable PR reviews, keep an always-on runner available, such as a Mac mini, home server, VPS, or Coolify service. A laptop runner only works while the laptop is awake and the runner process or service is running.
+
+> [!WARNING]
+> Self-hosted runners can execute arbitrary workflow code.
+> Do not use them for untrusted public pull requests.
+> Prefer repo-owned private repos or trusted collaborators only.
+> Consider ephemeral runners for stronger isolation.
+
+Local machine runner:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    with:
+      runner: '["self-hosted", "local"]'
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+Coolify runner:
 
 ```yaml
 jobs:
@@ -113,13 +154,6 @@ jobs:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
-```
-
-For a single runner label:
-
-```yaml
-with:
-  runner: '"ubuntu-latest"'
 ```
 
 ## Using it day to day
