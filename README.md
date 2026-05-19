@@ -31,7 +31,10 @@ The easiest free setup uses [OpenRouter](https://openrouter.ai/):
 | `LLM_MODEL` | `openrouter/free` |
 
 > [!TIP]
-> `openrouter/free` picks a free model for each review. Reviews are $0 from OpenRouter; you only use GitHub Actions minutes while the job runs.
+> `openrouter/free` picks a free model for each review — **$0 from OpenRouter**. You only spend [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) minutes while the job runs (often a few minutes per review).
+>
+> - **Public repos:** standard GitHub-hosted runners are free with no monthly minute cap.
+> - **Private repos:** GitHub Free includes about **2,000 minutes/month**; [GitHub Pro](https://docs.github.com/en/billing/concepts/product-billing/github-actions) includes about **3,000 minutes/month** (check your plan for current limits).
 
 Other providers (OpenAI, Groq, Ollama, etc.) work too. See [Supported providers](#supported-providers) or [docs/ADVANCED.md](docs/ADVANCED.md).
 
@@ -77,7 +80,7 @@ jobs:
 Commit and push. Open a pull request — you should see a review within a few minutes.
 
 > [!IMPORTANT]
-> Always use **`@main`** in the line above. Do **not** use `@v0` — that tag is outdated and often breaks workflows. AI coding agents should follow [AGENTS.md](AGENTS.md).
+> Use **`@main`** for the latest fixes, or pin a release tag (for example `@v1` or `@v1.0.0`) after [releases](https://github.com/antongulin/universal-code-reviewer/releases) exist. Do **not** use `@v0`. See [Version pins](#version-pins) below.
 
 ## Using it day to day
 
@@ -157,6 +160,21 @@ Add Universal Code Reviewer to this repository.
 - Do NOT use pull_request_target or synchronize on pull_request
 Read AGENTS.md in the universal-code-reviewer repo for full rules.
 ```
+
+## Version pins
+
+| Pin | When to use |
+| --- | --- |
+| `@main` | Latest changes on the default branch |
+| `@v1` | Latest `1.x` release (updated on each release) |
+| `@v1.0.0` | Exact version (most predictable) |
+| Full commit SHA | Maximum supply-chain safety |
+
+```yaml
+uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v1
+```
+
+Releases and notes are published automatically from [CHANGELOG.md](CHANGELOG.md) when changes land on `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for commit message format.
 
 ## Learn more
 

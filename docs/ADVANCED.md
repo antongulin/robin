@@ -29,13 +29,25 @@ The config file uses a small YAML subset (line-based keys only), not full YAML n
 
 | Ref | When to use |
 | --- | --- |
-| `@main` | **Default.** Always works with the latest fixes. Use in README examples and agent prompts. |
+| `@main` | Latest changes on the default branch |
+| `@v1` | Latest `1.x` release (floating tag, updated each release) |
+| `@v1.2.3` | Exact semver from [GitHub Releases](https://github.com/antongulin/universal-code-reviewer/releases) |
 | Full commit SHA | Maximum supply-chain safety in regulated environments |
 | `@v0` | **Do not use** — outdated; workflows often fail |
 
 ```yaml
-uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v1
 ```
+
+## Releases
+
+Releases are automated with [Release Please](https://github.com/googleapis/release-please) (`.github/workflows/release.yml`):
+
+1. Conventional commits on `main` accumulate in a **Release** pull request (`chore: release X.Y.Z`).
+2. Merging that PR updates `package.json`, `CHANGELOG.md`, creates tag `vX.Y.Z`, and publishes [GitHub release notes](https://github.com/antongulin/universal-code-reviewer/releases).
+3. Floating tags `v1` and `v1.0` (major.minor) are updated so `@v1` stays current within the major version.
+
+Maintainers: do not tag releases by hand unless the workflow failed; fix the workflow instead.
 
 ## Low-cost and free setups
 
@@ -65,8 +77,9 @@ jobs:
 
 - Keep the default flow: one review on PR open, then `/review` after fixes (do not enable `review-on-synchronize` unless you need it).
 - Use a smaller `max-diff-size` for huge PRs.
-- **Public repos:** hosted runner minutes are unlimited on GitHub Free.
-- **Private repos:** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
+- **Public repos:** standard GitHub-hosted runners are free with no monthly minute cap ([billing docs](https://docs.github.com/en/billing/concepts/product-billing/github-actions)).
+- **Private repos:** GitHub Free includes about **2,000 minutes/month**; GitHub Pro about **3,000 minutes/month** (limits can change — see GitHub billing for your account).
+- **Private repos (heavy usage):** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
 
 ## All workflow inputs
 

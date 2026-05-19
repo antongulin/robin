@@ -4,15 +4,19 @@ Use this file when adding Universal Code Reviewer to **another** repository.
 
 ## Required workflow reference
 
+Default (latest):
+
 ```yaml
 uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
 ```
 
-For a direct action step:
+Pinned release (preferred for stability after v1.0.0 exists):
 
 ```yaml
-uses: antongulin/universal-code-reviewer@main
+uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v1
 ```
+
+For a direct action step: `antongulin/universal-code-reviewer@main` or `@v1`.
 
 ## Do not use
 

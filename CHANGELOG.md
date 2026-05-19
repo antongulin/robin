@@ -1,14 +1,17 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
+
+## [1.0.0](https://github.com/antongulin/universal-code-reviewer/releases/tag/v1.0.0) - 2026-05-18
+
+### Features
 
 - Added `.github/universal-code-reviewer.yml` repo config (skip paths, defaults for diff size, comments, JSON mode).
 - Added diff pre-filter for lockfiles (npm, yarn, pnpm, Cargo, Gemfile, poetry), `dist/`, `node_modules/`, and minified assets.
-- Added tested `shouldRetryStructuredReview` helper for JSON parse retry.
-- Added JSON response mode, resolved-model logging, and one retry when structured parse is empty.
+- Added JSON response mode, resolved-model logging, and smart parse retry when structured output is missing.
 - Added workflow concurrency to cancel duplicate reviews on the same PR.
 - Simplified README for beginners; moved advanced docs to `docs/ADVANCED.md`.
-- Added `AGENTS.md` and agent skills requiring `@main` (not `@v0`).
+- Added `AGENTS.md` and agent skills for correct `@main` workflow setup.
 
 ## 0.2.0
 
