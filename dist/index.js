@@ -50,11 +50,13 @@ function hasRequiredPermission(permission, minimumPermission) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
+exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
 exports.parseLLMTimeout = parseLLMTimeout;
 exports.DEFAULT_LLM_TIMEOUT_MS = 600000; // 10 minutes
 exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = 3;
+exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = 5;
 exports.DEFAULT_LLM_RETRY_DELAY_MS = 2000;
+exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = 3000;
 function parseLLMTimeout(input) {
     if (!input)
         return { value: exports.DEFAULT_LLM_TIMEOUT_MS, valid: true };
@@ -558,7 +560,13 @@ class LLMClient {
             maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
                 ? maxOutputTokens
                 : undefined;
-        this.maxAttempts = (0, llm_retry_1.getLlmCompletionAttemptCount)(maxAttempts);
+        this.maxAttempts = (0, llm_retry_1.getLlmCompletionAttemptCount)(maxAttempts, model);
+        if ((0, llm_retry_1.isOpenRouterRouterModel)(model)) {
+            core.info("OpenRouter router model detected — using extra retries and provider fallbacks for rotating free models.");
+        }
+    }
+    retryContext() {
+        return { model: this.model };
     }
     async chatCompletion(systemPrompt, userContent, jsonResponseMode = false) {
         let lastFinishReason = "unknown";
@@ -579,18 +587,18 @@ class LLMClient {
             catch (error) {
                 lastError = error;
                 core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${error}`);
-                if (!(0, llm_retry_1.isRetriableLlmError)(error) || attempt === this.maxAttempts) {
+                if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt === this.maxAttempts) {
                     core.error(`LLM API error: ${error}`);
                     throw new Error(`Failed to get response from LLM: ${error}`);
                 }
             }
             if (attempt < this.maxAttempts) {
-                const waitMs = (0, llm_retry_1.computeRetryDelayMs)(attempt);
+                const waitMs = (0, llm_retry_1.computeRetryDelayMs)(attempt, this.retryContext());
                 core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
                 await (0, llm_retry_1.delayMs)(waitMs);
             }
         }
-        if (lastError && (0, llm_retry_1.isRetriableLlmError)(lastError)) {
+        if (lastError && (0, llm_retry_1.isRetriableLlmError)(lastError, this.retryContext())) {
             core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
             throw new Error(`Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`);
         }
@@ -610,6 +618,10 @@ class LLMClient {
         }
         if (jsonResponseMode) {
             request.response_format = { type: "json_object" };
+        }
+        if ((0, llm_retry_1.isOpenRouterRouterModel)(this.model)) {
+            // OpenRouter extension: try other providers when the first free route 404s.
+            request.provider = { allow_fallbacks: true };
         }
         return request;
     }
@@ -646,18 +658,37 @@ exports.LLMClient = LLMClient;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isOpenRouterRouterModel = isOpenRouterRouterModel;
+exports.isOpenRouterProviderError = isOpenRouterProviderError;
 exports.isRetriableLlmError = isRetriableLlmError;
 exports.shouldUseJsonResponseMode = shouldUseJsonResponseMode;
 exports.computeRetryDelayMs = computeRetryDelayMs;
 exports.getLlmCompletionAttemptCount = getLlmCompletionAttemptCount;
 exports.delayMs = delayMs;
 const config_1 = __nccwpck_require__(4008);
-function isRetriableLlmError(error) {
+/** OpenRouter routers (e.g. openrouter/free) pick models dynamically — no secret updates needed. */
+function isOpenRouterRouterModel(model) {
+    if (!model)
+        return false;
+    const normalized = model.trim().toLowerCase();
+    return (normalized === "openrouter/free" ||
+        normalized === "openrouter/auto" ||
+        normalized.startsWith("openrouter/") && normalized.endsWith("/free"));
+}
+function isOpenRouterProviderError(error) {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    return message.includes("provider returned error");
+}
+function isRetriableLlmError(error, context = {}) {
     if (!error)
         return false;
+    const routerModel = isOpenRouterRouterModel(context.model);
     if (typeof error === "object" && error !== null && "status" in error) {
         const status = Number(error.status);
         if (status === 429 || (Number.isFinite(status) && status >= 500)) {
+            return true;
+        }
+        if (status === 404 && routerModel) {
             return true;
         }
         if (Number.isFinite(status) && status >= 400 && status < 500) {
@@ -665,6 +696,9 @@ function isRetriableLlmError(error) {
         }
     }
     const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    if (routerModel && (message.includes("404") || isOpenRouterProviderError(error))) {
+        return true;
+    }
     return (message.includes("timeout") ||
         message.includes("timed out") ||
         message.includes("econnreset") ||
@@ -678,11 +712,16 @@ function isRetriableLlmError(error) {
 function shouldUseJsonResponseMode(attempt, jsonResponseMode) {
     return jsonResponseMode && attempt === 1;
 }
-function computeRetryDelayMs(attempt, baseDelayMs = config_1.DEFAULT_LLM_RETRY_DELAY_MS) {
+function computeRetryDelayMs(attempt, context = {}, baseDelayMs = isOpenRouterRouterModel(context.model)
+    ? config_1.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS
+    : config_1.DEFAULT_LLM_RETRY_DELAY_MS) {
     return baseDelayMs * attempt;
 }
-function getLlmCompletionAttemptCount(maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS) {
-    return Math.max(1, Math.floor(maxAttempts));
+function getLlmCompletionAttemptCount(maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS, model) {
+    const resolved = maxAttempts === config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS && isOpenRouterRouterModel(model)
+        ? config_1.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS
+        : maxAttempts;
+    return Math.max(1, Math.floor(resolved));
 }
 async function delayMs(ms) {
     await new Promise((resolve) => setTimeout(resolve, ms));
