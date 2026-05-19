@@ -31,6 +31,7 @@ jobs:
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          skip-github-release: true
 
   auto-release:
     needs: release-please
