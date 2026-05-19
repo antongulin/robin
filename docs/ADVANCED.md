@@ -81,6 +81,22 @@ jobs:
 - **Private repos:** GitHub Free includes about **2,000 minutes/month**; GitHub Pro about **3,000 minutes/month** (limits can change — see GitHub billing for your account).
 - **Private repos (heavy usage):** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
 
+To use a self-hosted runner with the reusable workflow, pass `runner` as valid JSON. A single label is a JSON string; multiple labels are a JSON array.
+
+Coolify example:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    with:
+      runner: '["self-hosted", "linux", "coolify"]'
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
 ## All workflow inputs
 
 Available on the [direct action](../action.yml) and the [reusable workflow](../.github/workflows/review.yml).
@@ -97,6 +113,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
 | `max-comments` | `25` (action) / `10` (reusable workflow) | Max inline comments |
 | `review-on-synchronize` | `false` | Review every new commit on the PR |
+| `runner` | `'"ubuntu-latest"'` | Reusable workflow runner as a JSON string or JSON array |
 | `min-command-permission` | `write` | Who can run `/review` |
 | `review-instructions` | empty | Extra prompt text |
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch |

@@ -48,6 +48,11 @@ on:
         required: false
         type: boolean
         default: false
+      runner:
+        description: "Runner label or JSON array of labels to use for the review job."
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
     secrets:
       LLM_API_KEY:
         required: true
@@ -78,7 +83,7 @@ jobs:
           startsWith(github.event.comment.body, '/help')
         )
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner) }}
     timeout-minutes: 15
     steps:
       - name: Universal Code Reviewer
