@@ -14,6 +14,21 @@ AI code review on pull requests. You bring an API key; reviews show up on GitHub
 
 You are **not** signing up for a separate review bot service. The workflow runs in your repo and calls the AI URL you configure.
 
+## For AI coding agents
+
+Using Cursor, Copilot, Claude Code, or similar? Copy this prompt after secrets are set:
+
+```text
+Add Universal Code Reviewer to this repository.
+- Workflow file: .github/workflows/code-review.yml
+- Reusable workflow: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+- Action ref if needed: antongulin/universal-code-reviewer@main
+- Secrets: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+- Do NOT use @v0 or any v0 tag
+- Do NOT use pull_request_target or synchronize on pull_request
+Read AGENTS.md in the universal-code-reviewer repo for full rules.
+```
+
 ## Setup in 3 steps
 
 ### Step 1 — Get an API key (free option)
@@ -146,21 +161,6 @@ Add `.github/code-reviewer.md` in your repo:
 | `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically (3 attempts); comment `/review` again or pin a model in `LLM_MODEL` |
 
 More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)
-
-## For AI coding agents
-
-Copy this prompt after secrets are set:
-
-```text
-Add Universal Code Reviewer to this repository.
-- Workflow file: .github/workflows/code-review.yml
-- Reusable workflow: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
-- Action ref if needed: antongulin/universal-code-reviewer@main
-- Secrets: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-- Do NOT use @v0 or any v0 tag
-- Do NOT use pull_request_target or synchronize on pull_request
-Read AGENTS.md in the universal-code-reviewer repo for full rules.
-```
 
 ## Version pins
 
