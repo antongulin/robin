@@ -31,6 +31,8 @@ jobs:
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Auto-release verifies, merges, and publishes release PRs below.
+          # Keep Release Please PR-only so follow-up push runs do not try a duplicate release.
           skip-github-release: true
 
   auto-release:

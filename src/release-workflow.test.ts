@@ -54,7 +54,9 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain(
       "if: needs.release-please.outputs.prs_created == 'true'",
     );
-    expect(releaseWorkflow).toContain("skip-github-release: true");
+    expect(releaseWorkflow).toMatch(
+      /uses:\s*googleapis\/release-please-action@v4[\s\S]*?with:[\s\S]*?skip-github-release:\s*true/,
+    );
     expect(releaseWorkflow).toContain("gh pr merge \"$number\" --merge --delete-branch");
     expect(releaseWorkflow).toContain("gh release create \"$tag\"");
     expect(releaseWorkflow).toContain("git push origin -f \"v$major\" \"v$major.$minor\"");
