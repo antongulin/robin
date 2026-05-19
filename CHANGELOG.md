@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.3](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.2...v1.2.3) (2026-05-19)
+
+
+### Bug Fixes
+
+* explain release pr label failures ([3fbafca](https://github.com/antongulin/universal-code-reviewer/commit/3fbafcadc2a342fbed33cf4db9b979f03e203d4b))
+* harden release pr label errors ([49415b0](https://github.com/antongulin/universal-code-reviewer/commit/49415b00b60932c51d5b3887f458afe07889d379))
+* make release pr labeling idempotent ([85f5759](https://github.com/antongulin/universal-code-reviewer/commit/85f5759ba4d1ea25dbdd7b5c31fff373e9c43a06))
+* mark auto release prs tagged ([41e22ba](https://github.com/antongulin/universal-code-reviewer/commit/41e22ba626e91364f580a972a1140359dadf4428))
+* mark auto release PRs tagged ([d0da052](https://github.com/antongulin/universal-code-reviewer/commit/d0da052a8b6a955421c665f648d81d7434962a8d))
+* simplify release pr number validation ([5c825ee](https://github.com/antongulin/universal-code-reviewer/commit/5c825ee73626586f20be96fee874879e9cadc649))
+* validate release pr label target ([c5c4b2f](https://github.com/antongulin/universal-code-reviewer/commit/c5c4b2fc2e36375072be45f0315a4f1ce1c39f99))
+* verify release pr before labeling ([d6184e1](https://github.com/antongulin/universal-code-reviewer/commit/d6184e1089709f5b7b4f45f41a7a76bccedf0baf))
+
 ## [1.2.2](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.1...v1.2.2) (2026-05-19)
 
 
