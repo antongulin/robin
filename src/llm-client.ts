@@ -4,6 +4,7 @@ import {
   computeRetryDelayMs,
   delayMs,
   getLlmCompletionAttemptCount,
+  isOpenRouterRouterModel,
   isRetriableLlmError,
   shouldUseJsonResponseMode,
 } from "./llm-retry";
@@ -44,7 +45,16 @@ export class LLMClient {
       maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
         ? maxOutputTokens
         : undefined;
-    this.maxAttempts = getLlmCompletionAttemptCount(maxAttempts);
+    this.maxAttempts = getLlmCompletionAttemptCount(maxAttempts, model);
+    if (isOpenRouterRouterModel(model)) {
+      core.info(
+        "OpenRouter router model detected — using extra retries and provider fallbacks for rotating free models."
+      );
+    }
+  }
+
+  private retryContext() {
+    return { model: this.model };
   }
 
   async chatCompletion(
@@ -78,20 +88,20 @@ export class LLMClient {
         lastError = error;
         core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${error}`);
 
-        if (!isRetriableLlmError(error) || attempt === this.maxAttempts) {
+        if (!isRetriableLlmError(error, this.retryContext()) || attempt === this.maxAttempts) {
           core.error(`LLM API error: ${error}`);
           throw new Error(`Failed to get response from LLM: ${error}`);
         }
       }
 
       if (attempt < this.maxAttempts) {
-        const waitMs = computeRetryDelayMs(attempt);
+        const waitMs = computeRetryDelayMs(attempt, this.retryContext());
         core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
         await delayMs(waitMs);
       }
     }
 
-    if (lastError && isRetriableLlmError(lastError)) {
+    if (lastError && isRetriableLlmError(lastError, this.retryContext())) {
       core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
       throw new Error(
         `Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`
@@ -123,6 +133,13 @@ export class LLMClient {
 
     if (jsonResponseMode) {
       request.response_format = { type: "json_object" };
+    }
+
+    if (isOpenRouterRouterModel(this.model)) {
+      // OpenRouter extension: try other providers when the first free route 404s.
+      (request as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
+        provider?: { allow_fallbacks: boolean };
+      }).provider = { allow_fallbacks: true };
     }
 
     return request;

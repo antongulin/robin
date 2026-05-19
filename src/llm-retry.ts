@@ -1,14 +1,41 @@
 import {
   DEFAULT_LLM_COMPLETION_ATTEMPTS,
   DEFAULT_LLM_RETRY_DELAY_MS,
+  DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS,
+  DEFAULT_LLM_ROUTER_RETRY_DELAY_MS,
 } from "./config";
 
-export function isRetriableLlmError(error: unknown): boolean {
+export interface LlmRetryContext {
+  model?: string;
+}
+
+/** OpenRouter routers (e.g. openrouter/free) pick models dynamically — no secret updates needed. */
+export function isOpenRouterRouterModel(model: string | undefined): boolean {
+  if (!model) return false;
+  const normalized = model.trim().toLowerCase();
+  return (
+    normalized === "openrouter/free" ||
+    normalized === "openrouter/auto" ||
+    normalized.startsWith("openrouter/") && normalized.endsWith("/free")
+  );
+}
+
+export function isOpenRouterProviderError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return message.includes("provider returned error");
+}
+
+export function isRetriableLlmError(error: unknown, context: LlmRetryContext = {}): boolean {
   if (!error) return false;
+
+  const routerModel = isOpenRouterRouterModel(context.model);
 
   if (typeof error === "object" && error !== null && "status" in error) {
     const status = Number((error as { status?: number }).status);
     if (status === 429 || (Number.isFinite(status) && status >= 500)) {
+      return true;
+    }
+    if (status === 404 && routerModel) {
       return true;
     }
     if (Number.isFinite(status) && status >= 400 && status < 500) {
@@ -17,6 +44,10 @@ export function isRetriableLlmError(error: unknown): boolean {
   }
 
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (routerModel && (message.includes("404") || isOpenRouterProviderError(error))) {
+    return true;
+  }
+
   return (
     message.includes("timeout") ||
     message.includes("timed out") ||
@@ -39,15 +70,23 @@ export function shouldUseJsonResponseMode(
 
 export function computeRetryDelayMs(
   attempt: number,
-  baseDelayMs = DEFAULT_LLM_RETRY_DELAY_MS
+  context: LlmRetryContext = {},
+  baseDelayMs = isOpenRouterRouterModel(context.model)
+    ? DEFAULT_LLM_ROUTER_RETRY_DELAY_MS
+    : DEFAULT_LLM_RETRY_DELAY_MS
 ): number {
   return baseDelayMs * attempt;
 }
 
 export function getLlmCompletionAttemptCount(
-  maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS
+  maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS,
+  model?: string
 ): number {
-  return Math.max(1, Math.floor(maxAttempts));
+  const resolved =
+    maxAttempts === DEFAULT_LLM_COMPLETION_ATTEMPTS && isOpenRouterRouterModel(model)
+      ? DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS
+      : maxAttempts;
+  return Math.max(1, Math.floor(resolved));
 }
 
 export async function delayMs(ms: number): Promise<void> {
