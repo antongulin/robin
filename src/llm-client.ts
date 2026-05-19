@@ -2,6 +2,11 @@ import { OpenAI } from "openai";
 import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import * as core from "@actions/core";
 
+export interface ChatCompletionResult {
+  content: string;
+  model?: string;
+}
+
 export class LLMClient {
   private client: OpenAI;
   private model: string;
@@ -23,7 +28,11 @@ export class LLMClient {
       : undefined;
   }
 
-  async chatCompletion(systemPrompt: string, userContent: string): Promise<string> {
+  async chatCompletion(
+    systemPrompt: string,
+    userContent: string,
+    jsonResponseMode = false
+  ): Promise<ChatCompletionResult> {
     try {
       const request: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
         model: this.model,
@@ -38,15 +47,26 @@ export class LLMClient {
         request.max_tokens = this.maxOutputTokens;
       }
 
+      if (jsonResponseMode) {
+        request.response_format = { type: "json_object" };
+      }
+
       const response = await this.client.chat.completions.create(request);
 
       const content = response.choices[0]?.message?.content || "";
+      const resolvedModel = response.model || this.model;
+
+      if (resolvedModel && resolvedModel !== this.model) {
+        core.info(`LLM resolved model: ${resolvedModel} (requested: ${this.model})`);
+      } else {
+        core.info(`LLM response model: ${resolvedModel}`);
+      }
       
       if (!content) {
         throw new Error("Empty response from LLM");
       }
 
-      return content;
+      return { content, model: resolvedModel };
     } catch (error) {
       core.error(`LLM API error: ${error}`);
       throw new Error(`Failed to get response from LLM: ${error}`);

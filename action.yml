@@ -68,6 +68,14 @@ inputs:
     description: "Repository file containing additional reviewer instructions. Read from the PR base branch for safety."
     required: false
     default: ".github/code-reviewer.md"
+  config-file:
+    description: "Optional repository config file on the PR base branch (.github/universal-code-reviewer.yml)."
+    required: false
+    default: ".github/universal-code-reviewer.yml"
+  use-json-response-mode:
+    description: "Request JSON object responses when the provider supports response_format."
+    required: false
+    default: "true"
 
 runs:
   using: "node24"

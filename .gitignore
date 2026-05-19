@@ -1,4 +1,6 @@
 node_modules/
+.worktrees/
+skills-lock.json
 *.log
 .env
 .env.local

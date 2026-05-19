@@ -5,6 +5,15 @@ import { GitUtils } from "./git-utils";
 import { ReviewParser, StructuredReview } from "./review-parser";
 import { GitHubReviewer } from "./github-reviewer";
 import { DEFAULT_LLM_TIMEOUT_MS, parseLLMTimeout } from "./config";
+import { filterDiff } from "./diff-filter";
+import {
+  DEFAULT_CONFIG_FILE,
+  RepoConfig,
+  parseRepoConfigYaml,
+  resolveJsonResponseMode,
+  resolveMaxComments,
+  resolveMaxDiffSize,
+} from "./repo-config";
 import { getReviewPrompt, getSummaryPrompt, getHelpMessage } from "./prompts/review-prompts";
 import { ReviewerCommand, hasRequiredPermission, parseSlashCommand } from "./commands";
 
@@ -104,8 +113,8 @@ async function run(): Promise<void> {
     const baseUrl = core.getInput("llm-base-url") || core.getInput("base-url") || "";
     const model = core.getInput("model") || "";
     const failOnHigh = core.getInput("fail-on-high") === "true" || core.getInput("fail-on-critical") === "true";
-    const maxDiffSize = parseInt(core.getInput("max-diff-size") || "50000", 10);
-    const maxComments = parseInt(core.getInput("max-comments") || "25", 10);
+    const maxDiffSizeInput = core.getInput("max-diff-size") || "50000";
+    const maxCommentsInput = core.getInput("max-comments") || "25";
     const maxOutputTokensInput = core.getInput("max-output-tokens") || "";
     const maxOutputTokens = maxOutputTokensInput ? parseInt(maxOutputTokensInput, 10) : undefined;
     const llmTimeoutMsInput = core.getInput("llm-timeout-ms") || "";
@@ -115,6 +124,8 @@ async function run(): Promise<void> {
     }
     const inlineReviewInstructions = core.getInput("review-instructions") || "";
     const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
+    const configFile = core.getInput("config-file") || DEFAULT_CONFIG_FILE;
+    const jsonResponseModeInput = core.getInput("use-json-response-mode") || "true";
 
     core.info(`Model: ${model || "(not configured)"}`);
 
@@ -130,6 +141,20 @@ async function run(): Promise<void> {
     }
 
     const gitUtils = new GitUtils(octokit as any);
+    const baseRef = payload.pull_request?.base?.sha;
+    const repoConfig = await loadRepoConfig(
+      octokit,
+      gitUtils,
+      owner,
+      repo,
+      prNumber,
+      configFile,
+      baseRef
+    );
+    const maxDiffSize = resolveMaxDiffSize(maxDiffSizeInput, repoConfig);
+    const maxComments = resolveMaxComments(maxCommentsInput, repoConfig);
+    const jsonResponseMode = resolveJsonResponseMode(jsonResponseModeInput, repoConfig);
+
     const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
     
     if (!diff || diff.trim().length === 0) {
@@ -137,11 +162,24 @@ async function run(): Promise<void> {
       return;
     }
 
-    const truncatedDiff = diff.length > maxDiffSize 
-      ? diff.slice(0, maxDiffSize) + "\n\n[... Diff truncated due to size limit]"
-      : diff;
+    const { filtered: filteredDiff, removedFiles } = filterDiff(diff, repoConfig.skipPaths || []);
+    if (removedFiles.length > 0) {
+      core.info(`Skipped ${removedFiles.length} file(s) before review: ${removedFiles.join(", ")}`);
+    }
 
-    core.info(`Diff size: ${diff.length} chars${diff.length > maxDiffSize ? " (truncated)" : ""}`);
+    const reviewDiff = filteredDiff.trim() ? filteredDiff : diff;
+    if (!reviewDiff.trim()) {
+      core.warning("No reviewable diff remained after filtering skipped paths.");
+      return;
+    }
+
+    const truncatedDiff = reviewDiff.length > maxDiffSize 
+      ? reviewDiff.slice(0, maxDiffSize) + "\n\n[... Diff truncated due to size limit]"
+      : reviewDiff;
+
+    core.info(
+      `Diff size: ${reviewDiff.length} chars${reviewDiff.length > maxDiffSize ? " (truncated)" : ""}${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`
+    );
     const reviewInstructions = command === "review"
       ? await loadReviewInstructions(
         octokit,
@@ -151,17 +189,18 @@ async function run(): Promise<void> {
         prNumber,
         inlineReviewInstructions,
         reviewInstructionsFile,
-        payload.pull_request?.base?.sha
+        baseRef
       )
       : "";
 
     const llm = new LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs);
+    const useJsonMode = command === "review" && jsonResponseMode;
     
     let reviewText: string;
     if (command === "summary") {
-      reviewText = await runSummary(llm, truncatedDiff);
+      reviewText = (await runSummary(llm, truncatedDiff)).content;
     } else {
-      reviewText = await runReview(llm, truncatedDiff, reviewInstructions);
+      reviewText = (await runReview(llm, truncatedDiff, reviewInstructions, useJsonMode)).content;
     }
 
     if (command === "summary") {
@@ -176,7 +215,20 @@ async function run(): Promise<void> {
     } else {
       // Full review parsed and posted as a review
       core.info("Parsing review response...");
-      const findings = ReviewParser.parse(reviewText);
+      let findings = ReviewParser.parse(reviewText);
+
+      if (shouldRetryStructuredReview(findings)) {
+        core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
+        const retryText = (
+          await runReview(
+            llm,
+            truncatedDiff,
+            `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`,
+            true
+          )
+        ).content;
+        findings = ReviewParser.parse(retryText);
+      }
 
       core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
 
@@ -309,6 +361,42 @@ function buildFailedStatusBody(errorMessage: string, command: "review" | "summar
   ].join("\n");
 }
 
+async function loadRepoConfig(
+  octokit: any,
+  gitUtils: GitUtils,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  configFile: string,
+  baseRef?: string
+): Promise<RepoConfig> {
+  const filePath = configFile.trim();
+  if (!filePath) return {};
+
+  try {
+    let ref = baseRef;
+    if (!ref) {
+      const { data: pullRequest } = await octokit.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: prNumber,
+      });
+      ref = pullRequest.base.sha;
+    }
+
+    if (!ref) return {};
+
+    const fileContent = await gitUtils.getFileContent(owner, repo, filePath, ref);
+    if (!fileContent.trim()) return {};
+
+    core.info(`Loaded repo config from ${filePath}`);
+    return parseRepoConfigYaml(fileContent);
+  } catch (error) {
+    core.info(`No repo config at ${filePath} (${error})`);
+    return {};
+  }
+}
+
 async function loadReviewInstructions(
   octokit: any,
   gitUtils: GitUtils,
@@ -393,18 +481,35 @@ async function postHelpComment(octokit: any, payload: any): Promise<void> {
   core.info("Posted help comment.");
 }
 
-async function runReview(llm: LLMClient, diff: string, reviewInstructions: string): Promise<string> {
+function shouldRetryStructuredReview(findings: StructuredReview): boolean {
+  const findingCount =
+    findings.high.length +
+    findings.medium.length +
+    findings.low.length +
+    findings.suggestions.length;
+
+  if (findingCount > 0) return false;
+  if (findings.summary.trim().length > 40) return false;
+  return true;
+}
+
+async function runReview(
+  llm: LLMClient,
+  diff: string,
+  reviewInstructions: string,
+  jsonResponseMode: boolean
+) {
   const systemPrompt = getReviewPrompt(reviewInstructions);
   const userContent = buildReviewInput(diff);
   core.info("Getting full code review...");
-  return await llm.chatCompletion(systemPrompt, userContent);
+  return await llm.chatCompletion(systemPrompt, userContent, jsonResponseMode);
 }
 
-async function runSummary(llm: LLMClient, diff: string): Promise<string> {
+async function runSummary(llm: LLMClient, diff: string) {
   const systemPrompt = getSummaryPrompt();
   const userContent = buildSummaryInput(diff);
   core.info("Getting PR summary...");
-  return await llm.chatCompletion(systemPrompt, userContent);
+  return await llm.chatCompletion(systemPrompt, userContent, false);
 }
 
 function buildReviewInput(diff: string): string {

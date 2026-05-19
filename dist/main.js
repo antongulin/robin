@@ -40,6 +40,8 @@ const git_utils_1 = require("./git-utils");
 const review_parser_1 = require("./review-parser");
 const github_reviewer_1 = require("./github-reviewer");
 const config_1 = require("./config");
+const diff_filter_1 = require("./diff-filter");
+const repo_config_1 = require("./repo-config");
 const review_prompts_1 = require("./prompts/review-prompts");
 const commands_1 = require("./commands");
 async function run() {
@@ -113,8 +115,8 @@ async function run() {
         const baseUrl = core.getInput("llm-base-url") || core.getInput("base-url") || "";
         const model = core.getInput("model") || "";
         const failOnHigh = core.getInput("fail-on-high") === "true" || core.getInput("fail-on-critical") === "true";
-        const maxDiffSize = parseInt(core.getInput("max-diff-size") || "50000", 10);
-        const maxComments = parseInt(core.getInput("max-comments") || "25", 10);
+        const maxDiffSizeInput = core.getInput("max-diff-size") || "50000";
+        const maxCommentsInput = core.getInput("max-comments") || "25";
         const maxOutputTokensInput = core.getInput("max-output-tokens") || "";
         const maxOutputTokens = maxOutputTokensInput ? parseInt(maxOutputTokensInput, 10) : undefined;
         const llmTimeoutMsInput = core.getInput("llm-timeout-ms") || "";
@@ -124,6 +126,8 @@ async function run() {
         }
         const inlineReviewInstructions = core.getInput("review-instructions") || "";
         const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
+        const configFile = core.getInput("config-file") || repo_config_1.DEFAULT_CONFIG_FILE;
+        const jsonResponseModeInput = core.getInput("use-json-response-mode") || "true";
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
@@ -135,25 +139,40 @@ async function run() {
             throw new Error("Input required and not supplied: model");
         }
         const gitUtils = new git_utils_1.GitUtils(octokit);
+        const baseRef = payload.pull_request?.base?.sha;
+        const repoConfig = await loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef);
+        const maxDiffSize = (0, repo_config_1.resolveMaxDiffSize)(maxDiffSizeInput, repoConfig);
+        const maxComments = (0, repo_config_1.resolveMaxComments)(maxCommentsInput, repoConfig);
+        const jsonResponseMode = (0, repo_config_1.resolveJsonResponseMode)(jsonResponseModeInput, repoConfig);
         const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
         if (!diff || diff.trim().length === 0) {
             core.warning("No diff found for this PR.");
             return;
         }
-        const truncatedDiff = diff.length > maxDiffSize
-            ? diff.slice(0, maxDiffSize) + "\n\n[... Diff truncated due to size limit]"
-            : diff;
-        core.info(`Diff size: ${diff.length} chars${diff.length > maxDiffSize ? " (truncated)" : ""}`);
+        const { filtered: filteredDiff, removedFiles } = (0, diff_filter_1.filterDiff)(diff, repoConfig.skipPaths || []);
+        if (removedFiles.length > 0) {
+            core.info(`Skipped ${removedFiles.length} file(s) before review: ${removedFiles.join(", ")}`);
+        }
+        const reviewDiff = filteredDiff.trim() ? filteredDiff : diff;
+        if (!reviewDiff.trim()) {
+            core.warning("No reviewable diff remained after filtering skipped paths.");
+            return;
+        }
+        const truncatedDiff = reviewDiff.length > maxDiffSize
+            ? reviewDiff.slice(0, maxDiffSize) + "\n\n[... Diff truncated due to size limit]"
+            : reviewDiff;
+        core.info(`Diff size: ${reviewDiff.length} chars${reviewDiff.length > maxDiffSize ? " (truncated)" : ""}${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`);
         const reviewInstructions = command === "review"
-            ? await loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineReviewInstructions, reviewInstructionsFile, payload.pull_request?.base?.sha)
+            ? await loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineReviewInstructions, reviewInstructionsFile, baseRef)
             : "";
         const llm = new llm_client_1.LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs);
+        const useJsonMode = command === "review" && jsonResponseMode;
         let reviewText;
         if (command === "summary") {
-            reviewText = await runSummary(llm, truncatedDiff);
+            reviewText = (await runSummary(llm, truncatedDiff)).content;
         }
         else {
-            reviewText = await runReview(llm, truncatedDiff, reviewInstructions);
+            reviewText = (await runReview(llm, truncatedDiff, reviewInstructions, useJsonMode)).content;
         }
         if (command === "summary") {
             // Post summary as a regular comment
@@ -168,7 +187,12 @@ async function run() {
         else {
             // Full review parsed and posted as a review
             core.info("Parsing review response...");
-            const findings = review_parser_1.ReviewParser.parse(reviewText);
+            let findings = review_parser_1.ReviewParser.parse(reviewText);
+            if (shouldRetryStructuredReview(findings)) {
+                core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
+                const retryText = (await runReview(llm, truncatedDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true)).content;
+                findings = review_parser_1.ReviewParser.parse(retryText);
+            }
             core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
             const reviewer = new github_reviewer_1.GitHubReviewer(octokit, maxComments);
             await reviewer.postReview(owner, repo, prNumber, findings);
@@ -274,6 +298,33 @@ function buildFailedStatusBody(errorMessage, command) {
         "No secrets are included in this comment.",
     ].join("\n");
 }
+async function loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef) {
+    const filePath = configFile.trim();
+    if (!filePath)
+        return {};
+    try {
+        let ref = baseRef;
+        if (!ref) {
+            const { data: pullRequest } = await octokit.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+            });
+            ref = pullRequest.base.sha;
+        }
+        if (!ref)
+            return {};
+        const fileContent = await gitUtils.getFileContent(owner, repo, filePath, ref);
+        if (!fileContent.trim())
+            return {};
+        core.info(`Loaded repo config from ${filePath}`);
+        return (0, repo_config_1.parseRepoConfigYaml)(fileContent);
+    }
+    catch (error) {
+        core.info(`No repo config at ${filePath} (${error})`);
+        return {};
+    }
+}
 async function loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineInstructions, instructionsFile, baseRef) {
     const instructions = inlineInstructions.trim() ? [inlineInstructions.trim()] : [];
     const filePath = instructionsFile.trim();
@@ -335,17 +386,28 @@ async function postHelpComment(octokit, payload) {
     });
     core.info("Posted help comment.");
 }
-async function runReview(llm, diff, reviewInstructions) {
+function shouldRetryStructuredReview(findings) {
+    const findingCount = findings.high.length +
+        findings.medium.length +
+        findings.low.length +
+        findings.suggestions.length;
+    if (findingCount > 0)
+        return false;
+    if (findings.summary.trim().length > 40)
+        return false;
+    return true;
+}
+async function runReview(llm, diff, reviewInstructions, jsonResponseMode) {
     const systemPrompt = (0, review_prompts_1.getReviewPrompt)(reviewInstructions);
     const userContent = buildReviewInput(diff);
     core.info("Getting full code review...");
-    return await llm.chatCompletion(systemPrompt, userContent);
+    return await llm.chatCompletion(systemPrompt, userContent, jsonResponseMode);
 }
 async function runSummary(llm, diff) {
     const systemPrompt = (0, review_prompts_1.getSummaryPrompt)();
     const userContent = buildSummaryInput(diff);
     core.info("Getting PR summary...");
-    return await llm.chatCompletion(systemPrompt, userContent);
+    return await llm.chatCompletion(systemPrompt, userContent, false);
 }
 function buildReviewInput(diff) {
     return [

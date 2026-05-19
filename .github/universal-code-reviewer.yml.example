@@ -1,0 +1,10 @@
+# Optional repo config (copy to .github/universal-code-reviewer.yml)
+# Read from the PR base branch. Action inputs override these when explicitly set.
+
+max-diff-size: 25000
+max-comments: 10
+json-response-mode: true
+
+skip-paths:
+  - "**/generated/**"
+  - "**/*.snap"
