@@ -59,6 +59,8 @@ jobs:
           RELEASE_PR: ${{ needs.release-please.outputs.pr }}
           RELEASE_PRS: ${{ needs.release-please.outputs.prs }}
         run: |
+          set -euo pipefail
+
           number=$(
             node -e '
               const pr = process.env.RELEASE_PR;
@@ -75,8 +77,8 @@ jobs:
             '
           )
 
-          if [ -z "$number" ]; then
-            echo "Release Please reported a PR but no PR number was available." >&2
+          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
+            echo "Release Please reported an invalid PR number: $number" >&2
             exit 1
           fi
 
@@ -87,6 +89,8 @@ jobs:
 
       - name: Verify release PR
         run: |
+          set -euo pipefail
+
           npm ci
           npm run lint
           npm test
@@ -97,6 +101,8 @@ jobs:
         id: merge
         shell: bash
         run: |
+          set -euo pipefail
+
           number="${{ steps.release-pr.outputs.number }}"
           gh pr merge "$number" --merge --delete-branch
           merge_sha=$(gh pr view "$number" --json mergeCommit -q '.mergeCommit.oid')
@@ -106,12 +112,14 @@ jobs:
             exit 1
           fi
 
-          git fetch origin main --tags --force
+          git fetch origin main --tags --force || { echo "Fetch failed" >&2; exit 1; }
           echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
 
       - name: Create release and update floating tags
         shell: bash
         run: |
+          set -euo pipefail
+
           merge_sha="${{ steps.merge.outputs.merge_sha }}"
           version=$(
             git show "$merge_sha:.release-please-manifest.json" |
@@ -130,6 +138,8 @@ jobs:
           fi
 
           tag="v$version"
+          git fetch origin --tags --force || { echo "Fetch tags failed" >&2; exit 1; }
+
           notes=$(
             git show "$merge_sha:CHANGELOG.md" |
               awk -v version="$version" '
@@ -139,7 +149,17 @@ jobs:
               '
           )
 
+          if [ -z "$notes" ] || ! grep -q "^## \\[$version\\]" <<<"$notes"; then
+            echo "Release notes for $tag were empty or malformed." >&2
+            exit 1
+          fi
+
           if gh release view "$tag" >/dev/null 2>&1; then
+            existing_sha=$(git rev-list -n 1 "$tag" 2>/dev/null || true)
+            if [ -n "$existing_sha" ] && [ "$existing_sha" != "$merge_sha" ]; then
+              echo "Existing release tag $tag points to $existing_sha, not $merge_sha." >&2
+              exit 1
+            fi
             echo "Release $tag already exists."
           else
             gh release create "$tag" \
@@ -151,6 +171,7 @@ jobs:
           IFS=. read -r major minor _patch <<<"$version"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          # Floating tags intentionally move to the latest release in each stream.
           git tag -f "v$major" "$merge_sha"
           git tag -f "v$major.$minor" "$merge_sha"
           git push origin -f "v$major" "v$major.$minor"
