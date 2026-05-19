@@ -570,9 +570,17 @@ class LLMClient {
             if (jsonResponseMode) {
                 request.response_format = { type: "json_object" };
             }
-            const response = await this.client.chat.completions.create(request);
-            const content = response.choices[0]?.message?.content || "";
-            const resolvedModel = response.model || this.model;
+            let response = await this.client.chat.completions.create(request);
+            let content = this.extractMessageContent(response);
+            let resolvedModel = response.model || this.model;
+            if (!content) {
+                core.warning("LLM returned empty content; retrying once without response_format.");
+                const retryRequest = { ...request };
+                delete retryRequest.response_format;
+                response = await this.client.chat.completions.create(retryRequest);
+                content = this.extractMessageContent(response);
+                resolvedModel = response.model || this.model;
+            }
             if (resolvedModel && resolvedModel !== this.model) {
                 core.info(`LLM resolved model: ${resolvedModel} (requested: ${this.model})`);
             }
@@ -580,7 +588,8 @@ class LLMClient {
                 core.info(`LLM response model: ${resolvedModel}`);
             }
             if (!content) {
-                throw new Error("Empty response from LLM");
+                const finishReason = response.choices?.[0]?.finish_reason || "unknown";
+                throw new Error(`Empty response from LLM (finish_reason=${finishReason})`);
             }
             return { content, model: resolvedModel };
         }
@@ -588,6 +597,19 @@ class LLMClient {
             core.error(`LLM API error: ${error}`);
             throw new Error(`Failed to get response from LLM: ${error}`);
         }
+    }
+    extractMessageContent(response) {
+        const choice = response.choices?.[0];
+        if (!choice) {
+            core.warning("LLM response has no choices array.");
+            return "";
+        }
+        const content = choice.message?.content;
+        if (typeof content === "string" && content.trim()) {
+            return content;
+        }
+        core.warning(`LLM choice has no text content (finish_reason=${choice.finish_reason || "unknown"}).`);
+        return "";
     }
 }
 exports.LLMClient = LLMClient;

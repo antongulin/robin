@@ -143,6 +143,7 @@ Add `.github/code-reviewer.md` in your repo:
 | Review never appears | Open **Actions** tab → open the failed run → read the error |
 | `/review` does nothing | Put `/review` on the **first** line; you need write access on the repo |
 | Review is very short | PR may be huge — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`) |
+| `Empty response from LLM` | Free routers (e.g. `openrouter/free`) sometimes return no text — comment `/review` again or pin a specific model in `LLM_MODEL` |
 
 More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)
 

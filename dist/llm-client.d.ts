@@ -8,5 +8,6 @@ export declare class LLMClient {
     private maxOutputTokens?;
     constructor(baseUrl: string, apiKey: string, model: string, maxOutputTokens?: number, timeoutMs?: number);
     chatCompletion(systemPrompt: string, userContent: string, jsonResponseMode?: boolean): Promise<ChatCompletionResult>;
+    private extractMessageContent;
 }
 //# sourceMappingURL=llm-client.d.ts.map
