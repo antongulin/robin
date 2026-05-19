@@ -20,7 +20,9 @@ npm test
 npm run build
 ```
 
-The action runs from `dist/index.js`, so source changes that affect runtime behavior must be bundled with `npm run build` before release.
+The action runs from `dist/index.js`, so source changes that affect runtime behavior must be bundled with `npm run build` before release. Only `dist/index.js` is committed; other `dist/` files are local build artifacts.
+
+Maintainer-only paths (`docs/superpowers/`, `.agents/`) are gitignored so the public repo stays focused on the action and user docs (`README.md`, `docs/ADVANCED.md`, `AGENTS.md`).
 
 ## Pull Request Guidelines
 

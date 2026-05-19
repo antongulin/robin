@@ -6,7 +6,14 @@ skills-lock.json
 .env.local
 coverage/
 .DS_Store
-.vscode/
 .idea/
 *.tgz
 *.tar.gz
+
+# Maintainer-only (not needed for action consumers)
+docs/superpowers/
+.agents/
+
+# TypeScript build output — only the ncc bundle is published
+dist/*
+!dist/index.js

@@ -1,0 +1,8 @@
+# Hide from Cursor indexing and @-mentions
+docs/superpowers/
+.agents/
+.worktrees/
+node_modules/
+coverage/
+dist/*
+!dist/index.js
