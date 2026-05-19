@@ -27,8 +27,10 @@ jobs:
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Auto-release verifies, merges, and publishes release PRs below.
-          # Keep Release Please PR-only so follow-up push runs do not try a duplicate release.
+          # Release Please only creates/updates release PRs here. The auto-release job below
+          # verifies the release PR before merging, then creates the GitHub release and
+          # floating tags from the merged manifest/changelog. Without this flag, the push
+          # created by that merge makes Release Please try to publish the same release too.
           skip-github-release: true
 
   auto-release:
