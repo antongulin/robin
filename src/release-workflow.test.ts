@@ -63,10 +63,10 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain("pending_label=\"autorelease: pending\"");
     expect(releaseWorkflow).toContain("tagged_label=\"autorelease: tagged\"");
     expect(releaseWorkflow).toContain(
-      "gh pr view \"$number\" --json number >/dev/null",
+      "Cannot verify release PR #$number before updating labels.",
     );
     expect(releaseWorkflow).toContain(
-      "gh pr edit \"$number\" --remove-label \"$pending_label\" --add-label \"$tagged_label\"",
+      "Failed to update release PR #$number labels.",
     );
     expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]+$ ]]");
     expect(releaseWorkflow).toContain(

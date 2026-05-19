@@ -185,5 +185,13 @@ jobs:
           git tag -f "v$major" "$merge_sha"
           git tag -f "v$major.$minor" "$merge_sha"
           git push origin -f "v$major" "v$major.$minor"
-          gh pr view "$number" --json number >/dev/null
-          gh pr edit "$number" --remove-label "$pending_label" --add-label "$tagged_label"
+
+          if ! gh pr view "$number" --json number >/dev/null 2>&1; then
+            echo "Cannot verify release PR #$number before updating labels." >&2
+            exit 1
+          fi
+
+          if ! gh pr edit "$number" --remove-label "$pending_label" --add-label "$tagged_label"; then
+            echo "Failed to update release PR #$number labels." >&2
+            exit 1
+          fi
