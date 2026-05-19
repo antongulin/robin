@@ -1,6 +1,8 @@
 export declare const DEFAULT_CONFIG_FILE = ".github/universal-code-reviewer.yml";
 export declare const DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
 export declare const DEFAULT_ACTION_MAX_COMMENTS = 25;
+/** Reusable workflow default in `.github/workflows/review.yml` */
+export declare const REUSABLE_WORKFLOW_MAX_COMMENTS = 10;
 export interface RepoConfig {
     maxDiffSize?: number;
     maxComments?: number;

@@ -1,6 +1,8 @@
 export const DEFAULT_CONFIG_FILE = ".github/universal-code-reviewer.yml";
 export const DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
 export const DEFAULT_ACTION_MAX_COMMENTS = 25;
+/** Reusable workflow default in `.github/workflows/review.yml` */
+export const REUSABLE_WORKFLOW_MAX_COMMENTS = 10;
 
 export interface RepoConfig {
   maxDiffSize?: number;
@@ -70,12 +72,10 @@ export function resolveMaxDiffSize(actionInput: string, repoConfig?: RepoConfig)
 
 export function resolveMaxComments(actionInput: string, repoConfig?: RepoConfig): number {
   const parsed = parseInt(actionInput, 10);
-  if (
-    repoConfig?.maxComments &&
+  const isUnsetOrWorkflowDefault =
     Number.isFinite(parsed) &&
-    parsed === DEFAULT_ACTION_MAX_COMMENTS &&
-    repoConfig.maxComments !== DEFAULT_ACTION_MAX_COMMENTS
-  ) {
+    (parsed === DEFAULT_ACTION_MAX_COMMENTS || parsed === REUSABLE_WORKFLOW_MAX_COMMENTS);
+  if (repoConfig?.maxComments && isUnsetOrWorkflowDefault) {
     return repoConfig.maxComments;
   }
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_ACTION_MAX_COMMENTS;

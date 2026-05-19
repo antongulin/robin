@@ -125,7 +125,7 @@ async function run(): Promise<void> {
     const inlineReviewInstructions = core.getInput("review-instructions") || "";
     const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
     const configFile = core.getInput("config-file") || DEFAULT_CONFIG_FILE;
-    const jsonResponseModeInput = core.getInput("use-json-response-mode") || "true";
+    const jsonResponseModeInput = core.getInput("use-json-response-mode") || "";
 
     core.info(`Model: ${model || "(not configured)"}`);
 
@@ -488,9 +488,7 @@ function shouldRetryStructuredReview(findings: StructuredReview): boolean {
     findings.low.length +
     findings.suggestions.length;
 
-  if (findingCount > 0) return false;
-  if (findings.summary.trim().length > 40) return false;
-  return true;
+  return findingCount === 0;
 }
 
 async function runReview(

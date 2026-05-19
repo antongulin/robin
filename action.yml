@@ -73,9 +73,9 @@ inputs:
     required: false
     default: ".github/universal-code-reviewer.yml"
   use-json-response-mode:
-    description: "Request JSON object responses when the provider supports response_format."
+    description: "Request JSON object responses when the provider supports response_format. Leave empty to use repo config or default true."
     required: false
-    default: "true"
+    default: ""
 
 runs:
   using: "node24"

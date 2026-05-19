@@ -127,7 +127,7 @@ async function run() {
         const inlineReviewInstructions = core.getInput("review-instructions") || "";
         const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
         const configFile = core.getInput("config-file") || repo_config_1.DEFAULT_CONFIG_FILE;
-        const jsonResponseModeInput = core.getInput("use-json-response-mode") || "true";
+        const jsonResponseModeInput = core.getInput("use-json-response-mode") || "";
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
@@ -391,11 +391,7 @@ function shouldRetryStructuredReview(findings) {
         findings.medium.length +
         findings.low.length +
         findings.suggestions.length;
-    if (findingCount > 0)
-        return false;
-    if (findings.summary.trim().length > 40)
-        return false;
-    return true;
+    return findingCount === 0;
 }
 async function runReview(llm, diff, reviewInstructions, jsonResponseMode) {
     const systemPrompt = (0, review_prompts_1.getReviewPrompt)(reviewInstructions);

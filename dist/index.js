@@ -725,7 +725,7 @@ async function run() {
         const inlineReviewInstructions = core.getInput("review-instructions") || "";
         const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
         const configFile = core.getInput("config-file") || repo_config_1.DEFAULT_CONFIG_FILE;
-        const jsonResponseModeInput = core.getInput("use-json-response-mode") || "true";
+        const jsonResponseModeInput = core.getInput("use-json-response-mode") || "";
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
@@ -989,11 +989,7 @@ function shouldRetryStructuredReview(findings) {
         findings.medium.length +
         findings.low.length +
         findings.suggestions.length;
-    if (findingCount > 0)
-        return false;
-    if (findings.summary.trim().length > 40)
-        return false;
-    return true;
+    return findingCount === 0;
 }
 async function runReview(llm, diff, reviewInstructions, jsonResponseMode) {
     const systemPrompt = (0, review_prompts_1.getReviewPrompt)(reviewInstructions);
@@ -1164,7 +1160,7 @@ function getHelpMessage() {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DEFAULT_ACTION_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
+exports.REUSABLE_WORKFLOW_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
 exports.parseRepoConfigYaml = parseRepoConfigYaml;
 exports.resolveMaxDiffSize = resolveMaxDiffSize;
 exports.resolveMaxComments = resolveMaxComments;
@@ -1172,6 +1168,8 @@ exports.resolveJsonResponseMode = resolveJsonResponseMode;
 exports.DEFAULT_CONFIG_FILE = ".github/universal-code-reviewer.yml";
 exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
 exports.DEFAULT_ACTION_MAX_COMMENTS = 25;
+/** Reusable workflow default in `.github/workflows/review.yml` */
+exports.REUSABLE_WORKFLOW_MAX_COMMENTS = 10;
 function parseRepoConfigYaml(text) {
     const config = {};
     let inSkipPaths = false;
@@ -1223,10 +1221,9 @@ function resolveMaxDiffSize(actionInput, repoConfig) {
 }
 function resolveMaxComments(actionInput, repoConfig) {
     const parsed = parseInt(actionInput, 10);
-    if (repoConfig?.maxComments &&
-        Number.isFinite(parsed) &&
-        parsed === exports.DEFAULT_ACTION_MAX_COMMENTS &&
-        repoConfig.maxComments !== exports.DEFAULT_ACTION_MAX_COMMENTS) {
+    const isUnsetOrWorkflowDefault = Number.isFinite(parsed) &&
+        (parsed === exports.DEFAULT_ACTION_MAX_COMMENTS || parsed === exports.REUSABLE_WORKFLOW_MAX_COMMENTS);
+    if (repoConfig?.maxComments && isUnsetOrWorkflowDefault) {
         return repoConfig.maxComments;
     }
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : exports.DEFAULT_ACTION_MAX_COMMENTS;
