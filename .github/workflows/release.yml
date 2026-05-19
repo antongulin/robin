@@ -123,6 +123,12 @@ jobs:
 
           merge_sha="${{ steps.merge.outputs.merge_sha }}"
           number="${{ steps.release-pr.outputs.number }}"
+
+          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
+            echo "Cannot update release PR labels; invalid PR number: $number" >&2
+            exit 1
+          fi
+
           version=$(
             git show "$merge_sha:.release-please-manifest.json" |
               node -e '

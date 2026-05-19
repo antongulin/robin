@@ -64,6 +64,9 @@ describe("release workflow", () => {
       "gh pr edit \"$number\" --remove-label \"autorelease: pending\" --add-label \"autorelease: tagged\"",
     );
     expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]+$ ]]");
+    expect(releaseWorkflow).toContain(
+      "Cannot update release PR labels; invalid PR number: $number",
+    );
     expect(releaseWorkflow).toContain("set -euo pipefail");
     expect(releaseWorkflow).toContain("Release notes for $tag were empty or malformed.");
     expect(releaseWorkflow).toContain("Existing release tag $tag points to");
