@@ -65,6 +65,9 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain("Release notes for $tag were empty or malformed.");
     expect(releaseWorkflow).toContain("Existing release tag $tag points to");
     expect(releaseWorkflow).not.toContain("jq ");
+    expect(releaseWorkflow).not.toMatch(/\n  verify-release:\n/);
+    expect(releaseWorkflow).not.toContain("needs.release-please.outputs.tag_name");
+    expect(releaseWorkflow).not.toContain("needs.release-please.outputs.release_created");
   });
 
   it("documents that releases publish automatically after merges to main", () => {
