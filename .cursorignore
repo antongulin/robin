@@ -15,10 +15,9 @@ dist/*
 package-lock.json
 CHANGELOG.md
 
-# Release automation (maintainer)
+# Release automation (manifests only; release.yml stays indexed for maintainers)
 release-please-config.json
 .release-please-manifest.json
-.github/workflows/release.yml
 
 # Local / tooling
 *.log

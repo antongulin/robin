@@ -13,7 +13,7 @@
   "homepage": "https://github.com/antongulin/universal-code-reviewer#readme",
   "scripts": {
     "build": "tsc && ncc build dist/index.js -o dist && npm run clean",
-    "clean": "find dist -mindepth 1 ! -name index.js -exec rm -rf {} + 2>/dev/null || true",
+    "clean": "node scripts/clean-dist.js",
     "dev": "ts-node src/main.ts",
     "lint": "eslint src/**/*.ts",
     "test": "jest",

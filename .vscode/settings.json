@@ -1,12 +1,19 @@
 {
   "files.exclude": {
-    "**": true,
-    "!CONTRIBUTING.md": false,
-    "!package.json": false
+    "docs/superpowers": true,
+    ".agents": true,
+    ".worktrees": true,
+    "node_modules": true,
+    "coverage": true,
+    "dist/**/*.map": true,
+    "dist/**/*.d.ts": true
   },
   "search.exclude": {
-    "**": true,
-    "!CONTRIBUTING.md": false,
-    "!package.json": false
+    "docs/superpowers": true,
+    ".agents": true,
+    ".worktrees": true,
+    "node_modules": true,
+    "coverage": true,
+    "dist": true
   }
 }
