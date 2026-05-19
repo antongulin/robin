@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 concurrency:
   group: release-please-${{ github.ref }}
@@ -22,11 +23,158 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       major: ${{ steps.release.outputs.major }}
       minor: ${{ steps.release.outputs.minor }}
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      pr: ${{ steps.release.outputs.pr }}
+      prs: ${{ steps.release.outputs.prs }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  auto-release:
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Extract release PR number
+        id: release-pr
+        shell: bash
+        env:
+          RELEASE_PR: ${{ needs.release-please.outputs.pr }}
+          RELEASE_PRS: ${{ needs.release-please.outputs.prs }}
+        run: |
+          set -euo pipefail
+
+          number=$(
+            node -e '
+              const pr = process.env.RELEASE_PR;
+              const prs = process.env.RELEASE_PRS;
+              let number = "";
+
+              if (pr && pr !== "null") {
+                number = JSON.parse(pr).number ?? "";
+              } else if (prs && prs !== "null") {
+                number = (JSON.parse(prs)[0] ?? {}).number ?? "";
+              }
+
+              process.stdout.write(String(number));
+            '
+          )
+
+          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
+            echo "Release Please reported an invalid PR number: $number" >&2
+            exit 1
+          fi
+
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release PR
+        run: gh pr checkout "${{ steps.release-pr.outputs.number }}"
+
+      - name: Verify release PR
+        run: |
+          set -euo pipefail
+
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+          git diff --exit-code dist/index.js
+
+      - name: Merge release PR
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          number="${{ steps.release-pr.outputs.number }}"
+          gh pr merge "$number" --merge --delete-branch
+          merge_sha=$(gh pr view "$number" --json mergeCommit -q '.mergeCommit.oid')
+
+          if [ -z "$merge_sha" ] || [ "$merge_sha" = "null" ]; then
+            echo "Release PR merged but merge commit was not available." >&2
+            exit 1
+          fi
+
+          git fetch origin main --tags --force || { echo "Fetch failed" >&2; exit 1; }
+          echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Create release and update floating tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          merge_sha="${{ steps.merge.outputs.merge_sha }}"
+          version=$(
+            git show "$merge_sha:.release-please-manifest.json" |
+              node -e '
+                let input = "";
+                process.stdin.on("data", chunk => input += chunk);
+                process.stdin.on("end", () => {
+                  process.stdout.write(JSON.parse(input)["."] ?? "");
+                });
+              '
+          )
+
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "Could not read release version from manifest." >&2
+            exit 1
+          fi
+
+          tag="v$version"
+          git fetch origin --tags --force || { echo "Fetch tags failed" >&2; exit 1; }
+
+          notes=$(
+            git show "$merge_sha:CHANGELOG.md" |
+              awk -v version="$version" '
+                $0 ~ "^## \\[" version "\\]" { capture = 1; print; next }
+                capture && /^## \\[/ { exit }
+                capture { print }
+              '
+          )
+
+          if [ -z "$notes" ] || ! grep -q "^## \\[$version\\]" <<<"$notes"; then
+            echo "Release notes for $tag were empty or malformed." >&2
+            exit 1
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            existing_sha=$(git rev-list -n 1 "$tag" 2>/dev/null || true)
+            if [ -n "$existing_sha" ] && [ "$existing_sha" != "$merge_sha" ]; then
+              echo "Existing release tag $tag points to $existing_sha, not $merge_sha." >&2
+              exit 1
+            fi
+            echo "Release $tag already exists."
+          else
+            gh release create "$tag" \
+              --target "$merge_sha" \
+              --title "$tag" \
+              --notes "$notes"
+          fi
+
+          IFS=. read -r major minor _patch <<<"$version"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          # Floating tags intentionally move to the latest release in each stream.
+          git tag -f "v$major" "$merge_sha"
+          git tag -f "v$major.$minor" "$merge_sha"
+          git push origin -f "v$major" "v$major.$minor"
 
   verify-release:
     needs: release-please
