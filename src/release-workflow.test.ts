@@ -1,3 +1,4 @@
+import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -8,6 +9,38 @@ const releaseWorkflow = readFileSync(
 );
 const contributing = readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf8");
 const advancedDocs = readFileSync(join(repoRoot, "docs", "ADVANCED.md"), "utf8");
+
+function getWorkflowRunStep(workflow: string, stepName: string): string {
+  const lines = workflow.split("\n");
+  const stepIndex = lines.findIndex((line) => line.trim() === `- name: ${stepName}`);
+
+  if (stepIndex === -1) {
+    throw new Error(`Could not find workflow step: ${stepName}`);
+  }
+
+  const runIndex = lines.findIndex(
+    (line, index) => index > stepIndex && line.trim() === "run: |",
+  );
+
+  if (runIndex === -1) {
+    throw new Error(`Could not find run block for workflow step: ${stepName}`);
+  }
+
+  const runIndent = lines[runIndex].match(/^ */)?.[0].length ?? 0;
+  const runBlock: string[] = [];
+
+  for (const line of lines.slice(runIndex + 1)) {
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+
+    if (line.trim() !== "" && indent <= runIndent) {
+      break;
+    }
+
+    runBlock.push(line.slice(runIndent + 2));
+  }
+
+  return runBlock.join("\n");
+}
 
 describe("release workflow", () => {
   it("automatically verifies, merges, and publishes release PRs", () => {
@@ -38,5 +71,45 @@ describe("release workflow", () => {
     expect(advancedDocs).toContain(
       "Release PRs are verified, merged, and published automatically by the workflow.",
     );
+  });
+
+  it("extracts release notes with shell syntax that runs on ubuntu-latest", () => {
+    const releaseStep = getWorkflowRunStep(
+      releaseWorkflow,
+      "Create release and update floating tags",
+    );
+    const awkMatch = releaseStep.match(/awk -v version="\$version" '\n([\s\S]*?)\n\s*'/);
+
+    expect(awkMatch).not.toBeNull();
+    expect(awkMatch?.[1]).toBeDefined();
+
+    const awkProgram = awkMatch![1]
+      .split("\n")
+      .map((line) => line.trimStart())
+      .join("\n");
+
+    const changelog = [
+      "# Changelog",
+      "",
+      "## [1.2.1](https://example.com/compare/v1.2.0...v1.2.1) (2026-05-19)",
+      "",
+      "### Bug Fixes",
+      "",
+      "* harden auto release workflow",
+      "",
+      "## [1.2.0](https://example.com/compare/v1.1.2...v1.2.0) (2026-05-18)",
+      "",
+      "* previous release",
+      "",
+    ].join("\n");
+
+    const notes = execFileSync("awk", ["-v", "version=1.2.1", awkProgram], {
+      input: changelog,
+      encoding: "utf8",
+    });
+
+    expect(notes).toContain("## [1.2.1]");
+    expect(notes).toContain("* harden auto release workflow");
+    expect(notes).not.toContain("## [1.2.0]");
   });
 });

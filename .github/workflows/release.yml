@@ -144,7 +144,7 @@ jobs:
             git show "$merge_sha:CHANGELOG.md" |
               awk -v version="$version" '
                 $0 ~ "^## \\[" version "\\]" { capture = 1; print; next }
-                capture && /^## \\[/ { exit }
+                capture && /^## \[/ { exit }
                 capture { print }
               '
           )
