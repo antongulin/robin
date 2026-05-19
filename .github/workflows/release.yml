@@ -122,6 +122,7 @@ jobs:
           set -euo pipefail
 
           merge_sha="${{ steps.merge.outputs.merge_sha }}"
+          number="${{ steps.release-pr.outputs.number }}"
           version=$(
             git show "$merge_sha:.release-please-manifest.json" |
               node -e '
@@ -176,3 +177,4 @@ jobs:
           git tag -f "v$major" "$merge_sha"
           git tag -f "v$major.$minor" "$merge_sha"
           git push origin -f "v$major" "v$major.$minor"
+          gh pr edit "$number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"

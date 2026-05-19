@@ -60,6 +60,9 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain("gh pr merge \"$number\" --merge --delete-branch");
     expect(releaseWorkflow).toContain("gh release create \"$tag\"");
     expect(releaseWorkflow).toContain("git push origin -f \"v$major\" \"v$major.$minor\"");
+    expect(releaseWorkflow).toContain(
+      "gh pr edit \"$number\" --remove-label \"autorelease: pending\" --add-label \"autorelease: tagged\"",
+    );
     expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]+$ ]]");
     expect(releaseWorkflow).toContain("set -euo pipefail");
     expect(releaseWorkflow).toContain("Release notes for $tag were empty or malformed.");
