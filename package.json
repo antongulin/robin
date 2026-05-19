@@ -1,6 +1,6 @@
 {
   "name": "universal-code-reviewer",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "AI-powered code reviews using any OpenAI-compatible LLM. No vendor lock-in, no usage quotas.",
   "main": "dist/index.js",
   "repository": {

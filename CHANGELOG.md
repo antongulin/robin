@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.1...v1.1.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* support openrouter/free rotation without updating secrets ([f31aa2d](https://github.com/antongulin/universal-code-reviewer/commit/f31aa2d548f31f034bdba152c1258a700a1eacaf))
+* support openrouter/free rotation without updating secrets ([4ec28ec](https://github.com/antongulin/universal-code-reviewer/commit/4ec28ecb18510d649fcfebf287d54a332e6ef5af))
+
 ## [1.1.1](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.0...v1.1.1) (2026-05-19)
 
 
