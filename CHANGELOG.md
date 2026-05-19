@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.0...v1.1.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* auto-retry LLM completions on empty or transient errors ([c22bb05](https://github.com/antongulin/universal-code-reviewer/commit/c22bb05bb5da004c7f30ea65665ab169d8618d36))
+
 ## [1.1.0](https://github.com/antongulin/universal-code-reviewer/compare/v1.0.0...v1.1.0) (2026-05-19)
 
 
