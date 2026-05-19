@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.2](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.1...v1.2.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* document pr-only release please mode ([b976506](https://github.com/antongulin/universal-code-reviewer/commit/b9765068b9577c06fc3e165bc70118485f82fdbd))
+* keep Release Please in PR-only mode ([46084b7](https://github.com/antongulin/universal-code-reviewer/commit/46084b78a7e097c8b8a93bca0d90eed38d1239a6))
+* keep release-please in pr-only mode ([67c2846](https://github.com/antongulin/universal-code-reviewer/commit/67c2846db208b991d4ae894ca210ed1457cff8b8))
+* remove stale release-please publish outputs ([d7bc626](https://github.com/antongulin/universal-code-reviewer/commit/d7bc6268cffd0a8255041ea2d2ab3bba7fe0f000))
+* repair auto-release notes extraction ([7a7b26a](https://github.com/antongulin/universal-code-reviewer/commit/7a7b26a94f0416eb1009018ff4d171c8cf5bbaf9))
+* repair auto-release notes extraction ([4c490cf](https://github.com/antongulin/universal-code-reviewer/commit/4c490cf4f90b125ed41c952be93c10a9cc577dfc))
+
+
+### Documentation
+
+* clarify release publishing ownership ([3759b2f](https://github.com/antongulin/universal-code-reviewer/commit/3759b2fb7dbcb9669e9851c8cae158232f99cf3b))
+
 ## [1.2.1](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.0...v1.2.1) (2026-05-19)
 
 
