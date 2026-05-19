@@ -1,5 +1,12 @@
 import { OpenAI } from "openai";
-import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
+import { DEFAULT_LLM_COMPLETION_ATTEMPTS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
+import {
+  computeRetryDelayMs,
+  delayMs,
+  getLlmCompletionAttemptCount,
+  isRetriableLlmError,
+  shouldUseJsonResponseMode,
+} from "./llm-retry";
 import * as core from "@actions/core";
 
 export interface ChatCompletionResult {
@@ -11,10 +18,20 @@ export class LLMClient {
   private client: OpenAI;
   private model: string;
   private maxOutputTokens?: number;
+  private maxAttempts: number;
 
-  constructor(baseUrl: string, apiKey: string, model: string, maxOutputTokens?: number, timeoutMs = DEFAULT_LLM_TIMEOUT_MS) {
-    core.info(`Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${timeoutMs} ms`);
-    
+  constructor(
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+    maxOutputTokens?: number,
+    timeoutMs = DEFAULT_LLM_TIMEOUT_MS,
+    maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS
+  ) {
+    core.info(
+      `Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${timeoutMs} ms, maxAttempts=${maxAttempts}`
+    );
+
     this.client = new OpenAI({
       baseURL: baseUrl,
       apiKey: apiKey || "ollama",
@@ -23,9 +40,11 @@ export class LLMClient {
     });
 
     this.model = model;
-    this.maxOutputTokens = maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
-      ? maxOutputTokens
-      : undefined;
+    this.maxOutputTokens =
+      maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+        ? maxOutputTokens
+        : undefined;
+    this.maxAttempts = getLlmCompletionAttemptCount(maxAttempts);
   }
 
   async chatCompletion(
@@ -33,52 +52,87 @@ export class LLMClient {
     userContent: string,
     jsonResponseMode = false
   ): Promise<ChatCompletionResult> {
-    try {
-      const request: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
-        model: this.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-        temperature: 0.1,
-      };
+    let lastFinishReason = "unknown";
+    let lastError: unknown;
 
-      if (this.maxOutputTokens) {
-        request.max_tokens = this.maxOutputTokens;
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      const useJson = shouldUseJsonResponseMode(attempt, jsonResponseMode);
+
+      try {
+        const response = await this.client.chat.completions.create(
+          this.buildRequest(systemPrompt, userContent, useJson)
+        );
+        const content = this.extractMessageContent(response);
+        const resolvedModel = response.model || this.model;
+
+        if (content) {
+          this.logResolvedModel(resolvedModel);
+          return { content, model: resolvedModel };
+        }
+
+        lastFinishReason = response.choices?.[0]?.finish_reason || "unknown";
+        core.warning(
+          `LLM attempt ${attempt}/${this.maxAttempts}: empty content (finish_reason=${lastFinishReason}${useJson ? ", json mode" : ""})`
+        );
+      } catch (error) {
+        lastError = error;
+        core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${error}`);
+
+        if (!isRetriableLlmError(error) || attempt === this.maxAttempts) {
+          core.error(`LLM API error: ${error}`);
+          throw new Error(`Failed to get response from LLM: ${error}`);
+        }
       }
 
-      if (jsonResponseMode) {
-        request.response_format = { type: "json_object" };
+      if (attempt < this.maxAttempts) {
+        const waitMs = computeRetryDelayMs(attempt);
+        core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
+        await delayMs(waitMs);
       }
+    }
 
-      let response = await this.client.chat.completions.create(request);
-      let content = this.extractMessageContent(response);
-      let resolvedModel = response.model || this.model;
+    if (lastError && isRetriableLlmError(lastError)) {
+      core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
+      throw new Error(
+        `Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`
+      );
+    }
 
-      if (!content) {
-        core.warning("LLM returned empty content; retrying once without response_format.");
-        const retryRequest = { ...request };
-        delete retryRequest.response_format;
-        response = await this.client.chat.completions.create(retryRequest);
-        content = this.extractMessageContent(response);
-        resolvedModel = response.model || this.model;
-      }
+    throw new Error(
+      `Empty response from LLM after ${this.maxAttempts} attempts (finish_reason=${lastFinishReason})`
+    );
+  }
 
-      if (resolvedModel && resolvedModel !== this.model) {
-        core.info(`LLM resolved model: ${resolvedModel} (requested: ${this.model})`);
-      } else {
-        core.info(`LLM response model: ${resolvedModel}`);
-      }
+  private buildRequest(
+    systemPrompt: string,
+    userContent: string,
+    jsonResponseMode: boolean
+  ): OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming {
+    const request: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+      model: this.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      temperature: 0.1,
+    };
 
-      if (!content) {
-        const finishReason = response.choices?.[0]?.finish_reason || "unknown";
-        throw new Error(`Empty response from LLM (finish_reason=${finishReason})`);
-      }
+    if (this.maxOutputTokens) {
+      request.max_tokens = this.maxOutputTokens;
+    }
 
-      return { content, model: resolvedModel };
-    } catch (error) {
-      core.error(`LLM API error: ${error}`);
-      throw new Error(`Failed to get response from LLM: ${error}`);
+    if (jsonResponseMode) {
+      request.response_format = { type: "json_object" };
+    }
+
+    return request;
+  }
+
+  private logResolvedModel(resolvedModel: string): void {
+    if (resolvedModel && resolvedModel !== this.model) {
+      core.info(`LLM resolved model: ${resolvedModel} (requested: ${this.model})`);
+    } else {
+      core.info(`LLM response model: ${resolvedModel}`);
     }
   }
 

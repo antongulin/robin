@@ -231,7 +231,7 @@ No daily quota from this action. Real limits:
 | `Connection refused` | Runner can't reach LLM URL | Public URL, tunnel, or self-hosted runner |
 | `Input required: model` | Missing secret | Add `LLM_MODEL` |
 | `Input required: llm-base-url` | Missing secret | Add `LLM_BASE_URL` |
-| `Empty response from LLM` | Wrong model name | Check provider dashboard |
+| `Empty response from LLM` | Free/unstable model returned no text | Action retries up to 3 times with backoff; comment `/review` again or pin a specific `LLM_MODEL` |
 | `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` |
 | `Resource not accessible by integration` | Missing permissions | Add `pull-requests: write` |
 | Slash command ignored | Wrong format or permission | `/review` as first line; need write access |
