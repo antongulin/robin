@@ -50,6 +50,10 @@ describe("resolveMaxComments", () => {
       resolveMaxComments(String(REUSABLE_WORKFLOW_MAX_COMMENTS), { maxComments: 8 })
     ).toBe(8);
   });
+
+  it("honors max-comments 0 from repo config", () => {
+    expect(resolveMaxComments(String(DEFAULT_ACTION_MAX_COMMENTS), { maxComments: 0 })).toBe(0);
+  });
 });
 
 describe("resolveJsonResponseMode", () => {

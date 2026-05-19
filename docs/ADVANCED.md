@@ -17,11 +17,13 @@ skip-paths:
 | Key | Purpose |
 | --- | --- |
 | `max-diff-size` | Used when the workflow still passes the action default (`50000`) |
-| `max-comments` | Used when the workflow still passes the action default (`25`) |
-| `json-response-mode` | Ask the provider for JSON responses when supported |
+| `max-comments` | Used when the workflow passes action default `25` or reusable workflow default `10` |
+| `json-response-mode` | Used when `use-json-response-mode` is empty (action default defers to this file) |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
 
-Lockfiles, `dist/`, `node_modules/`, and minified assets are always skipped automatically.
+Lockfiles (npm, yarn, pnpm, Cargo, Gemfile, poetry), `dist/`, `node_modules/`, and minified assets are always skipped automatically. If every changed file is skipped, the action posts a status comment and skips the LLM call.
+
+The config file uses a small YAML subset (line-based keys only), not full YAML nesting.
 
 ## Pinning the action
 
@@ -85,6 +87,8 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `min-command-permission` | `write` | Who can run `/review` |
 | `review-instructions` | empty | Extra prompt text |
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch |
+| `config-file` | `.github/universal-code-reviewer.yml` | Repo config path on the base branch |
+| `use-json-response-mode` | empty (defer to repo config, else true) | Request `response_format: json_object` when supported |
 
 ## Usage patterns
 

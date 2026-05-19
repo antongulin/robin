@@ -37,6 +37,9 @@ exports.ReviewParser = void 0;
 const core = __importStar(require("@actions/core"));
 class ReviewParser {
     static parse(rawText) {
+        return this.parseDetailed(rawText).findings;
+    }
+    static parseDetailed(rawText) {
         const review = {
             summary: "",
             high: [],
@@ -49,7 +52,7 @@ class ReviewParser {
             const jsonReview = this.parseJsonReview(rawText);
             if (jsonReview) {
                 core.info(`Parsed JSON review: ${jsonReview.high.length} high, ${jsonReview.medium.length} medium, ${jsonReview.low.length} low, ${jsonReview.suggestions.length} suggestions`);
-                return jsonReview;
+                return { findings: jsonReview, usedJson: true };
             }
             const markdownReview = this.parseMarkdownReview(rawText, review);
             review.summary = markdownReview.summary;
@@ -63,7 +66,7 @@ class ReviewParser {
             core.warning(`Failed to parse structured review: ${error}. Treating entire response as raw summary.`);
             review.summary = rawText;
         }
-        return review;
+        return { findings: review, usedJson: false };
     }
     static parseJsonReview(rawText) {
         const jsonText = this.extractJsonObject(rawText);

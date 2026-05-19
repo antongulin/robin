@@ -6,7 +6,7 @@ import { ReviewParser, StructuredReview } from "./review-parser";
 import { shouldRetryStructuredReview } from "./review-retry";
 import { GitHubReviewer } from "./github-reviewer";
 import { DEFAULT_LLM_TIMEOUT_MS, parseLLMTimeout } from "./config";
-import { filterDiff } from "./diff-filter";
+import { filterDiff, splitDiffIntoFiles } from "./diff-filter";
 import {
   DEFAULT_CONFIG_FILE,
   RepoConfig,
@@ -163,9 +163,22 @@ async function run(): Promise<void> {
       return;
     }
 
+    const diffFiles = splitDiffIntoFiles(diff);
     const { filtered: filteredDiff, removedFiles } = filterDiff(diff, repoConfig.skipPaths || []);
     if (removedFiles.length > 0) {
       core.info(`Skipped ${removedFiles.length} file(s) before review: ${removedFiles.join(", ")}`);
+    }
+
+    if (diffFiles.length > 0 && !filteredDiff.trim()) {
+      core.info("All changed files were skipped by diff filters; no LLM review needed.");
+      await updateStatusComment(
+        octokit,
+        owner,
+        repo,
+        statusCommentId,
+        buildSkippedFilterStatusBody(removedFiles)
+      );
+      return;
     }
 
     const reviewDiff = filteredDiff.trim() ? filteredDiff : diff;
@@ -216,9 +229,10 @@ async function run(): Promise<void> {
     } else {
       // Full review parsed and posted as a review
       core.info("Parsing review response...");
-      let findings = ReviewParser.parse(reviewText);
+      let parsedReview = ReviewParser.parseDetailed(reviewText);
+      let findings = parsedReview.findings;
 
-      if (shouldRetryStructuredReview(findings)) {
+      if (shouldRetryStructuredReview(findings, parsedReview.usedJson)) {
         core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
         const retryText = (
           await runReview(
@@ -228,7 +242,8 @@ async function run(): Promise<void> {
             true
           )
         ).content;
-        findings = ReviewParser.parse(retryText);
+        parsedReview = ReviewParser.parseDetailed(retryText);
+        findings = parsedReview.findings;
       }
 
       core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
@@ -347,6 +362,21 @@ function buildCompletedStatusBody(command: "review" | "summary", findings?: Stru
     `:white_check_mark: Finished the review. ${result}`,
     "",
     "After you push fixes, comment `/review` when you are ready for another pass.",
+  ].join("\n");
+}
+
+function buildSkippedFilterStatusBody(removedFiles: string[]): string {
+  const preview = removedFiles.slice(0, 8).join(", ");
+  const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
+
+  return [
+    "## :robot: Universal Code Reviewer",
+    "",
+    ":white_check_mark: Skipped review — only ignored paths changed.",
+    "",
+    `Filtered files: ${preview}${suffix}`,
+    "",
+    "Add custom `skip-paths` in `.github/universal-code-reviewer.yml` if this was unexpected.",
   ].join("\n");
 }
 

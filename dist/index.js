@@ -751,9 +751,15 @@ async function run() {
             core.warning("No diff found for this PR.");
             return;
         }
+        const diffFiles = (0, diff_filter_1.splitDiffIntoFiles)(diff);
         const { filtered: filteredDiff, removedFiles } = (0, diff_filter_1.filterDiff)(diff, repoConfig.skipPaths || []);
         if (removedFiles.length > 0) {
             core.info(`Skipped ${removedFiles.length} file(s) before review: ${removedFiles.join(", ")}`);
+        }
+        if (diffFiles.length > 0 && !filteredDiff.trim()) {
+            core.info("All changed files were skipped by diff filters; no LLM review needed.");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildSkippedFilterStatusBody(removedFiles));
+            return;
         }
         const reviewDiff = filteredDiff.trim() ? filteredDiff : diff;
         if (!reviewDiff.trim()) {
@@ -789,11 +795,13 @@ async function run() {
         else {
             // Full review parsed and posted as a review
             core.info("Parsing review response...");
-            let findings = review_parser_1.ReviewParser.parse(reviewText);
-            if ((0, review_retry_1.shouldRetryStructuredReview)(findings)) {
+            let parsedReview = review_parser_1.ReviewParser.parseDetailed(reviewText);
+            let findings = parsedReview.findings;
+            if ((0, review_retry_1.shouldRetryStructuredReview)(findings, parsedReview.usedJson)) {
                 core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
                 const retryText = (await runReview(llm, truncatedDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true)).content;
-                findings = review_parser_1.ReviewParser.parse(retryText);
+                parsedReview = review_parser_1.ReviewParser.parseDetailed(retryText);
+                findings = parsedReview.findings;
             }
             core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
             const reviewer = new github_reviewer_1.GitHubReviewer(octokit, maxComments);
@@ -887,6 +895,19 @@ function buildCompletedStatusBody(command, findings) {
         `:white_check_mark: Finished the review. ${result}`,
         "",
         "After you push fixes, comment `/review` when you are ready for another pass.",
+    ].join("\n");
+}
+function buildSkippedFilterStatusBody(removedFiles) {
+    const preview = removedFiles.slice(0, 8).join(", ");
+    const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
+    return [
+        "## :robot: Universal Code Reviewer",
+        "",
+        ":white_check_mark: Skipped review — only ignored paths changed.",
+        "",
+        `Filtered files: ${preview}${suffix}`,
+        "",
+        "Add custom `skip-paths` in `.github/universal-code-reviewer.yml` if this was unexpected.",
     ].join("\n");
 }
 function buildFailedStatusBody(errorMessage, command) {
@@ -1208,7 +1229,7 @@ function parseRepoConfigYaml(text) {
 }
 function resolveMaxDiffSize(actionInput, repoConfig) {
     const parsed = parseInt(actionInput, 10);
-    if (repoConfig?.maxDiffSize &&
+    if (repoConfig?.maxDiffSize !== undefined &&
         Number.isFinite(parsed) &&
         parsed === exports.DEFAULT_ACTION_MAX_DIFF_SIZE &&
         repoConfig.maxDiffSize !== exports.DEFAULT_ACTION_MAX_DIFF_SIZE) {
@@ -1220,7 +1241,7 @@ function resolveMaxComments(actionInput, repoConfig) {
     const parsed = parseInt(actionInput, 10);
     const isUnsetOrWorkflowDefault = Number.isFinite(parsed) &&
         (parsed === exports.DEFAULT_ACTION_MAX_COMMENTS || parsed === exports.REUSABLE_WORKFLOW_MAX_COMMENTS);
-    if (repoConfig?.maxComments && isUnsetOrWorkflowDefault) {
+    if (repoConfig?.maxComments !== undefined && isUnsetOrWorkflowDefault) {
         return repoConfig.maxComments;
     }
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : exports.DEFAULT_ACTION_MAX_COMMENTS;
@@ -1279,6 +1300,9 @@ exports.ReviewParser = void 0;
 const core = __importStar(__nccwpck_require__(7484));
 class ReviewParser {
     static parse(rawText) {
+        return this.parseDetailed(rawText).findings;
+    }
+    static parseDetailed(rawText) {
         const review = {
             summary: "",
             high: [],
@@ -1291,7 +1315,7 @@ class ReviewParser {
             const jsonReview = this.parseJsonReview(rawText);
             if (jsonReview) {
                 core.info(`Parsed JSON review: ${jsonReview.high.length} high, ${jsonReview.medium.length} medium, ${jsonReview.low.length} low, ${jsonReview.suggestions.length} suggestions`);
-                return jsonReview;
+                return { findings: jsonReview, usedJson: true };
             }
             const markdownReview = this.parseMarkdownReview(rawText, review);
             review.summary = markdownReview.summary;
@@ -1305,7 +1329,7 @@ class ReviewParser {
             core.warning(`Failed to parse structured review: ${error}. Treating entire response as raw summary.`);
             review.summary = rawText;
         }
-        return review;
+        return { findings: review, usedJson: false };
     }
     static parseJsonReview(rawText) {
         const jsonText = this.extractJsonObject(rawText);
@@ -1493,12 +1517,17 @@ exports.ReviewParser = ReviewParser;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.shouldRetryStructuredReview = shouldRetryStructuredReview;
-function shouldRetryStructuredReview(findings) {
-    return (findings.high.length +
+const RETRY_SUMMARY_MAX_LENGTH = 40;
+function shouldRetryStructuredReview(findings, usedJson) {
+    const findingCount = findings.high.length +
         findings.medium.length +
         findings.low.length +
-        findings.suggestions.length ===
-        0);
+        findings.suggestions.length;
+    if (findingCount > 0)
+        return false;
+    if (usedJson)
+        return false;
+    return findings.summary.trim().length <= RETRY_SUMMARY_MAX_LENGTH;
 }
 //# sourceMappingURL=review-retry.js.map
 

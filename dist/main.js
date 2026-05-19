@@ -150,9 +150,15 @@ async function run() {
             core.warning("No diff found for this PR.");
             return;
         }
+        const diffFiles = (0, diff_filter_1.splitDiffIntoFiles)(diff);
         const { filtered: filteredDiff, removedFiles } = (0, diff_filter_1.filterDiff)(diff, repoConfig.skipPaths || []);
         if (removedFiles.length > 0) {
             core.info(`Skipped ${removedFiles.length} file(s) before review: ${removedFiles.join(", ")}`);
+        }
+        if (diffFiles.length > 0 && !filteredDiff.trim()) {
+            core.info("All changed files were skipped by diff filters; no LLM review needed.");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildSkippedFilterStatusBody(removedFiles));
+            return;
         }
         const reviewDiff = filteredDiff.trim() ? filteredDiff : diff;
         if (!reviewDiff.trim()) {
@@ -188,11 +194,13 @@ async function run() {
         else {
             // Full review parsed and posted as a review
             core.info("Parsing review response...");
-            let findings = review_parser_1.ReviewParser.parse(reviewText);
-            if ((0, review_retry_1.shouldRetryStructuredReview)(findings)) {
+            let parsedReview = review_parser_1.ReviewParser.parseDetailed(reviewText);
+            let findings = parsedReview.findings;
+            if ((0, review_retry_1.shouldRetryStructuredReview)(findings, parsedReview.usedJson)) {
                 core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
                 const retryText = (await runReview(llm, truncatedDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true)).content;
-                findings = review_parser_1.ReviewParser.parse(retryText);
+                parsedReview = review_parser_1.ReviewParser.parseDetailed(retryText);
+                findings = parsedReview.findings;
             }
             core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
             const reviewer = new github_reviewer_1.GitHubReviewer(octokit, maxComments);
@@ -286,6 +294,19 @@ function buildCompletedStatusBody(command, findings) {
         `:white_check_mark: Finished the review. ${result}`,
         "",
         "After you push fixes, comment `/review` when you are ready for another pass.",
+    ].join("\n");
+}
+function buildSkippedFilterStatusBody(removedFiles) {
+    const preview = removedFiles.slice(0, 8).join(", ");
+    const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
+    return [
+        "## :robot: Universal Code Reviewer",
+        "",
+        ":white_check_mark: Skipped review — only ignored paths changed.",
+        "",
+        `Filtered files: ${preview}${suffix}`,
+        "",
+        "Add custom `skip-paths` in `.github/universal-code-reviewer.yml` if this was unexpected.",
     ].join("\n");
 }
 function buildFailedStatusBody(errorMessage, command) {

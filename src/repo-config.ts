@@ -60,7 +60,7 @@ export function parseRepoConfigYaml(text: string): RepoConfig {
 export function resolveMaxDiffSize(actionInput: string, repoConfig?: RepoConfig): number {
   const parsed = parseInt(actionInput, 10);
   if (
-    repoConfig?.maxDiffSize &&
+    repoConfig?.maxDiffSize !== undefined &&
     Number.isFinite(parsed) &&
     parsed === DEFAULT_ACTION_MAX_DIFF_SIZE &&
     repoConfig.maxDiffSize !== DEFAULT_ACTION_MAX_DIFF_SIZE
@@ -75,7 +75,7 @@ export function resolveMaxComments(actionInput: string, repoConfig?: RepoConfig)
   const isUnsetOrWorkflowDefault =
     Number.isFinite(parsed) &&
     (parsed === DEFAULT_ACTION_MAX_COMMENTS || parsed === REUSABLE_WORKFLOW_MAX_COMMENTS);
-  if (repoConfig?.maxComments && isUnsetOrWorkflowDefault) {
+  if (repoConfig?.maxComments !== undefined && isUnsetOrWorkflowDefault) {
     return repoConfig.maxComments;
   }
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_ACTION_MAX_COMMENTS;

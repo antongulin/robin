@@ -1,1 +1,1 @@
-{"version":3,"file":"review-retry.d.ts","sourceRoot":"","sources":["../src/review-retry.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,gBAAgB,EAAE,MAAM,iBAAiB,CAAC;AAEnD,wBAAgB,2BAA2B,CAAC,QAAQ,EAAE,gBAAgB,GAAG,OAAO,CAQ/E"}
+{"version":3,"file":"review-retry.d.ts","sourceRoot":"","sources":["../src/review-retry.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,gBAAgB,EAAE,MAAM,iBAAiB,CAAC;AAInD,wBAAgB,2BAA2B,CACzC,QAAQ,EAAE,gBAAgB,EAC1B,QAAQ,EAAE,OAAO,GAChB,OAAO,CAWT"}

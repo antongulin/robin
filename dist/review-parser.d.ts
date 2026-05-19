@@ -15,8 +15,13 @@ export interface StructuredReview {
     suggestions: ReviewFinding[];
     rawResponse: string;
 }
+export interface ParsedReview {
+    findings: StructuredReview;
+    usedJson: boolean;
+}
 export declare class ReviewParser {
     static parse(rawText: string): StructuredReview;
+    static parseDetailed(rawText: string): ParsedReview;
     private static parseJsonReview;
     private static extractJsonObject;
     private static normalizeFindings;

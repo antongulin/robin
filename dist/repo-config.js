@@ -51,7 +51,7 @@ function parseRepoConfigYaml(text) {
 }
 function resolveMaxDiffSize(actionInput, repoConfig) {
     const parsed = parseInt(actionInput, 10);
-    if (repoConfig?.maxDiffSize &&
+    if (repoConfig?.maxDiffSize !== undefined &&
         Number.isFinite(parsed) &&
         parsed === exports.DEFAULT_ACTION_MAX_DIFF_SIZE &&
         repoConfig.maxDiffSize !== exports.DEFAULT_ACTION_MAX_DIFF_SIZE) {
@@ -63,7 +63,7 @@ function resolveMaxComments(actionInput, repoConfig) {
     const parsed = parseInt(actionInput, 10);
     const isUnsetOrWorkflowDefault = Number.isFinite(parsed) &&
         (parsed === exports.DEFAULT_ACTION_MAX_COMMENTS || parsed === exports.REUSABLE_WORKFLOW_MAX_COMMENTS);
-    if (repoConfig?.maxComments && isUnsetOrWorkflowDefault) {
+    if (repoConfig?.maxComments !== undefined && isUnsetOrWorkflowDefault) {
         return repoConfig.maxComments;
     }
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : exports.DEFAULT_ACTION_MAX_COMMENTS;
