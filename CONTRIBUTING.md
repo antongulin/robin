@@ -20,7 +20,7 @@ npm test
 npm run build
 ```
 
-The action runs from `dist/index.js`, so source changes that affect runtime behavior must be bundled with `npm run build` before release. Only `dist/index.js` is committed; other `dist/` files are local build artifacts.
+The action runs from `dist/index.js`, so source changes that affect runtime behavior must be bundled with `npm run build` before release. The build removes intermediate `dist/` files automatically (`scripts/clean-dist.js`, plain Node — works on Windows); only `dist/index.js` is committed. Run `npm run clean` manually if you ran `tsc` without a full build.
 
 Maintainer-only paths (`docs/superpowers/`, `.agents/`) are gitignored so the public repo stays focused on the action and user docs (`README.md`, `docs/ADVANCED.md`, `AGENTS.md`).
 

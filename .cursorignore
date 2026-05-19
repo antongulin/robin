@@ -1,8 +1,27 @@
-# Hide from Cursor indexing and @-mentions
+# Hide from Cursor indexing and @-mentions (public repo stays lean in the UI)
+
+# Maintainer-only (also in .gitignore)
 docs/superpowers/
 .agents/
 .worktrees/
+
+# Dependencies and build output
 node_modules/
 coverage/
 dist/*
 !dist/index.js
+
+# Large or low-signal for AI context
+package-lock.json
+CHANGELOG.md
+
+# Release automation (manifests only; release.yml stays indexed for maintainers)
+release-please-config.json
+.release-please-manifest.json
+
+# Local / tooling
+*.log
+.env
+.env.*
+.DS_Store
+*.tsbuildinfo

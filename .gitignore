@@ -3,12 +3,15 @@ node_modules/
 skills-lock.json
 *.log
 .env
-.env.local
+.env.*
 coverage/
 .DS_Store
 .idea/
+.vscode/*.code-workspace
 *.tgz
 *.tar.gz
+*.tsbuildinfo
+.cursor/
 
 # Maintainer-only (not needed for action consumers)
 docs/superpowers/
