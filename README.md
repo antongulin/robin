@@ -31,7 +31,7 @@ The easiest free setup uses [OpenRouter](https://openrouter.ai/):
 | `LLM_MODEL` | `openrouter/free` |
 
 > [!TIP]
-> `openrouter/free` picks a free model for each review — **$0 from OpenRouter**. You only spend [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) minutes while the job runs (often a few minutes per review).
+> `openrouter/free` picks a free model for each review — **$0 from OpenRouter**. OpenRouter rotates which model runs; **leave this secret as `openrouter/free`** — the action retries and uses provider fallbacks when a route is temporarily unavailable. You only spend [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) minutes while the job runs (often a few minutes per review).
 >
 > - **Public repos:** standard GitHub-hosted runners are free with no monthly minute cap.
 > - **Private repos:** GitHub Free includes about **2,000 minutes/month**; [GitHub Pro](https://docs.github.com/en/billing/concepts/product-billing/github-actions) includes about **3,000 minutes/month** (check your plan for current limits).
@@ -143,7 +143,8 @@ Add `.github/code-reviewer.md` in your repo:
 | Review never appears | Open **Actions** tab → open the failed run → read the error |
 | `/review` does nothing | Put `/review` on the **first** line; you need write access on the repo |
 | Review is very short | PR may be huge — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`) |
-| `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically (3 attempts); comment `/review` again or pin a model in `LLM_MODEL` |
+| `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/review` again |
+| `404 Provider returned error` | Normal for `openrouter/free` when one provider is down — the action retries up to 5 times; keep `LLM_MODEL=openrouter/free` |
 
 More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)
 
