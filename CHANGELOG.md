@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.0...v1.2.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* address auto release review feedback ([d9876b4](https://github.com/antongulin/universal-code-reviewer/commit/d9876b4c090aaf38ddad6a975390086a770f840a))
+* harden auto release workflow ([9558a17](https://github.com/antongulin/universal-code-reviewer/commit/9558a1755784b91883e5382de3b6d3a701600934))
+
 ## [1.2.0](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.2...v1.2.0) (2026-05-19)
 
 
