@@ -97,6 +97,31 @@ Commit and push. Open a pull request — you should see a review within a few mi
 > [!IMPORTANT]
 > Use **`@main`** for the latest fixes, or pin a release tag (for example `@v1` or `@v1.0.0`) after [releases](https://github.com/antongulin/universal-code-reviewer/releases) exist. Do **not** use `@v0`. See [Version pins](#version-pins) below.
 
+### Optional — run reviews on a self-hosted runner
+
+By default, the reusable workflow runs on GitHub's `ubuntu-latest` runner. To run reviews on your own runner, pass `runner` as valid JSON. Use a JSON string for one label or a JSON array for multiple labels.
+
+For a Coolify self-hosted runner:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    with:
+      runner: '["self-hosted", "linux", "coolify"]'
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+For a single runner label:
+
+```yaml
+with:
+  runner: '"ubuntu-latest"'
+```
+
 ## Using it day to day
 
 | When | What happens |
