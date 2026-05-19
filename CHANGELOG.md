@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.2...v1.2.0) (2026-05-19)
+
+
+### Features
+
+* support configurable review runner ([5f8cbdc](https://github.com/antongulin/universal-code-reviewer/commit/5f8cbdc9bde040d924efb6fd9269d64760472a68))
+
+
+### Documentation
+
+* explain self-hosted runner usage ([0c5776e](https://github.com/antongulin/universal-code-reviewer/commit/0c5776ed7b5d6593fb2656400767d2ab2256816f))
+
 ## [1.1.2](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.1...v1.1.2) (2026-05-19)
 
 
