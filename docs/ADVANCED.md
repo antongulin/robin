@@ -44,10 +44,11 @@ uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v1
 Releases are automated with [Release Please](https://github.com/googleapis/release-please) (`.github/workflows/release.yml`):
 
 1. Conventional commits on `main` accumulate in a **Release** pull request (`chore: release X.Y.Z`).
-2. Merging that PR updates `package.json`, `CHANGELOG.md`, creates tag `vX.Y.Z`, and publishes [GitHub release notes](https://github.com/antongulin/universal-code-reviewer/releases).
-3. Floating tags `v1` and `v1.0` (major.minor) are updated so `@v1` stays current within the major version.
+2. Release PRs are verified, merged, and published automatically by the workflow.
+3. The workflow updates `package.json`, `CHANGELOG.md`, creates tag `vX.Y.Z`, and publishes [GitHub release notes](https://github.com/antongulin/universal-code-reviewer/releases).
+4. Floating tags `v1` and `v1.0` (major.minor) are updated so `@v1` stays current within the major version.
 
-Maintainers: do not tag releases by hand unless the workflow failed; fix the workflow instead.
+Maintainers: do not tag releases by hand unless the workflow failed; fix or rerun the workflow instead.
 
 ## Low-cost and free setups
 

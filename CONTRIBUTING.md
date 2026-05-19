@@ -41,6 +41,6 @@ Merges to `main` use [Release Please](https://github.com/googleapis/release-plea
 | `fix:` | Patch | `fix: skip composer.lock in diff filter` |
 | `feat!:` or `BREAKING CHANGE:` | Major | `feat!: remove deprecated fail-on-critical input` |
 
-When a release is ready, the **Release** workflow opens or updates a `chore: release X.Y.Z` pull request. Merging it creates the GitHub release, tag, and floating `@v1` / `@v1.0` tags.
+When a release is ready, the **Release** workflow opens or updates a `chore: release X.Y.Z` pull request. Release PRs are verified, merged, and published automatically by the workflow. The workflow creates the GitHub release, exact tag, and floating `@v1` / `@v1.0` tags without a manual maintainer merge.
 
-**Repository setting (one-time):** In **Settings → Actions → General → Workflow permissions**, choose **Read and write permissions** and enable **Allow GitHub Actions to create and approve pull requests**. Without this, Release Please cannot open release PRs.
+**Repository setting (one-time):** In **Settings → Actions → General → Workflow permissions**, choose **Read and write permissions** and enable **Allow GitHub Actions to create and approve pull requests**. Without this, Release Please cannot open or merge release PRs.
