@@ -81,6 +81,9 @@ exports.DEFAULT_SKIP_PATH_PATTERNS = [
     "**/package-lock.json",
     "**/yarn.lock",
     "**/pnpm-lock.yaml",
+    "**/Cargo.lock",
+    "**/Gemfile.lock",
+    "**/poetry.lock",
     "**/*.min.js",
     "**/*.min.css",
     "**/dist/**",
@@ -636,6 +639,7 @@ const github = __importStar(__nccwpck_require__(3228));
 const llm_client_1 = __nccwpck_require__(3316);
 const git_utils_1 = __nccwpck_require__(8529);
 const review_parser_1 = __nccwpck_require__(2141);
+const review_retry_1 = __nccwpck_require__(450);
 const github_reviewer_1 = __nccwpck_require__(268);
 const config_1 = __nccwpck_require__(4008);
 const diff_filter_1 = __nccwpck_require__(7561);
@@ -786,7 +790,7 @@ async function run() {
             // Full review parsed and posted as a review
             core.info("Parsing review response...");
             let findings = review_parser_1.ReviewParser.parse(reviewText);
-            if (shouldRetryStructuredReview(findings)) {
+            if ((0, review_retry_1.shouldRetryStructuredReview)(findings)) {
                 core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
                 const retryText = (await runReview(llm, truncatedDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true)).content;
                 findings = review_parser_1.ReviewParser.parse(retryText);
@@ -983,13 +987,6 @@ async function postHelpComment(octokit, payload) {
         body: helpBody,
     });
     core.info("Posted help comment.");
-}
-function shouldRetryStructuredReview(findings) {
-    const findingCount = findings.high.length +
-        findings.medium.length +
-        findings.low.length +
-        findings.suggestions.length;
-    return findingCount === 0;
 }
 async function runReview(llm, diff, reviewInstructions, jsonResponseMode) {
     const systemPrompt = (0, review_prompts_1.getReviewPrompt)(reviewInstructions);
@@ -1486,6 +1483,24 @@ class ReviewParser {
 }
 exports.ReviewParser = ReviewParser;
 //# sourceMappingURL=review-parser.js.map
+
+/***/ }),
+
+/***/ 450:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.shouldRetryStructuredReview = shouldRetryStructuredReview;
+function shouldRetryStructuredReview(findings) {
+    return (findings.high.length +
+        findings.medium.length +
+        findings.low.length +
+        findings.suggestions.length ===
+        0);
+}
+//# sourceMappingURL=review-retry.js.map
 
 /***/ }),
 

@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Added `.github/universal-code-reviewer.yml` repo config (skip paths, defaults for diff size, comments, JSON mode).
-- Added diff pre-filter for lockfiles, `dist/`, `node_modules/`, and minified assets.
+- Added diff pre-filter for lockfiles (npm, yarn, pnpm, Cargo, Gemfile, poetry), `dist/`, `node_modules/`, and minified assets.
+- Added tested `shouldRetryStructuredReview` helper for JSON parse retry.
 - Added JSON response mode, resolved-model logging, and one retry when structured parse is empty.
 - Added workflow concurrency to cancel duplicate reviews on the same PR.
 - Simplified README for beginners; moved advanced docs to `docs/ADVANCED.md`.

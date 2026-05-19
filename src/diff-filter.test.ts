@@ -57,4 +57,11 @@ describe("shouldSkipPath", () => {
     expect(shouldSkipPath("src/index.ts", ["**/generated/**"])).toBe(false);
     expect(shouldSkipPath("generated/out.ts", ["**/generated/**"])).toBe(true);
   });
+
+  it("skips common non-JS ecosystem lockfiles by default", () => {
+    expect(shouldSkipPath("Cargo.lock", DEFAULT_SKIP_PATH_PATTERNS)).toBe(true);
+    expect(shouldSkipPath("crates/foo/Cargo.lock", DEFAULT_SKIP_PATH_PATTERNS)).toBe(true);
+    expect(shouldSkipPath("Gemfile.lock", DEFAULT_SKIP_PATH_PATTERNS)).toBe(true);
+    expect(shouldSkipPath("poetry.lock", DEFAULT_SKIP_PATH_PATTERNS)).toBe(true);
+  });
 });

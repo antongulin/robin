@@ -3,6 +3,7 @@ import * as github from "@actions/github";
 import { LLMClient } from "./llm-client";
 import { GitUtils } from "./git-utils";
 import { ReviewParser, StructuredReview } from "./review-parser";
+import { shouldRetryStructuredReview } from "./review-retry";
 import { GitHubReviewer } from "./github-reviewer";
 import { DEFAULT_LLM_TIMEOUT_MS, parseLLMTimeout } from "./config";
 import { filterDiff } from "./diff-filter";
@@ -479,16 +480,6 @@ async function postHelpComment(octokit: any, payload: any): Promise<void> {
   });
 
   core.info("Posted help comment.");
-}
-
-function shouldRetryStructuredReview(findings: StructuredReview): boolean {
-  const findingCount =
-    findings.high.length +
-    findings.medium.length +
-    findings.low.length +
-    findings.suggestions.length;
-
-  return findingCount === 0;
 }
 
 async function runReview(

@@ -38,6 +38,7 @@ const github = __importStar(require("@actions/github"));
 const llm_client_1 = require("./llm-client");
 const git_utils_1 = require("./git-utils");
 const review_parser_1 = require("./review-parser");
+const review_retry_1 = require("./review-retry");
 const github_reviewer_1 = require("./github-reviewer");
 const config_1 = require("./config");
 const diff_filter_1 = require("./diff-filter");
@@ -188,7 +189,7 @@ async function run() {
             // Full review parsed and posted as a review
             core.info("Parsing review response...");
             let findings = review_parser_1.ReviewParser.parse(reviewText);
-            if (shouldRetryStructuredReview(findings)) {
+            if ((0, review_retry_1.shouldRetryStructuredReview)(findings)) {
                 core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
                 const retryText = (await runReview(llm, truncatedDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true)).content;
                 findings = review_parser_1.ReviewParser.parse(retryText);
@@ -385,13 +386,6 @@ async function postHelpComment(octokit, payload) {
         body: helpBody,
     });
     core.info("Posted help comment.");
-}
-function shouldRetryStructuredReview(findings) {
-    const findingCount = findings.high.length +
-        findings.medium.length +
-        findings.low.length +
-        findings.suggestions.length;
-    return findingCount === 0;
 }
 async function runReview(llm, diff, reviewInstructions, jsonResponseMode) {
     const systemPrompt = (0, review_prompts_1.getReviewPrompt)(reviewInstructions);
