@@ -1,3 +1,4 @@
+import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -38,5 +39,42 @@ describe("release workflow", () => {
     expect(advancedDocs).toContain(
       "Release PRs are verified, merged, and published automatically by the workflow.",
     );
+  });
+
+  it("extracts release notes with shell syntax that runs on ubuntu-latest", () => {
+    const awkMatch = releaseWorkflow.match(
+      /awk -v version="\$version" '\n([\s\S]*?)\n\s*'/,
+    );
+
+    expect(awkMatch).not.toBeNull();
+
+    const awkProgram = awkMatch![1]
+      .split("\n")
+      .map((line) => line.replace(/^ {16}/, ""))
+      .join("\n");
+
+    const changelog = [
+      "# Changelog",
+      "",
+      "## [1.2.1](https://example.com/compare/v1.2.0...v1.2.1) (2026-05-19)",
+      "",
+      "### Bug Fixes",
+      "",
+      "* harden auto release workflow",
+      "",
+      "## [1.2.0](https://example.com/compare/v1.1.2...v1.2.0) (2026-05-18)",
+      "",
+      "* previous release",
+      "",
+    ].join("\n");
+
+    const notes = execFileSync("awk", ["-v", "version=1.2.1", awkProgram], {
+      input: changelog,
+      encoding: "utf8",
+    });
+
+    expect(notes).toContain("## [1.2.1]");
+    expect(notes).toContain("* harden auto release workflow");
+    expect(notes).not.toContain("## [1.2.0]");
   });
 });
