@@ -123,6 +123,8 @@ jobs:
 
           merge_sha="${{ steps.merge.outputs.merge_sha }}"
           number="${{ steps.release-pr.outputs.number }}"
+          pending_label="autorelease: pending"
+          tagged_label="autorelease: tagged"
 
           if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
             echo "Cannot update release PR labels; invalid PR number: $number" >&2
@@ -183,4 +185,5 @@ jobs:
           git tag -f "v$major" "$merge_sha"
           git tag -f "v$major.$minor" "$merge_sha"
           git push origin -f "v$major" "v$major.$minor"
-          gh pr edit "$number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+          gh pr view "$number" --json number >/dev/null
+          gh pr edit "$number" --remove-label "$pending_label" --add-label "$tagged_label"
