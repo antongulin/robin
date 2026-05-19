@@ -66,6 +66,89 @@ function parseLLMTimeout(input) {
 
 /***/ }),
 
+/***/ 7561:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_SKIP_PATH_PATTERNS = void 0;
+exports.matchPathPattern = matchPathPattern;
+exports.shouldSkipPath = shouldSkipPath;
+exports.splitDiffIntoFiles = splitDiffIntoFiles;
+exports.filterDiff = filterDiff;
+exports.DEFAULT_SKIP_PATH_PATTERNS = [
+    "**/package-lock.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/Cargo.lock",
+    "**/Gemfile.lock",
+    "**/poetry.lock",
+    "**/*.min.js",
+    "**/*.min.css",
+    "**/dist/**",
+    "**/node_modules/**",
+];
+function matchPathPattern(pattern, filePath) {
+    const normalized = filePath.replace(/^\.\//, "");
+    if (pattern.startsWith("**/") && pattern.endsWith("/**")) {
+        const segment = pattern.slice(3, -3);
+        return normalized === segment || normalized.startsWith(`${segment}/`) || normalized.includes(`/${segment}/`);
+    }
+    if (pattern.startsWith("**/") && !pattern.slice(3).includes("*")) {
+        const suffix = pattern.slice(3);
+        return normalized === suffix || normalized.endsWith(`/${suffix}`);
+    }
+    if (pattern.endsWith("/**")) {
+        const prefix = pattern.slice(0, -3);
+        return normalized === prefix || normalized.startsWith(`${prefix}/`);
+    }
+    if (pattern.includes("*")) {
+        const regex = new RegExp(`^${pattern
+            .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+            .replace(/\/\*\*\//g, "/(?:.*/)?")
+            .replace(/\*\*\//g, "(?:.*/)?")
+            .replace(/\*\*/g, ".*")
+            .replace(/\*/g, "[^/]*")}$`);
+        return regex.test(normalized);
+    }
+    return normalized === pattern || normalized.endsWith(`/${pattern}`);
+}
+function shouldSkipPath(filePath, patterns) {
+    return patterns.some((pattern) => matchPathPattern(pattern, filePath));
+}
+function splitDiffIntoFiles(diff) {
+    const parts = diff.split(/^diff --git /m);
+    const files = [];
+    for (const part of parts) {
+        if (!part.trim())
+            continue;
+        const headerLine = part.split("\n")[0] || "";
+        const match = headerLine.match(/a\/(.+?) b\/(.+)$/);
+        const path = match ? match[2] : headerLine;
+        files.push({ path, content: `diff --git ${part}` });
+    }
+    return files;
+}
+function filterDiff(diff, extraSkipPatterns = []) {
+    const patterns = [...exports.DEFAULT_SKIP_PATH_PATTERNS, ...extraSkipPatterns];
+    const files = splitDiffIntoFiles(diff);
+    const removedFiles = [];
+    const kept = [];
+    for (const file of files) {
+        if (shouldSkipPath(file.path, patterns)) {
+            removedFiles.push(file.path);
+        }
+        else {
+            kept.push(file.content);
+        }
+    }
+    return { filtered: kept.join(""), removedFiles };
+}
+//# sourceMappingURL=diff-filter.js.map
+
+/***/ }),
+
 /***/ 8529:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -471,7 +554,7 @@ class LLMClient {
             ? maxOutputTokens
             : undefined;
     }
-    async chatCompletion(systemPrompt, userContent) {
+    async chatCompletion(systemPrompt, userContent, jsonResponseMode = false) {
         try {
             const request = {
                 model: this.model,
@@ -484,12 +567,22 @@ class LLMClient {
             if (this.maxOutputTokens) {
                 request.max_tokens = this.maxOutputTokens;
             }
+            if (jsonResponseMode) {
+                request.response_format = { type: "json_object" };
+            }
             const response = await this.client.chat.completions.create(request);
             const content = response.choices[0]?.message?.content || "";
+            const resolvedModel = response.model || this.model;
+            if (resolvedModel && resolvedModel !== this.model) {
+                core.info(`LLM resolved model: ${resolvedModel} (requested: ${this.model})`);
+            }
+            else {
+                core.info(`LLM response model: ${resolvedModel}`);
+            }
             if (!content) {
                 throw new Error("Empty response from LLM");
             }
-            return content;
+            return { content, model: resolvedModel };
         }
         catch (error) {
             core.error(`LLM API error: ${error}`);
@@ -546,8 +639,11 @@ const github = __importStar(__nccwpck_require__(3228));
 const llm_client_1 = __nccwpck_require__(3316);
 const git_utils_1 = __nccwpck_require__(8529);
 const review_parser_1 = __nccwpck_require__(2141);
+const review_retry_1 = __nccwpck_require__(450);
 const github_reviewer_1 = __nccwpck_require__(268);
 const config_1 = __nccwpck_require__(4008);
+const diff_filter_1 = __nccwpck_require__(7561);
+const repo_config_1 = __nccwpck_require__(2800);
 const review_prompts_1 = __nccwpck_require__(319);
 const commands_1 = __nccwpck_require__(367);
 async function run() {
@@ -621,8 +717,8 @@ async function run() {
         const baseUrl = core.getInput("llm-base-url") || core.getInput("base-url") || "";
         const model = core.getInput("model") || "";
         const failOnHigh = core.getInput("fail-on-high") === "true" || core.getInput("fail-on-critical") === "true";
-        const maxDiffSize = parseInt(core.getInput("max-diff-size") || "50000", 10);
-        const maxComments = parseInt(core.getInput("max-comments") || "25", 10);
+        const maxDiffSizeInput = core.getInput("max-diff-size") || "50000";
+        const maxCommentsInput = core.getInput("max-comments") || "25";
         const maxOutputTokensInput = core.getInput("max-output-tokens") || "";
         const maxOutputTokens = maxOutputTokensInput ? parseInt(maxOutputTokensInput, 10) : undefined;
         const llmTimeoutMsInput = core.getInput("llm-timeout-ms") || "";
@@ -632,6 +728,8 @@ async function run() {
         }
         const inlineReviewInstructions = core.getInput("review-instructions") || "";
         const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
+        const configFile = core.getInput("config-file") || repo_config_1.DEFAULT_CONFIG_FILE;
+        const jsonResponseModeInput = core.getInput("use-json-response-mode") || "";
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
@@ -643,25 +741,46 @@ async function run() {
             throw new Error("Input required and not supplied: model");
         }
         const gitUtils = new git_utils_1.GitUtils(octokit);
+        const baseRef = payload.pull_request?.base?.sha;
+        const repoConfig = await loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef);
+        const maxDiffSize = (0, repo_config_1.resolveMaxDiffSize)(maxDiffSizeInput, repoConfig);
+        const maxComments = (0, repo_config_1.resolveMaxComments)(maxCommentsInput, repoConfig);
+        const jsonResponseMode = (0, repo_config_1.resolveJsonResponseMode)(jsonResponseModeInput, repoConfig);
         const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
         if (!diff || diff.trim().length === 0) {
             core.warning("No diff found for this PR.");
             return;
         }
-        const truncatedDiff = diff.length > maxDiffSize
-            ? diff.slice(0, maxDiffSize) + "\n\n[... Diff truncated due to size limit]"
-            : diff;
-        core.info(`Diff size: ${diff.length} chars${diff.length > maxDiffSize ? " (truncated)" : ""}`);
+        const diffFiles = (0, diff_filter_1.splitDiffIntoFiles)(diff);
+        const { filtered: filteredDiff, removedFiles } = (0, diff_filter_1.filterDiff)(diff, repoConfig.skipPaths || []);
+        if (removedFiles.length > 0) {
+            core.info(`Skipped ${removedFiles.length} file(s) before review: ${removedFiles.join(", ")}`);
+        }
+        if (diffFiles.length > 0 && !filteredDiff.trim()) {
+            core.info("All changed files were skipped by diff filters; no LLM review needed.");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildSkippedFilterStatusBody(removedFiles));
+            return;
+        }
+        const reviewDiff = filteredDiff.trim() ? filteredDiff : diff;
+        if (!reviewDiff.trim()) {
+            core.warning("No reviewable diff remained after filtering skipped paths.");
+            return;
+        }
+        const truncatedDiff = reviewDiff.length > maxDiffSize
+            ? reviewDiff.slice(0, maxDiffSize) + "\n\n[... Diff truncated due to size limit]"
+            : reviewDiff;
+        core.info(`Diff size: ${reviewDiff.length} chars${reviewDiff.length > maxDiffSize ? " (truncated)" : ""}${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`);
         const reviewInstructions = command === "review"
-            ? await loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineReviewInstructions, reviewInstructionsFile, payload.pull_request?.base?.sha)
+            ? await loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineReviewInstructions, reviewInstructionsFile, baseRef)
             : "";
         const llm = new llm_client_1.LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs);
+        const useJsonMode = command === "review" && jsonResponseMode;
         let reviewText;
         if (command === "summary") {
-            reviewText = await runSummary(llm, truncatedDiff);
+            reviewText = (await runSummary(llm, truncatedDiff)).content;
         }
         else {
-            reviewText = await runReview(llm, truncatedDiff, reviewInstructions);
+            reviewText = (await runReview(llm, truncatedDiff, reviewInstructions, useJsonMode)).content;
         }
         if (command === "summary") {
             // Post summary as a regular comment
@@ -676,7 +795,14 @@ async function run() {
         else {
             // Full review parsed and posted as a review
             core.info("Parsing review response...");
-            const findings = review_parser_1.ReviewParser.parse(reviewText);
+            let parsedReview = review_parser_1.ReviewParser.parseDetailed(reviewText);
+            let findings = parsedReview.findings;
+            if ((0, review_retry_1.shouldRetryStructuredReview)(findings, parsedReview.usedJson)) {
+                core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
+                const retryText = (await runReview(llm, truncatedDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true)).content;
+                parsedReview = review_parser_1.ReviewParser.parseDetailed(retryText);
+                findings = parsedReview.findings;
+            }
             core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
             const reviewer = new github_reviewer_1.GitHubReviewer(octokit, maxComments);
             await reviewer.postReview(owner, repo, prNumber, findings);
@@ -771,6 +897,19 @@ function buildCompletedStatusBody(command, findings) {
         "After you push fixes, comment `/review` when you are ready for another pass.",
     ].join("\n");
 }
+function buildSkippedFilterStatusBody(removedFiles) {
+    const preview = removedFiles.slice(0, 8).join(", ");
+    const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
+    return [
+        "## :robot: Universal Code Reviewer",
+        "",
+        ":white_check_mark: Skipped review — only ignored paths changed.",
+        "",
+        `Filtered files: ${preview}${suffix}`,
+        "",
+        "Add custom `skip-paths` in `.github/universal-code-reviewer.yml` if this was unexpected.",
+    ].join("\n");
+}
 function buildFailedStatusBody(errorMessage, command) {
     return [
         "## :robot: Universal Code Reviewer",
@@ -781,6 +920,33 @@ function buildFailedStatusBody(errorMessage, command) {
         "",
         "No secrets are included in this comment.",
     ].join("\n");
+}
+async function loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef) {
+    const filePath = configFile.trim();
+    if (!filePath)
+        return {};
+    try {
+        let ref = baseRef;
+        if (!ref) {
+            const { data: pullRequest } = await octokit.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+            });
+            ref = pullRequest.base.sha;
+        }
+        if (!ref)
+            return {};
+        const fileContent = await gitUtils.getFileContent(owner, repo, filePath, ref);
+        if (!fileContent.trim())
+            return {};
+        core.info(`Loaded repo config from ${filePath}`);
+        return (0, repo_config_1.parseRepoConfigYaml)(fileContent);
+    }
+    catch (error) {
+        core.info(`No repo config at ${filePath} (${error})`);
+        return {};
+    }
 }
 async function loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineInstructions, instructionsFile, baseRef) {
     const instructions = inlineInstructions.trim() ? [inlineInstructions.trim()] : [];
@@ -843,17 +1009,17 @@ async function postHelpComment(octokit, payload) {
     });
     core.info("Posted help comment.");
 }
-async function runReview(llm, diff, reviewInstructions) {
+async function runReview(llm, diff, reviewInstructions, jsonResponseMode) {
     const systemPrompt = (0, review_prompts_1.getReviewPrompt)(reviewInstructions);
     const userContent = buildReviewInput(diff);
     core.info("Getting full code review...");
-    return await llm.chatCompletion(systemPrompt, userContent);
+    return await llm.chatCompletion(systemPrompt, userContent, jsonResponseMode);
 }
 async function runSummary(llm, diff) {
     const systemPrompt = (0, review_prompts_1.getSummaryPrompt)();
     const userContent = buildSummaryInput(diff);
     core.info("Getting PR summary...");
-    return await llm.chatCompletion(systemPrompt, userContent);
+    return await llm.chatCompletion(systemPrompt, userContent, false);
 }
 function buildReviewInput(diff) {
     return [
@@ -1006,6 +1172,91 @@ function getHelpMessage() {
 
 /***/ }),
 
+/***/ 2800:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.REUSABLE_WORKFLOW_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
+exports.parseRepoConfigYaml = parseRepoConfigYaml;
+exports.resolveMaxDiffSize = resolveMaxDiffSize;
+exports.resolveMaxComments = resolveMaxComments;
+exports.resolveJsonResponseMode = resolveJsonResponseMode;
+exports.DEFAULT_CONFIG_FILE = ".github/universal-code-reviewer.yml";
+exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
+exports.DEFAULT_ACTION_MAX_COMMENTS = 25;
+/** Reusable workflow default in `.github/workflows/review.yml` */
+exports.REUSABLE_WORKFLOW_MAX_COMMENTS = 10;
+function parseRepoConfigYaml(text) {
+    const config = {};
+    let inSkipPaths = false;
+    for (const rawLine of text.split("\n")) {
+        const trimmed = rawLine.trim();
+        if (!trimmed || trimmed.startsWith("#"))
+            continue;
+        if (trimmed === "skip-paths:") {
+            inSkipPaths = true;
+            continue;
+        }
+        if (inSkipPaths) {
+            if (trimmed.startsWith("- ")) {
+                const value = trimmed.slice(2).trim().replace(/^['"]|['"]$/g, "");
+                if (value) {
+                    config.skipPaths = config.skipPaths || [];
+                    config.skipPaths.push(value);
+                }
+                continue;
+            }
+            inSkipPaths = false;
+        }
+        const maxDiffMatch = trimmed.match(/^max-diff-size:\s*(\d+)\s*$/i);
+        if (maxDiffMatch) {
+            config.maxDiffSize = parseInt(maxDiffMatch[1], 10);
+            continue;
+        }
+        const maxCommentsMatch = trimmed.match(/^max-comments:\s*(\d+)\s*$/i);
+        if (maxCommentsMatch) {
+            config.maxComments = parseInt(maxCommentsMatch[1], 10);
+            continue;
+        }
+        const jsonModeMatch = trimmed.match(/^json-response-mode:\s*(true|false)\s*$/i);
+        if (jsonModeMatch) {
+            config.jsonResponseMode = jsonModeMatch[1].toLowerCase() === "true";
+        }
+    }
+    return config;
+}
+function resolveMaxDiffSize(actionInput, repoConfig) {
+    const parsed = parseInt(actionInput, 10);
+    if (repoConfig?.maxDiffSize !== undefined &&
+        Number.isFinite(parsed) &&
+        parsed === exports.DEFAULT_ACTION_MAX_DIFF_SIZE &&
+        repoConfig.maxDiffSize !== exports.DEFAULT_ACTION_MAX_DIFF_SIZE) {
+        return repoConfig.maxDiffSize;
+    }
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : exports.DEFAULT_ACTION_MAX_DIFF_SIZE;
+}
+function resolveMaxComments(actionInput, repoConfig) {
+    const parsed = parseInt(actionInput, 10);
+    const isUnsetOrWorkflowDefault = Number.isFinite(parsed) &&
+        (parsed === exports.DEFAULT_ACTION_MAX_COMMENTS || parsed === exports.REUSABLE_WORKFLOW_MAX_COMMENTS);
+    if (repoConfig?.maxComments !== undefined && isUnsetOrWorkflowDefault) {
+        return repoConfig.maxComments;
+    }
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : exports.DEFAULT_ACTION_MAX_COMMENTS;
+}
+function resolveJsonResponseMode(actionInput, repoConfig) {
+    if (actionInput === "true")
+        return true;
+    if (actionInput === "false")
+        return false;
+    return repoConfig?.jsonResponseMode ?? true;
+}
+//# sourceMappingURL=repo-config.js.map
+
+/***/ }),
+
 /***/ 2141:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -1049,6 +1300,9 @@ exports.ReviewParser = void 0;
 const core = __importStar(__nccwpck_require__(7484));
 class ReviewParser {
     static parse(rawText) {
+        return this.parseDetailed(rawText).findings;
+    }
+    static parseDetailed(rawText) {
         const review = {
             summary: "",
             high: [],
@@ -1061,7 +1315,7 @@ class ReviewParser {
             const jsonReview = this.parseJsonReview(rawText);
             if (jsonReview) {
                 core.info(`Parsed JSON review: ${jsonReview.high.length} high, ${jsonReview.medium.length} medium, ${jsonReview.low.length} low, ${jsonReview.suggestions.length} suggestions`);
-                return jsonReview;
+                return { findings: jsonReview, usedJson: true };
             }
             const markdownReview = this.parseMarkdownReview(rawText, review);
             review.summary = markdownReview.summary;
@@ -1075,7 +1329,7 @@ class ReviewParser {
             core.warning(`Failed to parse structured review: ${error}. Treating entire response as raw summary.`);
             review.summary = rawText;
         }
-        return review;
+        return { findings: review, usedJson: false };
     }
     static parseJsonReview(rawText) {
         const jsonText = this.extractJsonObject(rawText);
@@ -1253,6 +1507,29 @@ class ReviewParser {
 }
 exports.ReviewParser = ReviewParser;
 //# sourceMappingURL=review-parser.js.map
+
+/***/ }),
+
+/***/ 450:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.shouldRetryStructuredReview = shouldRetryStructuredReview;
+const RETRY_SUMMARY_MAX_LENGTH = 40;
+function shouldRetryStructuredReview(findings, usedJson) {
+    const findingCount = findings.high.length +
+        findings.medium.length +
+        findings.low.length +
+        findings.suggestions.length;
+    if (findingCount > 0)
+        return false;
+    if (usedJson)
+        return false;
+    return findings.summary.trim().length <= RETRY_SUMMARY_MAX_LENGTH;
+}
+//# sourceMappingURL=review-retry.js.map
 
 /***/ }),
 

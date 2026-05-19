@@ -60,6 +60,10 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: ucr-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   review:
     if: |

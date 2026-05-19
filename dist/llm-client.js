@@ -54,7 +54,7 @@ class LLMClient {
             ? maxOutputTokens
             : undefined;
     }
-    async chatCompletion(systemPrompt, userContent) {
+    async chatCompletion(systemPrompt, userContent, jsonResponseMode = false) {
         try {
             const request = {
                 model: this.model,
@@ -67,12 +67,22 @@ class LLMClient {
             if (this.maxOutputTokens) {
                 request.max_tokens = this.maxOutputTokens;
             }
+            if (jsonResponseMode) {
+                request.response_format = { type: "json_object" };
+            }
             const response = await this.client.chat.completions.create(request);
             const content = response.choices[0]?.message?.content || "";
+            const resolvedModel = response.model || this.model;
+            if (resolvedModel && resolvedModel !== this.model) {
+                core.info(`LLM resolved model: ${resolvedModel} (requested: ${this.model})`);
+            }
+            else {
+                core.info(`LLM response model: ${resolvedModel}`);
+            }
             if (!content) {
                 throw new Error("Empty response from LLM");
             }
-            return content;
+            return { content, model: resolvedModel };
         }
         catch (error) {
             core.error(`LLM API error: ${error}`);

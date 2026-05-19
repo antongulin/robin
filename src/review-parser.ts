@@ -19,8 +19,17 @@ export interface StructuredReview {
   rawResponse: string;
 }
 
+export interface ParsedReview {
+  findings: StructuredReview;
+  usedJson: boolean;
+}
+
 export class ReviewParser {
   static parse(rawText: string): StructuredReview {
+    return this.parseDetailed(rawText).findings;
+  }
+
+  static parseDetailed(rawText: string): ParsedReview {
     const review: StructuredReview = {
       summary: "",
       high: [],
@@ -36,7 +45,7 @@ export class ReviewParser {
         core.info(
           `Parsed JSON review: ${jsonReview.high.length} high, ${jsonReview.medium.length} medium, ${jsonReview.low.length} low, ${jsonReview.suggestions.length} suggestions`
         );
-        return jsonReview;
+        return { findings: jsonReview, usedJson: true };
       }
 
       const markdownReview = this.parseMarkdownReview(rawText, review);
@@ -52,7 +61,7 @@ export class ReviewParser {
       review.summary = rawText;
     }
 
-    return review;
+    return { findings: review, usedJson: false };
   }
 
   private static parseJsonReview(rawText: string): StructuredReview | null {
