@@ -4,7 +4,7 @@ This document is for maintainers and power users. For a short setup, see the [RE
 
 ## Repository config file
 
-Copy [`.github/universal-code-reviewer.yml.example`](../.github/universal-code-reviewer.yml.example) to `.github/universal-code-reviewer.yml` on your default branch.
+Copy [`.github/robin.yml.example`](../.github/robin.yml.example) to `.github/robin.yml` on your default branch.
 
 ```yaml
 max-diff-size: 25000
@@ -31,12 +31,12 @@ The config file uses a small YAML subset (line-based keys only), not full YAML n
 | --- | --- |
 | `@main` | Latest changes on the default branch |
 | `@v1` | Latest `1.x` release (floating tag, updated each release) |
-| `@v1.2.3` | Exact semver from [GitHub Releases](https://github.com/antongulin/universal-code-reviewer/releases) |
+| `@v1.2.3` | Exact semver from [GitHub Releases](https://github.com/antongulin/robin/releases) |
 | Full commit SHA | Maximum supply-chain safety in regulated environments |
 | `@v0` | **Do not use** — outdated; workflows often fail |
 
 ```yaml
-uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v1
+uses: antongulin/robin/.github/workflows/review.yml@v1
 ```
 
 ## Releases
@@ -45,7 +45,7 @@ Releases are automated with [Release Please](https://github.com/googleapis/relea
 
 1. Conventional commits on `main` accumulate in a **Release** pull request (`chore: release X.Y.Z`).
 2. Release PRs are verified, merged, and published automatically by the workflow.
-3. The workflow updates `package.json`, `CHANGELOG.md`, creates tag `vX.Y.Z`, and publishes [GitHub release notes](https://github.com/antongulin/universal-code-reviewer/releases).
+3. The workflow updates `package.json`, `CHANGELOG.md`, creates tag `vX.Y.Z`, and publishes [GitHub release notes](https://github.com/antongulin/robin/releases).
 4. Floating tags `v1` and `v1.0` (major.minor) are updated so `@v1` stays current within the major version.
 
 Maintainers: do not tag releases by hand unless the workflow failed; fix or rerun the workflow instead.
@@ -65,7 +65,7 @@ Smaller diffs help free models stay fast and accurate:
 ```yaml
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     with:
       max-diff-size: "25000"
     secrets:
@@ -89,7 +89,7 @@ Coolify example:
 ```yaml
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     with:
       runner: '["self-hosted", "linux", "coolify"]'
     secrets:
@@ -118,7 +118,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `min-command-permission` | `write` | Who can run `/review` |
 | `review-instructions` | empty | Extra prompt text |
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch |
-| `config-file` | `.github/universal-code-reviewer.yml` | Repo config path on the base branch |
+| `config-file` | `.github/robin.yml` | Repo config path on the base branch |
 | `use-json-response-mode` | empty (defer to repo config, else true) | Request `response_format: json_object` when supported |
 
 ## Usage patterns
@@ -134,7 +134,7 @@ on:
 
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     with:
       review-on-synchronize: true
     secrets:
@@ -154,7 +154,7 @@ on:
 
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
@@ -181,7 +181,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: antongulin/universal-code-reviewer@main
+      - uses: antongulin/robin@main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}
@@ -195,7 +195,7 @@ jobs:
 ```yaml
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     with:
       fail-on-high: true
     secrets:
@@ -260,14 +260,14 @@ No daily quota from this action. Real limits:
 
 | Option | Best when |
 | --- | --- |
-| Universal Code Reviewer | You want any model/provider and no SaaS lock-in |
+| Robin | You want any model/provider and no SaaS lock-in |
 | GitHub Copilot review | You already pay for Copilot |
 | Hosted review bots | You want a managed product |
 | Custom scripts | You want full control and will maintain it |
 
 ## Roadmap
 
-- `.github/universal-code-reviewer.yml` config file
+- `.github/robin.yml` config file
 - Provider presets
 - Large PR chunking by file
 - GitHub App install flow

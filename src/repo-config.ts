@@ -1,4 +1,4 @@
-export const DEFAULT_CONFIG_FILE = ".github/universal-code-reviewer.yml";
+export const DEFAULT_CONFIG_FILE = ".github/robin.yml";
 export const DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
 export const DEFAULT_ACTION_MAX_COMMENTS = 25;
 /** Reusable workflow default in `.github/workflows/review.yml` */

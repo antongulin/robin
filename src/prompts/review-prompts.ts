@@ -100,11 +100,11 @@ export function getSummaryPrompt(): string {
 
 export function getHelpMessage(): string {
   return [
-    "Available commands for **Universal Code Reviewer**:",
+    "Available commands for **Robin**:",
     "",
     "| Command | Description |",
     "|---|---|",
-    "| /review | Full code review with severity tiers (High / Medium / Low / Suggestion) |",
+    "| /review or /robin | Full code review with severity tiers (High / Medium / Low / Suggestion) |",
     "| /summary | Concise PR overview -- what changed, key files, notable patterns |",
     "| /help | Show this message |",
     "",

@@ -1,8 +1,8 @@
-# Universal Code Reviewer
+# Robin
 
-AI code review on pull requests. You bring an API key; reviews show up on GitHub like a teammate left comments.
+Free AI code reviews for every pull request. You bring an API key; Robin reviews show up like a teammate left comments.
 
-[![Self-Test](https://github.com/antongulin/universal-code-reviewer/actions/workflows/self-test.yml/badge.svg)](https://github.com/antongulin/universal-code-reviewer/actions/workflows/self-test.yml)
+[![Self-Test](https://github.com/antongulin/robin/actions/workflows/self-test.yml/badge.svg)](https://github.com/antongulin/robin/actions/workflows/self-test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node 24](https://img.shields.io/badge/runtime-node24-brightgreen.svg)](action.yml)
 
@@ -19,14 +19,14 @@ You are **not** signing up for a separate review bot service. The workflow runs 
 Using Cursor, Copilot, Claude Code, or similar? Copy this prompt after secrets are set:
 
 ```text
-Add Universal Code Reviewer to this repository.
+Add Robin to this repository.
 - Workflow file: .github/workflows/code-review.yml
-- Reusable workflow: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
-- Action ref if needed: antongulin/universal-code-reviewer@main
+- Reusable workflow: antongulin/robin/.github/workflows/review.yml@main
+- Action ref if needed: antongulin/robin@main
 - Secrets: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 - Do NOT use @v0 or any v0 tag
 - Do NOT use pull_request_target or synchronize on pull_request
-Read AGENTS.md in the universal-code-reviewer repo for full rules.
+Read AGENTS.md in the robin repo for full rules.
 ```
 
 ## Setup in 3 steps
@@ -71,7 +71,7 @@ Create a new file in your repo:
 **Contents:** copy this exactly:
 
 ```yaml
-name: Universal Code Reviewer
+name: Robin
 
 on:
   pull_request:
@@ -85,7 +85,7 @@ permissions:
 
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
@@ -95,7 +95,7 @@ jobs:
 Commit and push. Open a pull request — you should see a review within a few minutes.
 
 > [!IMPORTANT]
-> Use **`@main`** for the latest fixes, or pin a release tag (for example `@v1` or `@v1.0.0`) after [releases](https://github.com/antongulin/universal-code-reviewer/releases) exist. Do **not** use `@v0`. See [Version pins](#version-pins) below.
+> Use **`@main`** for the latest fixes, or pin a release tag (for example `@v1` or `@v1.0.0`) after [releases](https://github.com/antongulin/robin/releases) exist. Do **not** use `@v0`. See [Version pins](#version-pins) below.
 
 ## Running on a self-hosted runner
 
@@ -133,7 +133,7 @@ Local machine runner:
 ```yaml
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     with:
       runner: '["self-hosted", "local"]'
     secrets:
@@ -147,7 +147,7 @@ Coolify runner:
 ```yaml
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     with:
       runner: '["self-hosted", "linux", "coolify"]'
     secrets:
@@ -173,7 +173,7 @@ Only people with **write** access (or higher) on the repo can use `/review` and 
 The bot posts a status comment, then a review with severity counts:
 
 ```md
-## Universal Code Reviewer
+## Robin
 
 1 High | 1 Medium | 2 Suggestions
 
@@ -197,7 +197,7 @@ GitHub’s servers cannot reach `localhost` on your laptop. For Ollama at home, 
 
 ## Optional: config and custom rules
 
-Copy [`.github/universal-code-reviewer.yml.example`](.github/universal-code-reviewer.yml.example) to `.github/universal-code-reviewer.yml` to set `max-diff-size`, skip extra paths, and more. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file).
+Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to set `max-diff-size`, skip extra paths, and more. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file).
 
 Add `.github/code-reviewer.md` in your repo:
 
@@ -232,7 +232,7 @@ More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)
 | Full commit SHA | Maximum supply-chain safety |
 
 ```yaml
-uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v1
+uses: antongulin/robin/.github/workflows/review.yml@v1
 ```
 
 Releases and notes are published automatically from [CHANGELOG.md](CHANGELOG.md) when changes land on `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for commit message format.
@@ -246,8 +246,8 @@ Releases and notes are published automatically from [CHANGELOG.md](CHANGELOG.md)
 ## Development
 
 ```bash
-git clone https://github.com/antongulin/universal-code-reviewer.git
-cd universal-code-reviewer
+git clone https://github.com/antongulin/robin.git
+cd robin
 npm ci
 npm run lint
 npm test

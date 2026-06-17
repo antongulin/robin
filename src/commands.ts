@@ -1,12 +1,13 @@
 export type ReviewerCommand = "review" | "summary" | "help";
 
 export interface SlashCommand {
-  command: `/${ReviewerCommand}`;
+  command: string;
   description: string;
 }
 
 export const AVAILABLE_COMMANDS: SlashCommand[] = [
   { command: "/review", description: "Posts a full code review of the pull request" },
+  { command: "/robin", description: "Alias for /review" },
   { command: "/summary", description: "Posts a summary of the changes in the pull request" },
   { command: "/help", description: "Shows available commands" },
 ];
@@ -28,10 +29,11 @@ export function parseSlashCommand(commentBody: string): ReviewerCommand | undefi
 
   if (!firstLine) return undefined;
 
-  const match = firstLine.match(/^\/(review|summary|help)(?:\s|$)/i);
+  const match = firstLine.match(/^\/(review|robin|summary|help)(?:\s|$)/i);
   if (!match) return undefined;
 
-  return match[1].toLowerCase() as ReviewerCommand;
+  const cmd = match[1].toLowerCase();
+  return (cmd === "robin" ? "review" : cmd) as ReviewerCommand;
 }
 
 export function hasRequiredPermission(permission: string, minimumPermission: string): boolean {
