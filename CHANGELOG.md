@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/antongulin/robin/compare/v1.2.3...v1.3.0) (2026-06-17)
+
+
+### Features
+
+* rebrand to Robin ([46b61ed](https://github.com/antongulin/robin/commit/46b61eda225dba2eff60b8de6da4f07d452ed8db))
+* rebrand to Robin with one-command install UX ([1247e43](https://github.com/antongulin/robin/commit/1247e433632dc5f69cf143b07dfeefb9990f7f05))
+
 ## [1.2.3](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.2...v1.2.3) (2026-05-19)
 
 
