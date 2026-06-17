@@ -69,7 +69,7 @@ inputs:
     required: false
     default: ".github/code-reviewer.md"
   config-file:
-    description: "Optional repository config file on the PR base branch (.github/robin.yml). Legacy name .github/universal-code-reviewer.yml also works."
+    description: "Optional repository config file on the PR base branch (.github/robin.yml)."
     required: false
     default: ".github/robin.yml"
   use-json-response-mode:

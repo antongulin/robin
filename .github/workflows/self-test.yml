@@ -68,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
        
-      - name: Run Universal Code Reviewer command
+      - name: Run Robin command
         if: env.HAS_LLM == 'true'
         continue-on-error: true
         uses: ./

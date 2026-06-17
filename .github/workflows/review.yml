@@ -1,4 +1,4 @@
-name: Universal Code Reviewer
+name: Robin
 
 on:
   workflow_call:
@@ -86,7 +86,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner) }}
     timeout-minutes: 15
     steps:
-      - name: Universal Code Reviewer
+      - name: Robin
         uses: antongulin/robin@main
         with:
           github-token: ${{ github.token }}
