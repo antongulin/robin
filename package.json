@@ -1,16 +1,16 @@
 {
-  "name": "universal-code-reviewer",
+  "name": "robin",
   "version": "1.2.3",
-  "description": "AI-powered code reviews using any OpenAI-compatible LLM. No vendor lock-in, no usage quotas.",
+  "description": "Free AI code reviews for every PR. BYOK, works with OpenRouter free tier.",
   "main": "dist/index.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/antongulin/universal-code-reviewer.git"
+    "url": "git+https://github.com/antongulin/robin.git"
   },
   "bugs": {
-    "url": "https://github.com/antongulin/universal-code-reviewer/issues"
+    "url": "https://github.com/antongulin/robin/issues"
   },
-  "homepage": "https://github.com/antongulin/universal-code-reviewer#readme",
+  "homepage": "https://github.com/antongulin/robin#readme",
   "scripts": {
     "build": "tsc && ncc build dist/index.js -o dist && npm run clean",
     "clean": "node scripts/clean-dist.js",

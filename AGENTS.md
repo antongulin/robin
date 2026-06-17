@@ -1,22 +1,22 @@
 # Instructions for AI coding agents
 
-Use this file when adding Universal Code Reviewer to **another** repository.
+Use this file when adding Robin to **another** repository.
 
 ## Required workflow reference
 
 Default (latest):
 
 ```yaml
-uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+uses: antongulin/robin/.github/workflows/review.yml@main
 ```
 
-Pinned release (preferred for stability after v1.0.0 exists):
+Pinned release (preferred for stability):
 
 ```yaml
-uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v1
+uses: antongulin/robin/.github/workflows/review.yml@v1
 ```
 
-For a direct action step: `antongulin/universal-code-reviewer@main` or `@v1`.
+For a direct action step: `antongulin/robin@main` or `@v1`.
 
 ## Do not use
 
@@ -39,10 +39,10 @@ Free OpenRouter example:
 
 ## Minimal consumer workflow
 
-Create `.github/workflows/code-review.yml`:
+Create `.github/workflows/robin.yml`:
 
 ```yaml
-name: Universal Code Reviewer
+name: Robin
 
 on:
   pull_request:
@@ -56,7 +56,7 @@ permissions:
 
 jobs:
   review:
-    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@main
+    uses: antongulin/robin/.github/workflows/review.yml@main
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}

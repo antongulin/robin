@@ -223,7 +223,7 @@ async function run(): Promise<void> {
         owner,
         repo,
         issue_number: prNumber,
-        body: ["## :robot: Universal Code Reviewer Summary", "", reviewText].join("\n"),
+        body: ["## :robot: Robin Summary", "", reviewText].join("\n"),
       });
       await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
     } else {
@@ -302,7 +302,7 @@ async function postStatusComment(
       repo,
       issue_number: issueNumber,
       body: [
-        "## :robot: Universal Code Reviewer",
+        "## :robot: Robin",
         "",
         ":eyes: Reviewing this pull request.",
         "",
@@ -341,7 +341,7 @@ async function updateStatusComment(
 function buildCompletedStatusBody(command: "review" | "summary", findings?: StructuredReview): string {
   if (command === "summary") {
     return [
-      "## :robot: Universal Code Reviewer",
+      "## :robot: Robin",
       "",
       ":white_check_mark: Finished the summary.",
       "",
@@ -357,7 +357,7 @@ function buildCompletedStatusBody(command: "review" | "summary", findings?: Stru
     : `I found ${totalFindings} issue${totalFindings === 1 ? "" : "s"}.`;
 
   return [
-    "## :robot: Universal Code Reviewer",
+    "## :robot: Robin",
     "",
     `:white_check_mark: Finished the review. ${result}`,
     "",
@@ -370,19 +370,19 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
   const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
 
   return [
-    "## :robot: Universal Code Reviewer",
+    "## :robot: Robin",
     "",
     ":white_check_mark: Skipped review — only ignored paths changed.",
     "",
     `Filtered files: ${preview}${suffix}`,
     "",
-    "Add custom `skip-paths` in `.github/universal-code-reviewer.yml` if this was unexpected.",
+    "Add custom `skip-paths` in `.github/robin.yml` if this was unexpected.",
   ].join("\n");
 }
 
 function buildFailedStatusBody(errorMessage: string, command: "review" | "summary"): string {
   return [
-    "## :robot: Universal Code Reviewer",
+    "## :robot: Robin",
     "",
     `:warning: Could not finish the ${command === "summary" ? "summary" : "review"}.`,
     "",

@@ -1,9 +1,9 @@
-name: "Universal Code Reviewer"
-description: "AI-powered code reviews using any OpenAI-compatible LLM. Supports automatic PR reviews and slash commands with no action-level quotas."
+name: "Robin"
+description: "Free AI code reviews for every PR. BYOK, works with OpenRouter free tier. Auto-reviews on open, /robin or /review on demand. No quotas."
 author: "antongulin"
 branding:
-  icon: "eye"
-  color: "blue"
+  icon: "feather"
+  color: "green"
 
 inputs:
   github-token:
@@ -69,9 +69,9 @@ inputs:
     required: false
     default: ".github/code-reviewer.md"
   config-file:
-    description: "Optional repository config file on the PR base branch (.github/universal-code-reviewer.yml)."
+    description: "Optional repository config file on the PR base branch (.github/robin.yml). Legacy name .github/universal-code-reviewer.yml also works."
     required: false
-    default: ".github/universal-code-reviewer.yml"
+    default: ".github/robin.yml"
   use-json-response-mode:
     description: "Request JSON object responses when the provider supports response_format. Leave empty to use repo config or default true."
     required: false

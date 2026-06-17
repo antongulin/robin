@@ -246,7 +246,7 @@ export class GitHubReviewer {
     parts.push("");
     parts.push("---");
     parts.push(
-      "*Reviews powered by [Universal Code Reviewer](https://github.com/antongulin/universal-code-reviewer)*"
+      "*Reviews powered by [Robin](https://github.com/antongulin/robin)*"
     );
 
     return parts.join("\n");

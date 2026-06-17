@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": "universal-code-reviewer",
+      "package-name": "robin",
       "include-component-in-tag": false,
       "pull-request-title-pattern": "chore: release ${version}",
       "changelog-sections": [

@@ -12,6 +12,7 @@ exports.parseSlashCommand = parseSlashCommand;
 exports.hasRequiredPermission = hasRequiredPermission;
 exports.AVAILABLE_COMMANDS = [
     { command: "/review", description: "Posts a full code review of the pull request" },
+    { command: "/robin", description: "Alias for /review" },
     { command: "/summary", description: "Posts a summary of the changes in the pull request" },
     { command: "/help", description: "Shows available commands" },
 ];
@@ -30,10 +31,11 @@ function parseSlashCommand(commentBody) {
         .find((line) => line.length > 0);
     if (!firstLine)
         return undefined;
-    const match = firstLine.match(/^\/(review|summary|help)(?:\s|$)/i);
+    const match = firstLine.match(/^\/(review|robin|summary|help)(?:\s|$)/i);
     if (!match)
         return undefined;
-    return match[1].toLowerCase();
+    const cmd = match[1].toLowerCase();
+    return (cmd === "robin" ? "review" : cmd);
 }
 function hasRequiredPermission(permission, minimumPermission) {
     const userRank = PERMISSION_RANK[permission.toLowerCase()] ?? 0;
@@ -426,7 +428,7 @@ class GitHubReviewer {
         }
         parts.push("");
         parts.push("---");
-        parts.push("*Reviews powered by [Universal Code Reviewer](https://github.com/antongulin/universal-code-reviewer)*");
+        parts.push("*Reviews powered by [Robin](https://github.com/antongulin/robin)*");
         return parts.join("\n");
     }
     formatUnpostedFinding(index, finding) {
@@ -923,7 +925,7 @@ async function run() {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: ["## :robot: Universal Code Reviewer Summary", "", reviewText].join("\n"),
+                body: ["## :robot: Robin Summary", "", reviewText].join("\n"),
             });
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
         }
@@ -978,7 +980,7 @@ async function postStatusComment(octokit, owner, repo, issueNumber, command, mod
             repo,
             issue_number: issueNumber,
             body: [
-                "## :robot: Universal Code Reviewer",
+                "## :robot: Robin",
                 "",
                 ":eyes: Reviewing this pull request.",
                 "",
@@ -1011,7 +1013,7 @@ async function updateStatusComment(octokit, owner, repo, commentId, body) {
 function buildCompletedStatusBody(command, findings) {
     if (command === "summary") {
         return [
-            "## :robot: Universal Code Reviewer",
+            "## :robot: Robin",
             "",
             ":white_check_mark: Finished the summary.",
             "",
@@ -1025,7 +1027,7 @@ function buildCompletedStatusBody(command, findings) {
         ? "I did not find any issues."
         : `I found ${totalFindings} issue${totalFindings === 1 ? "" : "s"}.`;
     return [
-        "## :robot: Universal Code Reviewer",
+        "## :robot: Robin",
         "",
         `:white_check_mark: Finished the review. ${result}`,
         "",
@@ -1036,18 +1038,18 @@ function buildSkippedFilterStatusBody(removedFiles) {
     const preview = removedFiles.slice(0, 8).join(", ");
     const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
     return [
-        "## :robot: Universal Code Reviewer",
+        "## :robot: Robin",
         "",
         ":white_check_mark: Skipped review — only ignored paths changed.",
         "",
         `Filtered files: ${preview}${suffix}`,
         "",
-        "Add custom `skip-paths` in `.github/universal-code-reviewer.yml` if this was unexpected.",
+        "Add custom `skip-paths` in `.github/robin.yml` if this was unexpected.",
     ].join("\n");
 }
 function buildFailedStatusBody(errorMessage, command) {
     return [
-        "## :robot: Universal Code Reviewer",
+        "## :robot: Robin",
         "",
         `:warning: Could not finish the ${command === "summary" ? "summary" : "review"}.`,
         "",
@@ -1289,11 +1291,11 @@ function getSummaryPrompt() {
 }
 function getHelpMessage() {
     return [
-        "Available commands for **Universal Code Reviewer**:",
+        "Available commands for **Robin**:",
         "",
         "| Command | Description |",
         "|---|---|",
-        "| /review | Full code review with severity tiers (High / Medium / Low / Suggestion) |",
+        "| /review or /robin | Full code review with severity tiers (High / Medium / Low / Suggestion) |",
         "| /summary | Concise PR overview -- what changed, key files, notable patterns |",
         "| /help | Show this message |",
         "",
@@ -1318,7 +1320,7 @@ exports.parseRepoConfigYaml = parseRepoConfigYaml;
 exports.resolveMaxDiffSize = resolveMaxDiffSize;
 exports.resolveMaxComments = resolveMaxComments;
 exports.resolveJsonResponseMode = resolveJsonResponseMode;
-exports.DEFAULT_CONFIG_FILE = ".github/universal-code-reviewer.yml";
+exports.DEFAULT_CONFIG_FILE = ".github/robin.yml";
 exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
 exports.DEFAULT_ACTION_MAX_COMMENTS = 25;
 /** Reusable workflow default in `.github/workflows/review.yml` */
