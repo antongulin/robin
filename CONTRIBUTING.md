@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Universal Code Reviewer.
+Thanks for helping improve Robin.
 
 ## Good First Areas
 

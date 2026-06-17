@@ -12,7 +12,7 @@ Do not open a public issue for vulnerabilities that could expose secrets, privat
 
 ## Security Notes
 
-Universal Code Reviewer sends pull request diffs to the LLM endpoint configured by the repository owner. Review your provider's data retention policy before using hosted APIs on private code.
+Robin sends pull request diffs to the LLM endpoint configured by the repository owner. Review your provider's data retention policy before using hosted APIs on private code.
 
 Recommended workflow practices:
 
