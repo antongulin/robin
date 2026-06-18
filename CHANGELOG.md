@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.2](https://github.com/antongulin/robin/compare/v2.0.1...v2.0.2) (2026-06-18)
+
+
+### Documentation
+
+* show clean-pass screenshot in README ([6af8cf9](https://github.com/antongulin/robin/commit/6af8cf954264e523a433c4d077f5470911324d3b))
+* show clean-pass screenshot in README ([8c36b27](https://github.com/antongulin/robin/commit/8c36b2732087acaf1b39c25108576156fa0b772e))
+
 ## [2.0.1](https://github.com/antongulin/robin/compare/v2.0.0...v2.0.1) (2026-06-18)
 
 
