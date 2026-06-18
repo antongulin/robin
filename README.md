@@ -205,9 +205,11 @@ Focused change. Main risk: timeout errors are not handled clearly.
 
 ## Robin in your editor
 
-The one-line installer also drops a small **companion skill** into your coding agent
-(Claude Code's `~/.claude/skills/robin`, when present). It ships with Robin — there's
-nothing separate to install. Once it's there, you can say things like:
+The one-line installer also installs a small **companion skill** into every coding agent
+on your machine (Claude Code, Cursor, Copilot, Windsurf, …) via the cross-platform
+[skills CLI](https://skills.sh) — `npx skills add https://github.com/antongulin/robin --all --global`. It
+ships with Robin; there's nothing separate to sign up for. (Skip it with `ROBIN_SKILL=0`,
+or install it by hand with that command.) Once it's there, you can say things like:
 
 > "review this PR with Robin" · "robin this PR" · "fix the Robin feedback and merge"
 

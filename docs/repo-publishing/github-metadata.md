@@ -38,13 +38,12 @@ gh repo edit antongulin/robin \
   --add-topic coderabbit-alternative --add-topic ai-pr-review --add-topic code-review-bot
 ```
 
-## Skill overlay (skills/robin) — only if shipping it as an installable product
+## Skill overlay (skills/robin) — internal companion, auto-installed
 
-- Install: `npx skills add antongulin/robin`
-- Badge: `[![skills.sh](https://skills.sh/b/antongulin/robin)](https://skills.sh/antongulin/robin)`
-- Verify URL: https://skills.sh/antongulin/robin
-- Note: skills.sh is telemetry-driven — the listing appears after a real
-  `npx skills add antongulin/robin`. Run it once post-decision to seed discovery.
-- Open question: the skill lives under `skills/robin/` inside a tool repo. `npx skills add`
-  expects skills at a discoverable path — confirm the installer resolves `skills/robin/`
-  before advertising the install command.
+The skill ships with Robin and installs automatically via the one-line installer (and is
+documented in the README). Not marketed as a standalone skills.sh product.
+
+- Install (all agents, global): `npx skills add https://github.com/antongulin/robin --all --global`
+- Verified: the skills CLI resolves `skills/robin/` from the repo ("Found 1 skill: robin").
+- skills.sh listing is telemetry-driven; it will appear after real installs. No badge needed
+  unless we later decide to promote it as a standalone pack.

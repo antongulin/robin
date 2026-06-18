@@ -56,21 +56,25 @@ YAML
   info "Created $WORKFLOW_PATH (ref: ${REF})"
 fi
 
-# Install the companion chat skill so a coding agent can drive Robin's PR review
-# loop from plain chat ("review with Robin"). Best-effort: only when Claude Code's
-# skills dir exists, and never fatal — the GitHub Action works without it.
+# Install the companion chat skill so any coding agent can drive Robin's PR review
+# loop from plain chat ("review with Robin"). Uses the cross-platform skills CLI to
+# install for every detected agent, globally. Best-effort — the GitHub Action works
+# without it. Set ROBIN_SKILL=0 to skip.
 install_skill() {
-  local skills_dir="${HOME}/.claude/skills"
-  [ -d "$skills_dir" ] || return 0
+  [ "${ROBIN_SKILL:-1}" = "0" ] && return 0
 
-  local dest="${skills_dir}/robin"
-  local base="https://raw.githubusercontent.com/antongulin/robin/${REF}/skills/robin"
-  mkdir -p "${dest}/references"
+  if ! command -v npx >/dev/null 2>&1; then
+    warn "Skipping companion skill — Node.js/npx not found."
+    warn "Install it later: npx skills add https://github.com/antongulin/robin --all --global"
+    return 0
+  fi
 
-  if curl -fsSL "${base}/SKILL.md" -o "${dest}/SKILL.md" 2>/dev/null; then
-    curl -fsSL "${base}/references/github-pr-api-reference.md" -o "${dest}/references/github-pr-api-reference.md" 2>/dev/null || true
-    curl -fsSL "${base}/references/lessons-learned.md" -o "${dest}/references/lessons-learned.md" 2>/dev/null || true
-    info "Installed the Robin chat skill to ~/.claude/skills/robin (say \"review with Robin\")."
+  info "Installing the Robin chat skill for all coding agents…"
+  # --agent '*' = every supported agent, --global = user-level (available everywhere).
+  if npx -y skills add https://github.com/antongulin/robin --skill robin --agent '*' --global --yes >/dev/null 2>&1; then
+    info "Robin chat skill installed (all agents). Say \"review with Robin\"."
+  else
+    warn "Couldn't auto-install the skill. Run: npx skills add https://github.com/antongulin/robin --all --global"
   fi
 }
 install_skill
