@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.1](https://github.com/antongulin/robin/compare/v1.6.0...v1.6.1) (2026-06-18)
+
+
+### Documentation
+
+* document model-robustness design and prompt-testing ([a71e7c6](https://github.com/antongulin/robin/commit/a71e7c6952a9d0b0904a41e0857bd11891982a69))
+* model-robustness design + prompt-testing guide ([851103a](https://github.com/antongulin/robin/commit/851103a6fca737704d49a8b2425a0400ed30bd20))
+
 ## [1.6.0](https://github.com/antongulin/robin/compare/v1.5.1...v1.6.0) (2026-06-18)
 
 
