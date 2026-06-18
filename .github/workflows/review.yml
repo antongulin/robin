@@ -79,6 +79,7 @@ jobs:
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
         (
           startsWith(github.event.comment.body, '/review') ||
+          startsWith(github.event.comment.body, '/robin') ||
           startsWith(github.event.comment.body, '/summary') ||
           startsWith(github.event.comment.body, '/help')
         )
