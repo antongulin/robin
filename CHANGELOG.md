@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.3](https://github.com/antongulin/robin/compare/v2.0.2...v2.0.3) (2026-06-18)
+
+
+### Documentation
+
+* mark 2.0 roadmap as shipped ([7522b58](https://github.com/antongulin/robin/commit/7522b587bae5f960a3ca619bc368faccf1977ca5))
+* mark 2.0 roadmap as shipped ([70155cb](https://github.com/antongulin/robin/commit/70155cb6592e197bd2ae2f00bf7bdf38149b96e6))
+
 ## [2.0.2](https://github.com/antongulin/robin/compare/v2.0.1...v2.0.2) (2026-06-18)
 
 
