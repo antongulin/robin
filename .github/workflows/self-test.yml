@@ -49,7 +49,7 @@ jobs:
           llm-api-key: ${{ secrets.LLM_API_KEY }}
           llm-base-url: ${{ secrets.LLM_BASE_URL }}
           model: ${{ secrets.LLM_MODEL }}
-          fail-on-critical: "false"
+          fail-on-high: "false"
 
   command-test:
     if: |

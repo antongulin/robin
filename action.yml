@@ -14,24 +14,12 @@ inputs:
     description: "API key for your LLM endpoint. Use \"ollama\" for self-hosted Ollama."
     required: false
     default: "ollama"
-  api-key:
-    description: "Alias for llm-api-key"
-    required: false
-    default: ""
   llm-base-url:
     description: "Base URL for OpenAI-compatible API. Examples: https://api.openai.com/v1, http://your-server:11434/v1"
     required: true
-  base-url:
-    description: "Alias for llm-base-url"
-    required: false
-    default: ""
   model:
     description: "Model name to use. Examples: gpt-4o, llama3.2, codellama:13b, or your provider-specific model name."
     required: true
-  fail-on-critical:
-    description: "Deprecated alias for fail-on-high. If true, the action will fail when high severity issues are found."
-    required: false
-    default: "false"
   fail-on-high:
     description: "If true, the action will fail when high severity issues are found."
     required: false
