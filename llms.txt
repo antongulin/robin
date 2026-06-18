@@ -1,0 +1,35 @@
+# Robin
+
+> Free AI code reviews on every pull request. Robin runs as a GitHub Action in your own
+> repository, calls an OpenAI-compatible LLM endpoint you configure (OpenRouter's free
+> tier works), and posts severity-tiered review comments like a teammate. Bring your own
+> key — no quotas, no per-seat fees, no separate service to sign up for.
+
+## What it is
+
+- A GitHub Action, not a hosted bot. The workflow runs in the user's repo and calls the AI URL they configure.
+- Reviews on PR open; `/robin` (or `/review`) on demand; `/summary` for an overview.
+- Findings are tiered High / Medium / Low / Suggestion, each with a confidence signal, posted inline on changed lines plus a summary.
+- Designed to stay robust even when a weak, randomly-routed free model is used: the diff is line-numbered, the prompt is calibrated, and responses are retried with provider fallbacks.
+
+## Setup
+
+- One-line install (writes the workflow): `curl -fsSL https://robinreview.dev/install.sh | bash`
+- Or add `.github/workflows/robin.yml` calling `antongulin/robin/.github/workflows/review.yml@v1`.
+- Three secrets: `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`. Free OpenRouter: base `https://openrouter.ai/api/v1`, model `openrouter/free`.
+
+## Key files
+
+- [README.md](README.md): human setup and usage
+- [action.yml](action.yml): action inputs
+- [.github/workflows/review.yml](.github/workflows/review.yml): reusable workflow consumers call
+- [skills/robin/SKILL.md](skills/robin/SKILL.md): companion chat skill — drives a bounded PR review→fix→merge loop from a coding agent
+- [docs/ADVANCED.md](docs/ADVANCED.md): all settings, strict mode, self-hosted runners
+- [AGENTS.md](AGENTS.md): instructions for AI coding agents adding Robin to a repo
+
+## Links
+
+- Site: https://robinreview.dev
+- Repository: https://github.com/antongulin/robin
+- License: MIT
+- Author: Anton Gulin — https://www.anton.qa

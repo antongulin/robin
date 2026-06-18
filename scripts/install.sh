@@ -56,6 +56,25 @@ YAML
   info "Created $WORKFLOW_PATH (ref: ${REF})"
 fi
 
+# Install the companion chat skill so a coding agent can drive Robin's PR review
+# loop from plain chat ("review with Robin"). Best-effort: only when Claude Code's
+# skills dir exists, and never fatal — the GitHub Action works without it.
+install_skill() {
+  local skills_dir="${HOME}/.claude/skills"
+  [ -d "$skills_dir" ] || return 0
+
+  local dest="${skills_dir}/robin"
+  local base="https://raw.githubusercontent.com/antongulin/robin/${REF}/skills/robin"
+  mkdir -p "${dest}/references"
+
+  if curl -fsSL "${base}/SKILL.md" -o "${dest}/SKILL.md" 2>/dev/null; then
+    curl -fsSL "${base}/references/github-pr-api-reference.md" -o "${dest}/references/github-pr-api-reference.md" 2>/dev/null || true
+    curl -fsSL "${base}/references/lessons-learned.md" -o "${dest}/references/lessons-learned.md" 2>/dev/null || true
+    info "Installed the Robin chat skill to ~/.claude/skills/robin (say \"review with Robin\")."
+  fi
+}
+install_skill
+
 cat <<EOF
 
 Next — set three repository secrets (free OpenRouter shown):
