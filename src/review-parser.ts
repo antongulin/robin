@@ -3,6 +3,7 @@ import * as core from "@actions/core";
 export interface ReviewFinding {
   severity: "high" | "medium" | "low" | "suggestion";
   category: string;
+  confidence?: "high" | "medium" | "low";
   file?: string;
   line?: number;
   description: string;
@@ -116,6 +117,7 @@ export class ReviewParser {
     return {
       severity,
       category: this.asString(item.category),
+      confidence: this.asConfidence(item.confidence),
       file,
       line,
       description,
@@ -126,6 +128,13 @@ export class ReviewParser {
 
   private static asString(value: unknown): string {
     return typeof value === "string" ? value : "";
+  }
+
+  private static asConfidence(value: unknown): ReviewFinding["confidence"] {
+    const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+    return normalized === "high" || normalized === "medium" || normalized === "low"
+      ? normalized
+      : undefined;
   }
 
   private static asNumber(value: unknown): number | undefined {

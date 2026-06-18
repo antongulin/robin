@@ -7,6 +7,7 @@ import { shouldRetryStructuredReview } from "./review-retry";
 import { GitHubReviewer } from "./github-reviewer";
 import { DEFAULT_LLM_TIMEOUT_MS, parseLLMTimeout } from "./config";
 import { filterDiff, splitDiffIntoFiles } from "./diff-filter";
+import { annotateDiffWithLineNumbers } from "./diff-annotate";
 import {
   DEFAULT_CONFIG_FILE,
   RepoConfig,
@@ -223,7 +224,7 @@ async function run(): Promise<void> {
         owner,
         repo,
         issue_number: prNumber,
-        body: ["## :robot: Robin Summary", "", reviewText].join("\n"),
+        body: ["## :bow_and_arrow: Robin · Summary", "", reviewText].join("\n"),
       });
       await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
     } else {
@@ -302,9 +303,9 @@ async function postStatusComment(
       repo,
       issue_number: issueNumber,
       body: [
-        "## :robot: Robin",
+        "## :bow_and_arrow: Robin",
         "",
-        ":eyes: Reviewing this pull request.",
+        ":eyes: On it — taking a look at this pull request.",
         "",
         `Mode: ${command === "summary" ? "summary" : "code review"}`,
         `Model: ${model}`,
@@ -341,11 +342,11 @@ async function updateStatusComment(
 function buildCompletedStatusBody(command: "review" | "summary", findings?: StructuredReview): string {
   if (command === "summary") {
     return [
-      "## :robot: Robin",
+      "## :bow_and_arrow: Robin",
       "",
-      ":white_check_mark: Finished the summary.",
+      ":white_check_mark: Summary's ready above.",
       "",
-      "When you want a full review, comment `/review`.",
+      "Want the full review? Comment `/robin`.",
     ].join("\n");
   }
 
@@ -353,15 +354,15 @@ function buildCompletedStatusBody(command: "review" | "summary", findings?: Stru
     ? findings.high.length + findings.medium.length + findings.low.length + findings.suggestions.length
     : 0;
   const result = totalFindings === 0
-    ? "I did not find any issues."
-    : `I found ${totalFindings} issue${totalFindings === 1 ? "" : "s"}.`;
+    ? "Nothing worth flagging — looks clean to me."
+    : `I flagged ${totalFindings} thing${totalFindings === 1 ? "" : "s"} worth a look.`;
 
   return [
-    "## :robot: Robin",
+    "## :bow_and_arrow: Robin",
     "",
-    `:white_check_mark: Finished the review. ${result}`,
+    `:white_check_mark: Review done. ${result}`,
     "",
-    "After you push fixes, comment `/review` when you are ready for another pass.",
+    "Push fixes whenever you like, then comment `/robin` for another pass.",
   ].join("\n");
 }
 
@@ -370,25 +371,25 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
   const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
 
   return [
-    "## :robot: Robin",
+    "## :bow_and_arrow: Robin",
     "",
-    ":white_check_mark: Skipped review — only ignored paths changed.",
+    ":white_check_mark: Nothing to review here — only ignored paths changed.",
     "",
-    `Filtered files: ${preview}${suffix}`,
+    `Skipped: ${preview}${suffix}`,
     "",
-    "Add custom `skip-paths` in `.github/robin.yml` if this was unexpected.",
+    "Add `skip-paths` in `.github/robin.yml` if that's not what you expected.",
   ].join("\n");
 }
 
 function buildFailedStatusBody(errorMessage: string, command: "review" | "summary"): string {
   return [
-    "## :robot: Robin",
+    "## :bow_and_arrow: Robin",
     "",
-    `:warning: Could not finish the ${command === "summary" ? "summary" : "review"}.`,
+    `:warning: I couldn't finish the ${command === "summary" ? "summary" : "review"} this time.`,
     "",
     `Reason: ${errorMessage}`,
     "",
-    "No secrets are included in this comment.",
+    "Free model routes drop sometimes — comment `/robin` to try again. (No secrets are included in this message.)",
   ].join("\n");
 }
 
@@ -532,13 +533,15 @@ async function runSummary(llm: LLMClient, diff: string) {
 }
 
 function buildReviewInput(diff: string): string {
+  const annotated = annotateDiffWithLineNumbers(diff);
   return [
     "Review the following code diff and return only the strict JSON object described in the system prompt.",
-    "Use line numbers from the new side of the diff for line-specific findings.",
+    "Each line is prefixed with its line number in the NEW file (blank for removed lines and headers).",
+    "For any line-specific finding, copy that exact number into the `line` field. Do not guess or recount.",
     "---",
     "CODE DIFF:",
     "```diff",
-    diff,
+    annotated,
     "```",
   ].join("\n");
 }

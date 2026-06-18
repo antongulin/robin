@@ -144,7 +144,8 @@ export class GitHubReviewer {
         ? ":large_blue_circle: LOW"
         : ":bulb: SUGGESTION";
 
-    let body = "**Robin** — " + severityEmoji + "\n\n" + finding.description;
+    const confidence = finding.confidence ? " · confidence: " + finding.confidence : "";
+    let body = "**Robin** — " + severityEmoji + confidence + "\n\n" + finding.description;
 
     if (finding.recommendation) {
       body += "\n\n**Recommendation:** " + finding.recommendation;
@@ -191,10 +192,10 @@ export class GitHubReviewer {
   private buildReviewBody(findings: StructuredReview, postedFindings: Set<ReviewFinding>): string {
     const parts: string[] = [];
 
-    parts.push("## :robot: Robin");
+    parts.push("## :bow_and_arrow: Robin");
     parts.push("");
     parts.push(
-      "> **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Robin to run again."
+      "> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass."
     );
     parts.push("");
 
@@ -246,7 +247,7 @@ export class GitHubReviewer {
     parts.push("");
     parts.push("---");
     parts.push(
-      "*[Robin](https://github.com/antongulin/robin) — free AI code reviews for every PR.*"
+      "*[Robin](https://robinreview.dev) — the Robin Hood of code review. Free for every PR.*"
     );
 
     return parts.join("\n");
