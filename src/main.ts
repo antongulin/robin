@@ -111,10 +111,10 @@ async function run(): Promise<void> {
       return;
     }
 
-    const apiKey = core.getInput("llm-api-key") || core.getInput("api-key") || "ollama";
-    const baseUrl = core.getInput("llm-base-url") || core.getInput("base-url") || "";
+    const apiKey = core.getInput("llm-api-key") || "ollama";
+    const baseUrl = core.getInput("llm-base-url") || "";
     const model = core.getInput("model") || "";
-    const failOnHigh = core.getInput("fail-on-high") === "true" || core.getInput("fail-on-critical") === "true";
+    const failOnHigh = core.getInput("fail-on-high") === "true";
     const maxDiffSizeInput = core.getInput("max-diff-size") || "50000";
     const maxCommentsInput = core.getInput("max-comments") || "25";
     const maxOutputTokensInput = core.getInput("max-output-tokens") || "";
