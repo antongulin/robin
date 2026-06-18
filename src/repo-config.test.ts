@@ -1,7 +1,6 @@
 import {
-  DEFAULT_ACTION_MAX_COMMENTS,
+  DEFAULT_MAX_COMMENTS,
   DEFAULT_ACTION_MAX_DIFF_SIZE,
-  REUSABLE_WORKFLOW_MAX_COMMENTS,
   parseRepoConfigYaml,
   resolveJsonResponseMode,
   resolveMaxComments,
@@ -41,18 +40,16 @@ describe("resolveMaxDiffSize", () => {
 describe("resolveMaxComments", () => {
   it("uses repo config when action input is still the default", () => {
     expect(
-      resolveMaxComments(String(DEFAULT_ACTION_MAX_COMMENTS), { maxComments: 8 })
+      resolveMaxComments(String(DEFAULT_MAX_COMMENTS), { maxComments: 8 })
     ).toBe(8);
   });
 
-  it("uses repo config when reusable workflow passes max-comments 10", () => {
-    expect(
-      resolveMaxComments(String(REUSABLE_WORKFLOW_MAX_COMMENTS), { maxComments: 8 })
-    ).toBe(8);
+  it("honors an explicit non-default action input over repo config", () => {
+    expect(resolveMaxComments("5", { maxComments: 8 })).toBe(5);
   });
 
   it("honors max-comments 0 from repo config", () => {
-    expect(resolveMaxComments(String(DEFAULT_ACTION_MAX_COMMENTS), { maxComments: 0 })).toBe(0);
+    expect(resolveMaxComments(String(DEFAULT_MAX_COMMENTS), { maxComments: 0 })).toBe(0);
   });
 });
 

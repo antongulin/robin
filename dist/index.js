@@ -1395,16 +1395,15 @@ function getHelpMessage() {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.REUSABLE_WORKFLOW_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
+exports.DEFAULT_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
 exports.parseRepoConfigYaml = parseRepoConfigYaml;
 exports.resolveMaxDiffSize = resolveMaxDiffSize;
 exports.resolveMaxComments = resolveMaxComments;
 exports.resolveJsonResponseMode = resolveJsonResponseMode;
 exports.DEFAULT_CONFIG_FILE = ".github/robin.yml";
 exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
-exports.DEFAULT_ACTION_MAX_COMMENTS = 25;
-/** Reusable workflow default in `.github/workflows/review.yml` */
-exports.REUSABLE_WORKFLOW_MAX_COMMENTS = 10;
+/** Single default shared by action.yml and the reusable review.yml workflow. */
+exports.DEFAULT_MAX_COMMENTS = 15;
 function parseRepoConfigYaml(text) {
     const config = {};
     let inSkipPaths = false;
@@ -1456,12 +1455,11 @@ function resolveMaxDiffSize(actionInput, repoConfig) {
 }
 function resolveMaxComments(actionInput, repoConfig) {
     const parsed = parseInt(actionInput, 10);
-    const isUnsetOrWorkflowDefault = Number.isFinite(parsed) &&
-        (parsed === exports.DEFAULT_ACTION_MAX_COMMENTS || parsed === exports.REUSABLE_WORKFLOW_MAX_COMMENTS);
-    if (repoConfig?.maxComments !== undefined && isUnsetOrWorkflowDefault) {
+    const isUnset = Number.isFinite(parsed) && parsed === exports.DEFAULT_MAX_COMMENTS;
+    if (repoConfig?.maxComments !== undefined && isUnset) {
         return repoConfig.maxComments;
     }
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : exports.DEFAULT_ACTION_MAX_COMMENTS;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : exports.DEFAULT_MAX_COMMENTS;
 }
 function resolveJsonResponseMode(actionInput, repoConfig) {
     if (actionInput === "true")
