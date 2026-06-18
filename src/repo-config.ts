@@ -1,8 +1,7 @@
 export const DEFAULT_CONFIG_FILE = ".github/robin.yml";
 export const DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
-export const DEFAULT_ACTION_MAX_COMMENTS = 25;
-/** Reusable workflow default in `.github/workflows/review.yml` */
-export const REUSABLE_WORKFLOW_MAX_COMMENTS = 10;
+/** Single default shared by action.yml and the reusable review.yml workflow. */
+export const DEFAULT_MAX_COMMENTS = 15;
 
 export interface RepoConfig {
   maxDiffSize?: number;
@@ -72,13 +71,11 @@ export function resolveMaxDiffSize(actionInput: string, repoConfig?: RepoConfig)
 
 export function resolveMaxComments(actionInput: string, repoConfig?: RepoConfig): number {
   const parsed = parseInt(actionInput, 10);
-  const isUnsetOrWorkflowDefault =
-    Number.isFinite(parsed) &&
-    (parsed === DEFAULT_ACTION_MAX_COMMENTS || parsed === REUSABLE_WORKFLOW_MAX_COMMENTS);
-  if (repoConfig?.maxComments !== undefined && isUnsetOrWorkflowDefault) {
+  const isUnset = Number.isFinite(parsed) && parsed === DEFAULT_MAX_COMMENTS;
+  if (repoConfig?.maxComments !== undefined && isUnset) {
     return repoConfig.maxComments;
   }
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_ACTION_MAX_COMMENTS;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_COMMENTS;
 }
 
 export function resolveJsonResponseMode(actionInput: string, repoConfig?: RepoConfig): boolean {

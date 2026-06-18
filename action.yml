@@ -51,7 +51,7 @@ inputs:
   max-comments:
     description: "Maximum number of inline review comments to post. Extra findings stay in the review body."
     required: false
-    default: "25"
+    default: "15"
   review-on-synchronize:
     description: "Run automatic reviews for pull_request synchronize events, which happen after each new commit pushed to a PR. Set to true only if you want review on every push."
     required: false
