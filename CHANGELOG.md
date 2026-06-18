@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0](https://github.com/antongulin/robin/compare/v1.5.1...v1.6.0) (2026-06-18)
+
+
+### Features
+
+* **config:** unify max-comments default to 15 ([de10bae](https://github.com/antongulin/robin/commit/de10baefabcd896abc9092944b4ac69a1f8c0f6d))
+* **config:** unify max-comments default to 15 ([466f427](https://github.com/antongulin/robin/commit/466f427ca63b7f4856d2ea0ca866f0fe2e1cfd23))
+
 ## [1.5.1](https://github.com/antongulin/robin/compare/v1.5.0...v1.5.1) (2026-06-18)
 
 
