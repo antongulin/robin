@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/antongulin/robin/compare/v1.6.1...v2.0.0) (2026-06-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* the api-key, base-url, and fail-on-critical action inputs are removed. If you call antongulin/robin directly via 'uses:' with any of these, rename them: api-key -> llm-api-key, base-url -> llm-base-url, fail-on-critical -> fail-on-high. Consumers of the reusable workflow (.github/workflows/review.yml) are unaffected — it already used the canonical names.
+
+### Features
+
+* drop deprecated input aliases ([6f8c3ba](https://github.com/antongulin/robin/commit/6f8c3ba75fa60536a7f83406d17788b7c3d3c880))
+
 ## [1.6.1](https://github.com/antongulin/robin/compare/v1.6.0...v1.6.1) (2026-06-18)
 
 
