@@ -215,6 +215,33 @@ If you raise `llm-timeout-ms` above 10 minutes, also raise the job `timeout-minu
 
 The action fetches diffs via the GitHub API. `actions/checkout` is not required unless other steps need local files.
 
+## Model robustness
+
+Robin is built to give good reviews even when the LLM is a weak, free, or
+randomly-routed model (e.g. OpenRouter's free tier). The prompt and parser do the
+heavy lifting so the model doesn't have to. If you change `src/prompts/`, keep these
+constraints in mind — they are why reviews stay usable across models:
+
+- **Line-numbered diff.** The diff sent to the model is annotated with real new-file
+  line numbers (`src/diff-annotate.ts`), and the prompt tells the model to copy those
+  exact numbers. Weak models are bad at counting lines; handing them the numbers keeps
+  inline comments anchored to the right place instead of drifting or being dropped.
+- **Few-shot severity calibration.** The prompt includes worked HIGH/MEDIUM/LOW/
+  SUGGESTION examples plus an explicit rule: *impact ≠ confidence; never inflate
+  severity*. Without calibration, weak models flag everything as HIGH. The examples
+  pin the scale.
+- **`confidence` field.** Each finding carries `high|medium|low` confidence separate
+  from severity. The parser ignores invalid values, and the Robin skill uses confidence
+  to decide how hard to verify a finding before acting on it. Severity orders effort;
+  confidence gates trust.
+- **"You only see the diff" guard.** The prompt reminds the model it sees changed lines
+  only, not the whole file — so it doesn't invent bugs about code it can't see. The
+  companion skill mirrors this: it treats findings as hypotheses to verify, not orders.
+
+The parser (`src/review-parser.ts`) is deliberately forgiving — it normalizes severity,
+drops unparseable findings, and falls back to a markdown review if JSON mode fails — so a
+malformed response from a weak model degrades instead of crashing the run.
+
 ## Security and privacy
 
 PR diffs are sent to **your** configured LLM endpoint.

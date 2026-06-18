@@ -24,6 +24,20 @@ The action runs from `dist/index.js`, so source changes that affect runtime beha
 
 Maintainer-only paths (`docs/superpowers/`, `.agents/`) are gitignored so the public repo stays focused on the action and user docs (`README.md`, `docs/ADVANCED.md`, `AGENTS.md`).
 
+## Testing prompt changes
+
+Robin must give good reviews on weak, free, and randomly-routed models, not just strong
+ones (see [Model robustness](docs/ADVANCED.md#model-robustness)). A prompt tweak that
+helps a strong model can quietly regress a weak one, so test against more than one:
+
+- Run the same PR through **at least 2–3 different free models** (e.g. swap `LLM_MODEL`
+  between a few OpenRouter free models, or point `LLM_BASE_URL` at a local Ollama model).
+- Check the failure modes the prompt defends against: are inline comments anchored to the
+  right lines, is severity calibrated (not everything HIGH), does JSON mode still parse,
+  and does the markdown fallback still work when it doesn't?
+- Prefer a real PR with a known mix of issues over a synthetic one — it exercises severity
+  and confidence calibration more honestly.
+
 ## Pull Request Guidelines
 
 - Keep changes focused.
