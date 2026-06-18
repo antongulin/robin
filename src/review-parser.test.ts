@@ -31,6 +31,25 @@ describe("ReviewParser", () => {
     });
   });
 
+  it("parses confidence when present and ignores invalid values", () => {
+    const review = ReviewParser.parse(
+      JSON.stringify({
+        summary: "ok",
+        high: [
+          { line: 1, description: "real bug", recommendation: "fix", confidence: "High" },
+        ],
+        medium: [
+          { line: 2, description: "maybe", recommendation: "fix", confidence: "definitely" },
+        ],
+        low: [],
+        suggestions: [],
+      })
+    );
+
+    expect(review.high[0].confidence).toBe("high");
+    expect(review.medium[0].confidence).toBeUndefined();
+  });
+
   it("parses JSON inside a code fence", () => {
     const review = ReviewParser.parse(`Here is the review:\n\n\`\`\`json
 {

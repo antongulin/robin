@@ -72,6 +72,70 @@ function parseLLMTimeout(input) {
 
 /***/ }),
 
+/***/ 4523:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.annotateDiffWithLineNumbers = annotateDiffWithLineNumbers;
+/**
+ * Annotate a unified git diff with NEW-file line numbers.
+ *
+ * Weak/free models routinely guess wrong line numbers, which makes every
+ * line-specific finding fall out of inline placement (see
+ * `GitHubReviewer.isLineInNewDiff`). Prefixing each line with its real
+ * new-file line number removes the guessing: the model copies the number we
+ * already computed.
+ *
+ * Added (`+`) and context (` `) lines get their new-file line number.
+ * Removed (`-`) lines, hunk/file headers, and "\ No newline" markers get a
+ * blank pad so the columns line up and the model never assigns them a line.
+ */
+function annotateDiffWithLineNumbers(diff) {
+    const lines = diff.split("\n");
+    const blank = " ".repeat(NUMBER_WIDTH);
+    const out = [];
+    let newLine = 0;
+    let inHunk = false;
+    for (const line of lines) {
+        if (line.startsWith("diff --git")) {
+            inHunk = false;
+            out.push(`${blank}  ${line}`);
+            continue;
+        }
+        if (line.startsWith("@@")) {
+            const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+            if (match) {
+                newLine = parseInt(match[1], 10);
+            }
+            inHunk = true;
+            out.push(`${blank}  ${line}`);
+            continue;
+        }
+        if (!inHunk || line.startsWith("\\")) {
+            out.push(`${blank}  ${line}`);
+            continue;
+        }
+        if (line.startsWith("-")) {
+            // Removed line: exists only in the old file, no new-file number.
+            out.push(`${blank}  ${line}`);
+            continue;
+        }
+        // Added (`+`) or context (` ` / empty) line: present in the new file.
+        out.push(`${pad(newLine)}  ${line}`);
+        newLine++;
+    }
+    return out.join("\n");
+}
+const NUMBER_WIDTH = 5;
+function pad(n) {
+    return String(n).padStart(NUMBER_WIDTH, " ");
+}
+//# sourceMappingURL=diff-annotate.js.map
+
+/***/ }),
+
 /***/ 7561:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -351,7 +415,8 @@ class GitHubReviewer {
                 : finding.severity === "low"
                     ? ":large_blue_circle: LOW"
                     : ":bulb: SUGGESTION";
-        let body = "**Robin** — " + severityEmoji + "\n\n" + finding.description;
+        const confidence = finding.confidence ? " · confidence: " + finding.confidence : "";
+        let body = "**Robin** — " + severityEmoji + confidence + "\n\n" + finding.description;
         if (finding.recommendation) {
             body += "\n\n**Recommendation:** " + finding.recommendation;
         }
@@ -381,9 +446,9 @@ class GitHubReviewer {
      */
     buildReviewBody(findings, postedFindings) {
         const parts = [];
-        parts.push("## :robot: Robin");
+        parts.push("## :bow_and_arrow: Robin");
         parts.push("");
-        parts.push("> **Review flow:** this is a point-in-time review. Push fixes freely, then comment `/review` when you want Robin to run again.");
+        parts.push("> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass.");
         parts.push("");
         // Stats summary
         const statBlocks = [];
@@ -428,7 +493,7 @@ class GitHubReviewer {
         }
         parts.push("");
         parts.push("---");
-        parts.push("*[Robin](https://github.com/antongulin/robin) — free AI code reviews for every PR.*");
+        parts.push("*[Robin](https://robinreview.dev) — the Robin Hood of code review. Free for every PR.*");
         return parts.join("\n");
     }
     formatUnpostedFinding(index, finding) {
@@ -780,6 +845,7 @@ const review_retry_1 = __nccwpck_require__(450);
 const github_reviewer_1 = __nccwpck_require__(268);
 const config_1 = __nccwpck_require__(4008);
 const diff_filter_1 = __nccwpck_require__(7561);
+const diff_annotate_1 = __nccwpck_require__(4523);
 const repo_config_1 = __nccwpck_require__(2800);
 const review_prompts_1 = __nccwpck_require__(319);
 const commands_1 = __nccwpck_require__(367);
@@ -925,7 +991,7 @@ async function run() {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: ["## :robot: Robin Summary", "", reviewText].join("\n"),
+                body: ["## :bow_and_arrow: Robin · Summary", "", reviewText].join("\n"),
             });
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
         }
@@ -980,9 +1046,9 @@ async function postStatusComment(octokit, owner, repo, issueNumber, command, mod
             repo,
             issue_number: issueNumber,
             body: [
-                "## :robot: Robin",
+                "## :bow_and_arrow: Robin",
                 "",
-                ":eyes: Reviewing this pull request.",
+                ":eyes: On it — taking a look at this pull request.",
                 "",
                 `Mode: ${command === "summary" ? "summary" : "code review"}`,
                 `Model: ${model}`,
@@ -1013,49 +1079,49 @@ async function updateStatusComment(octokit, owner, repo, commentId, body) {
 function buildCompletedStatusBody(command, findings) {
     if (command === "summary") {
         return [
-            "## :robot: Robin",
+            "## :bow_and_arrow: Robin",
             "",
-            ":white_check_mark: Finished the summary.",
+            ":white_check_mark: Summary's ready above.",
             "",
-            "When you want a full review, comment `/review`.",
+            "Want the full review? Comment `/robin`.",
         ].join("\n");
     }
     const totalFindings = findings
         ? findings.high.length + findings.medium.length + findings.low.length + findings.suggestions.length
         : 0;
     const result = totalFindings === 0
-        ? "I did not find any issues."
-        : `I found ${totalFindings} issue${totalFindings === 1 ? "" : "s"}.`;
+        ? "Nothing worth flagging — looks clean to me."
+        : `I flagged ${totalFindings} thing${totalFindings === 1 ? "" : "s"} worth a look.`;
     return [
-        "## :robot: Robin",
+        "## :bow_and_arrow: Robin",
         "",
-        `:white_check_mark: Finished the review. ${result}`,
+        `:white_check_mark: Review done. ${result}`,
         "",
-        "After you push fixes, comment `/review` when you are ready for another pass.",
+        "Push fixes whenever you like, then comment `/robin` for another pass.",
     ].join("\n");
 }
 function buildSkippedFilterStatusBody(removedFiles) {
     const preview = removedFiles.slice(0, 8).join(", ");
     const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
     return [
-        "## :robot: Robin",
+        "## :bow_and_arrow: Robin",
         "",
-        ":white_check_mark: Skipped review — only ignored paths changed.",
+        ":white_check_mark: Nothing to review here — only ignored paths changed.",
         "",
-        `Filtered files: ${preview}${suffix}`,
+        `Skipped: ${preview}${suffix}`,
         "",
-        "Add custom `skip-paths` in `.github/robin.yml` if this was unexpected.",
+        "Add `skip-paths` in `.github/robin.yml` if that's not what you expected.",
     ].join("\n");
 }
 function buildFailedStatusBody(errorMessage, command) {
     return [
-        "## :robot: Robin",
+        "## :bow_and_arrow: Robin",
         "",
-        `:warning: Could not finish the ${command === "summary" ? "summary" : "review"}.`,
+        `:warning: I couldn't finish the ${command === "summary" ? "summary" : "review"} this time.`,
         "",
         `Reason: ${errorMessage}`,
         "",
-        "No secrets are included in this comment.",
+        "Free model routes drop sometimes — comment `/robin` to try again. (No secrets are included in this message.)",
     ].join("\n");
 }
 async function loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef) {
@@ -1159,13 +1225,15 @@ async function runSummary(llm, diff) {
     return await llm.chatCompletion(systemPrompt, userContent, false);
 }
 function buildReviewInput(diff) {
+    const annotated = (0, diff_annotate_1.annotateDiffWithLineNumbers)(diff);
     return [
         "Review the following code diff and return only the strict JSON object described in the system prompt.",
-        "Use line numbers from the new side of the diff for line-specific findings.",
+        "Each line is prefixed with its line number in the NEW file (blank for removed lines and headers).",
+        "For any line-specific finding, copy that exact number into the `line` field. Do not guess or recount.",
         "---",
         "CODE DIFF:",
         "```diff",
-        diff,
+        annotated,
         "```",
     ].join("\n");
 }
@@ -1210,6 +1278,8 @@ function getReviewPrompt(extraInstructions = "") {
         "4. Maintainability -- type safety, naming, boundaries, duplicated complexity",
         "5. Tests -- missing or weak coverage for risky behavior",
         "6. Architecture -- separation of concerns, scalability, long-term fit",
+        "7. Performance -- avoidable slow paths, N+1 queries, needless allocations on hot paths",
+        "8. Docs -- wrong or misleading comments and documentation tied to the change",
         "",
         "Output Format (STRICT JSON ONLY):",
         "",
@@ -1222,6 +1292,7 @@ function getReviewPrompt(extraInstructions = "") {
         "      \"file\": \"src/auth.ts\",",
         "      \"line\": 42,",
         "      \"category\": \"security\",",
+        "      \"confidence\": \"high\",",
         "      \"description\": \"Missing input validation on userId creates SQL injection risk.\",",
         "      \"recommendation\": \"Use a parameterized query and validate userId before database access.\",",
         "      \"codeSnippet\": \"optional short code example\"",
@@ -1236,6 +1307,7 @@ function getReviewPrompt(extraInstructions = "") {
         "- file: exact path from the diff, or empty string if the finding is general",
         "- line: exact NEW-file line number from the diff, or null if not line-specific",
         "- category: one of correctness, security, reliability, maintainability, tests, architecture, performance, docs",
+        "- confidence: how sure you are the issue is real -- one of high, medium, low. Use high only when you can see the problem directly in the diff.",
         "- description: the specific problem and why it matters",
         "- recommendation: concrete fix",
         "- codeSnippet: optional short replacement/example, or empty string",
@@ -1248,8 +1320,16 @@ function getReviewPrompt(extraInstructions = "") {
         "- Low: minor but valid issue, small test gap, confusing naming, documentation ambiguity, or localized cleanup",
         "- Suggestion: optional improvement that is useful but should not block merge",
         "",
+        "Severity calibration (examples):",
+        "- HIGH: a request handler calls JSON.parse(body) with no try/catch, so any malformed payload crashes the process. (confidence: high)",
+        "- MEDIUM: a fetch() call has no timeout and no error handling, so a slow upstream hangs the request. (confidence: high)",
+        "- LOW: a variable named `data2` next to `data` makes the block hard to follow. (confidence: medium)",
+        "- SUGGESTION: this loop could use `.map` instead of a manual push, slightly clearer but equivalent. (confidence: high)",
+        "Do not inflate severity. A style nit is never HIGH, even if you are very confident about it. Severity is about impact; confidence is about certainty -- keep them separate.",
+        "",
         "Guidelines:",
-        "- Every line-specific finding should use a line number that exists in the NEW side of the diff.",
+        "- Each diff line is prefixed with its line number in the NEW file (blank for removed lines and headers). Copy that exact number into `line`; never guess or recount. Use null only for findings that are not tied to one line.",
+        "- You see only the changed lines, not the whole file. Do not flag something as undefined, unused, or missing just because it is not visible in the diff.",
         "- Be balanced and universal: judge the change in its project context, not against enterprise-only practices unless the risk is real for this repository.",
         "- Be rigorous. Look for subtle correctness, security, data, lifecycle, and integration failures, not just style.",
         "- Avoid overcomplicated recommendations. Prefer the smallest concrete fix that addresses the risk.",
@@ -1516,6 +1596,7 @@ class ReviewParser {
         return {
             severity,
             category: this.asString(item.category),
+            confidence: this.asConfidence(item.confidence),
             file,
             line,
             description,
@@ -1525,6 +1606,12 @@ class ReviewParser {
     }
     static asString(value) {
         return typeof value === "string" ? value : "";
+    }
+    static asConfidence(value) {
+        const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+        return normalized === "high" || normalized === "medium" || normalized === "low"
+            ? normalized
+            : undefined;
     }
     static asNumber(value) {
         if (typeof value === "number" && Number.isFinite(value))
