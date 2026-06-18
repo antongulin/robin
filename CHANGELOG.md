@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1](https://github.com/antongulin/robin/compare/v2.0.0...v2.0.1) (2026-06-18)
+
+
+### Documentation
+
+* **readme:** add a real Robin review screenshot above the fold ([04c124a](https://github.com/antongulin/robin/commit/04c124a01df4d0490ac803cfb0b586a7d0bb9dc9))
+* **readme:** add Robin review screenshot above the fold ([e213f2d](https://github.com/antongulin/robin/commit/e213f2d0e430a16256c85ebb535f67e5c53ba246))
+
 ## [2.0.0](https://github.com/antongulin/robin/compare/v1.6.1...v2.0.0) (2026-06-18)
 
 
