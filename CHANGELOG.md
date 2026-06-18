@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.4.0](https://github.com/antongulin/robin/compare/v1.3.0...v1.4.0) (2026-06-18)
+
+
+### Features
+
+* **engine:** line-numbered diffs, confidence scoring, and Robin voice ([3c9afd5](https://github.com/antongulin/robin/commit/3c9afd501e9a64c87e430af8245881e634fef3ef))
+* **scripts:** add one-line installer ([1719b7c](https://github.com/antongulin/robin/commit/1719b7c34e521f9e6efcd5a6635c3531f78362a1))
+* **skill:** add robin PR review-loop skill ([e7e41ed](https://github.com/antongulin/robin/commit/e7e41ed128c8a12827188700690a4105b9877272))
+
+
+### Bug Fixes
+
+* **ci:** trigger reviews on /robin comments ([5a21dfa](https://github.com/antongulin/robin/commit/5a21dfa93b8e07a90a314fff2f8e3b3d00f7c1b3))
+* **install:** avoid leaving a .bak file from the ref substitution ([21d40b4](https://github.com/antongulin/robin/commit/21d40b4267894a75e1ffabdd3cbc58629dc5034c))
+
+
+### Documentation
+
+* correct versioning — road to 2.0, not 1.0 ([71a0835](https://github.com/antongulin/robin/commit/71a083501e597e6079371a83336ca6832954a481))
+* quick-install, 1.0 roadmap, and brand consistency ([71ca183](https://github.com/antongulin/robin/commit/71ca183c0b3f1345b324744c6ab6cc5defb1c663))
+
 ## [1.3.0](https://github.com/antongulin/robin/compare/v1.2.3...v1.3.0) (2026-06-17)
 
 
