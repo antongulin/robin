@@ -49,7 +49,10 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 YAML
   # Substitute the ref after writing so the heredoc stays fully literal.
-  sed -i.bak "s|@__REF__|@${REF}|" "$WORKFLOW_PATH" && rm -f "${WORKFLOW_PATH}.bak"
+  # Use a temp file (no .bak left behind) — portable across BSD and GNU sed.
+  tmp_workflow="$(mktemp)"
+  sed "s|@__REF__|@${REF}|" "$WORKFLOW_PATH" > "$tmp_workflow"
+  mv "$tmp_workflow" "$WORKFLOW_PATH"
   info "Created $WORKFLOW_PATH (ref: ${REF})"
 fi
 
