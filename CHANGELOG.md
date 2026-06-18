@@ -8,108 +8,108 @@
 * rebrand to Robin ([46b61ed](https://github.com/antongulin/robin/commit/46b61eda225dba2eff60b8de6da4f07d452ed8db))
 * rebrand to Robin with one-command install UX ([1247e43](https://github.com/antongulin/robin/commit/1247e433632dc5f69cf143b07dfeefb9990f7f05))
 
-## [1.2.3](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.2...v1.2.3) (2026-05-19)
+## [1.2.3](https://github.com/antongulin/robin/compare/v1.2.2...v1.2.3) (2026-05-19)
 
 
 ### Bug Fixes
 
-* explain release pr label failures ([3fbafca](https://github.com/antongulin/universal-code-reviewer/commit/3fbafcadc2a342fbed33cf4db9b979f03e203d4b))
-* harden release pr label errors ([49415b0](https://github.com/antongulin/universal-code-reviewer/commit/49415b00b60932c51d5b3887f458afe07889d379))
-* make release pr labeling idempotent ([85f5759](https://github.com/antongulin/universal-code-reviewer/commit/85f5759ba4d1ea25dbdd7b5c31fff373e9c43a06))
-* mark auto release prs tagged ([41e22ba](https://github.com/antongulin/universal-code-reviewer/commit/41e22ba626e91364f580a972a1140359dadf4428))
-* mark auto release PRs tagged ([d0da052](https://github.com/antongulin/universal-code-reviewer/commit/d0da052a8b6a955421c665f648d81d7434962a8d))
-* simplify release pr number validation ([5c825ee](https://github.com/antongulin/universal-code-reviewer/commit/5c825ee73626586f20be96fee874879e9cadc649))
-* validate release pr label target ([c5c4b2f](https://github.com/antongulin/universal-code-reviewer/commit/c5c4b2fc2e36375072be45f0315a4f1ce1c39f99))
-* verify release pr before labeling ([d6184e1](https://github.com/antongulin/universal-code-reviewer/commit/d6184e1089709f5b7b4f45f41a7a76bccedf0baf))
+* explain release pr label failures ([3fbafca](https://github.com/antongulin/robin/commit/3fbafcadc2a342fbed33cf4db9b979f03e203d4b))
+* harden release pr label errors ([49415b0](https://github.com/antongulin/robin/commit/49415b00b60932c51d5b3887f458afe07889d379))
+* make release pr labeling idempotent ([85f5759](https://github.com/antongulin/robin/commit/85f5759ba4d1ea25dbdd7b5c31fff373e9c43a06))
+* mark auto release prs tagged ([41e22ba](https://github.com/antongulin/robin/commit/41e22ba626e91364f580a972a1140359dadf4428))
+* mark auto release PRs tagged ([d0da052](https://github.com/antongulin/robin/commit/d0da052a8b6a955421c665f648d81d7434962a8d))
+* simplify release pr number validation ([5c825ee](https://github.com/antongulin/robin/commit/5c825ee73626586f20be96fee874879e9cadc649))
+* validate release pr label target ([c5c4b2f](https://github.com/antongulin/robin/commit/c5c4b2fc2e36375072be45f0315a4f1ce1c39f99))
+* verify release pr before labeling ([d6184e1](https://github.com/antongulin/robin/commit/d6184e1089709f5b7b4f45f41a7a76bccedf0baf))
 
-## [1.2.2](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.1...v1.2.2) (2026-05-19)
+## [1.2.2](https://github.com/antongulin/robin/compare/v1.2.1...v1.2.2) (2026-05-19)
 
 
 ### Bug Fixes
 
-* document pr-only release please mode ([b976506](https://github.com/antongulin/universal-code-reviewer/commit/b9765068b9577c06fc3e165bc70118485f82fdbd))
-* keep Release Please in PR-only mode ([46084b7](https://github.com/antongulin/universal-code-reviewer/commit/46084b78a7e097c8b8a93bca0d90eed38d1239a6))
-* keep release-please in pr-only mode ([67c2846](https://github.com/antongulin/universal-code-reviewer/commit/67c2846db208b991d4ae894ca210ed1457cff8b8))
-* remove stale release-please publish outputs ([d7bc626](https://github.com/antongulin/universal-code-reviewer/commit/d7bc6268cffd0a8255041ea2d2ab3bba7fe0f000))
-* repair auto-release notes extraction ([7a7b26a](https://github.com/antongulin/universal-code-reviewer/commit/7a7b26a94f0416eb1009018ff4d171c8cf5bbaf9))
-* repair auto-release notes extraction ([4c490cf](https://github.com/antongulin/universal-code-reviewer/commit/4c490cf4f90b125ed41c952be93c10a9cc577dfc))
+* document pr-only release please mode ([b976506](https://github.com/antongulin/robin/commit/b9765068b9577c06fc3e165bc70118485f82fdbd))
+* keep Release Please in PR-only mode ([46084b7](https://github.com/antongulin/robin/commit/46084b78a7e097c8b8a93bca0d90eed38d1239a6))
+* keep release-please in pr-only mode ([67c2846](https://github.com/antongulin/robin/commit/67c2846db208b991d4ae894ca210ed1457cff8b8))
+* remove stale release-please publish outputs ([d7bc626](https://github.com/antongulin/robin/commit/d7bc6268cffd0a8255041ea2d2ab3bba7fe0f000))
+* repair auto-release notes extraction ([7a7b26a](https://github.com/antongulin/robin/commit/7a7b26a94f0416eb1009018ff4d171c8cf5bbaf9))
+* repair auto-release notes extraction ([4c490cf](https://github.com/antongulin/robin/commit/4c490cf4f90b125ed41c952be93c10a9cc577dfc))
 
 
 ### Documentation
 
-* clarify release publishing ownership ([3759b2f](https://github.com/antongulin/universal-code-reviewer/commit/3759b2fb7dbcb9669e9851c8cae158232f99cf3b))
+* clarify release publishing ownership ([3759b2f](https://github.com/antongulin/robin/commit/3759b2fb7dbcb9669e9851c8cae158232f99cf3b))
 
-## [1.2.1](https://github.com/antongulin/universal-code-reviewer/compare/v1.2.0...v1.2.1) (2026-05-19)
+## [1.2.1](https://github.com/antongulin/robin/compare/v1.2.0...v1.2.1) (2026-05-19)
 
 
 ### Bug Fixes
 
-* address auto release review feedback ([d9876b4](https://github.com/antongulin/universal-code-reviewer/commit/d9876b4c090aaf38ddad6a975390086a770f840a))
-* harden auto release workflow ([9558a17](https://github.com/antongulin/universal-code-reviewer/commit/9558a1755784b91883e5382de3b6d3a701600934))
+* address auto release review feedback ([d9876b4](https://github.com/antongulin/robin/commit/d9876b4c090aaf38ddad6a975390086a770f840a))
+* harden auto release workflow ([9558a17](https://github.com/antongulin/robin/commit/9558a1755784b91883e5382de3b6d3a701600934))
 
-## [1.2.0](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.2...v1.2.0) (2026-05-19)
+## [1.2.0](https://github.com/antongulin/robin/compare/v1.1.2...v1.2.0) (2026-05-19)
 
 
 ### Features
 
-* support configurable review runner ([5f8cbdc](https://github.com/antongulin/universal-code-reviewer/commit/5f8cbdc9bde040d924efb6fd9269d64760472a68))
+* support configurable review runner ([5f8cbdc](https://github.com/antongulin/robin/commit/5f8cbdc9bde040d924efb6fd9269d64760472a68))
 
 
 ### Documentation
 
-* explain self-hosted runner usage ([0c5776e](https://github.com/antongulin/universal-code-reviewer/commit/0c5776ed7b5d6593fb2656400767d2ab2256816f))
+* explain self-hosted runner usage ([0c5776e](https://github.com/antongulin/robin/commit/0c5776ed7b5d6593fb2656400767d2ab2256816f))
 
-## [1.1.2](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.1...v1.1.2) (2026-05-19)
-
-
-### Bug Fixes
-
-* support openrouter/free rotation without updating secrets ([f31aa2d](https://github.com/antongulin/universal-code-reviewer/commit/f31aa2d548f31f034bdba152c1258a700a1eacaf))
-* support openrouter/free rotation without updating secrets ([4ec28ec](https://github.com/antongulin/universal-code-reviewer/commit/4ec28ecb18510d649fcfebf287d54a332e6ef5af))
-
-## [1.1.1](https://github.com/antongulin/universal-code-reviewer/compare/v1.1.0...v1.1.1) (2026-05-19)
+## [1.1.2](https://github.com/antongulin/robin/compare/v1.1.1...v1.1.2) (2026-05-19)
 
 
 ### Bug Fixes
 
-* auto-retry LLM completions on empty or transient errors ([c22bb05](https://github.com/antongulin/universal-code-reviewer/commit/c22bb05bb5da004c7f30ea65665ab169d8618d36))
+* support openrouter/free rotation without updating secrets ([f31aa2d](https://github.com/antongulin/robin/commit/f31aa2d548f31f034bdba152c1258a700a1eacaf))
+* support openrouter/free rotation without updating secrets ([4ec28ec](https://github.com/antongulin/robin/commit/4ec28ecb18510d649fcfebf287d54a332e6ef5af))
 
-## [1.1.0](https://github.com/antongulin/universal-code-reviewer/compare/v1.0.0...v1.1.0) (2026-05-19)
+## [1.1.1](https://github.com/antongulin/robin/compare/v1.1.0...v1.1.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* auto-retry LLM completions on empty or transient errors ([c22bb05](https://github.com/antongulin/robin/commit/c22bb05bb5da004c7f30ea65665ab169d8618d36))
+
+## [1.1.0](https://github.com/antongulin/robin/compare/v1.0.0...v1.1.0) (2026-05-19)
 
 
 ### Features
 
-* configurable LLM timeout with 10-minute default ([7b48945](https://github.com/antongulin/universal-code-reviewer/commit/7b48945a01b43574d54d35d73ef142c85d83a55c))
-* configurable LLM timeout with 10-minute default ([4f50e51](https://github.com/antongulin/universal-code-reviewer/commit/4f50e5114ed7abdeb23861e74bb687674d7b8c5b))
-* harden core reviewer and add tests ([c3e7380](https://github.com/antongulin/universal-code-reviewer/commit/c3e7380ef9a19b5cd52bd9a7c0dea7fe7ea09637))
-* improve review rerun flow ([9ae3e67](https://github.com/antongulin/universal-code-reviewer/commit/9ae3e677a2c4a32ac3a359f8d82f3efd8f8ef743))
-* stronger review output, failure UX, and eyes reaction ([f60b881](https://github.com/antongulin/universal-code-reviewer/commit/f60b881891bf56f6b92960121c2b1bd5b19e358e))
-* v1 config, diff filter, JSON mode, simpler docs ([#7](https://github.com/antongulin/universal-code-reviewer/issues/7)) ([64f97f4](https://github.com/antongulin/universal-code-reviewer/commit/64f97f4089a7bf28aab8189811191abc421a01d4))
+* configurable LLM timeout with 10-minute default ([7b48945](https://github.com/antongulin/robin/commit/7b48945a01b43574d54d35d73ef142c85d83a55c))
+* configurable LLM timeout with 10-minute default ([4f50e51](https://github.com/antongulin/robin/commit/4f50e5114ed7abdeb23861e74bb687674d7b8c5b))
+* harden core reviewer and add tests ([c3e7380](https://github.com/antongulin/robin/commit/c3e7380ef9a19b5cd52bd9a7c0dea7fe7ea09637))
+* improve review rerun flow ([9ae3e67](https://github.com/antongulin/robin/commit/9ae3e677a2c4a32ac3a359f8d82f3efd8f8ef743))
+* stronger review output, failure UX, and eyes reaction ([f60b881](https://github.com/antongulin/robin/commit/f60b881891bf56f6b92960121c2b1bd5b19e358e))
+* v1 config, diff filter, JSON mode, simpler docs ([#7](https://github.com/antongulin/robin/issues/7)) ([64f97f4](https://github.com/antongulin/robin/commit/64f97f4089a7bf28aab8189811191abc421a01d4))
 
 
 ### Bug Fixes
 
-* address reviewer flow feedback ([c568a35](https://github.com/antongulin/universal-code-reviewer/commit/c568a35d92510ffea712fdba1431340713ac05d9))
-* avoid unnecessary PR API call and gracefully handle missing permissions ([#1](https://github.com/antongulin/universal-code-reviewer/issues/1)) ([feff466](https://github.com/antongulin/universal-code-reviewer/commit/feff4664561e6ac6ab889b90a140f5809c1efa60))
-* Bundle action as single dist/index.js for GitHub Actions ([bfb2287](https://github.com/antongulin/universal-code-reviewer/commit/bfb228710c5fbe79a4a5e1df4ac43e20e771c4c9))
-* handle empty LLM responses and soften self-test flakes ([e8502dc](https://github.com/antongulin/universal-code-reviewer/commit/e8502dc931ee15319969edc7cad1f8648d0d1c88))
-* minimize workflow permissions and tighten trigger conditions ([bdb75cd](https://github.com/antongulin/universal-code-reviewer/commit/bdb75cdca23f3cd47500f909640d856cdb6a1ccd))
-* use [@main](https://github.com/main) instead of [@v0](https://github.com/v0) for the action reference ([a45770d](https://github.com/antongulin/universal-code-reviewer/commit/a45770d08c284af10d0239dafd8d101a2acea759))
+* address reviewer flow feedback ([c568a35](https://github.com/antongulin/robin/commit/c568a35d92510ffea712fdba1431340713ac05d9))
+* avoid unnecessary PR API call and gracefully handle missing permissions ([#1](https://github.com/antongulin/robin/issues/1)) ([feff466](https://github.com/antongulin/robin/commit/feff4664561e6ac6ab889b90a140f5809c1efa60))
+* Bundle action as single dist/index.js for GitHub Actions ([bfb2287](https://github.com/antongulin/robin/commit/bfb228710c5fbe79a4a5e1df4ac43e20e771c4c9))
+* handle empty LLM responses and soften self-test flakes ([e8502dc](https://github.com/antongulin/robin/commit/e8502dc931ee15319969edc7cad1f8648d0d1c88))
+* minimize workflow permissions and tighten trigger conditions ([bdb75cd](https://github.com/antongulin/robin/commit/bdb75cdca23f3cd47500f909640d856cdb6a1ccd))
+* use [@main](https://github.com/main) instead of [@v0](https://github.com/v0) for the action reference ([a45770d](https://github.com/antongulin/robin/commit/a45770d08c284af10d0239dafd8d101a2acea759))
 
 
 ### Documentation
 
-* Add plain-English architecture explanation for non-technical users ([d238d89](https://github.com/antongulin/universal-code-reviewer/commit/d238d89311bad614d95b80c47572e623cce880f8))
-* Add v0.1.0 changelog and v0.2.0 roadmap ([ba4c70c](https://github.com/antongulin/universal-code-reviewer/commit/ba4c70c14f5e42f0e5efaf0bccd4127258dc9be2))
-* clarify setup and review limits ([287230b](https://github.com/antongulin/universal-code-reviewer/commit/287230be775d6f17ef0e830f74c4a8eae0193d1b))
-* explain reviewer workflow and slash commands ([098fb90](https://github.com/antongulin/universal-code-reviewer/commit/098fb9019a1a2142507f016b6468c3afbd83b479))
-* minimize workflow permissions and tighten trigger conditions ([6af07c6](https://github.com/antongulin/universal-code-reviewer/commit/6af07c6f3e667270307806464258e063e7162c11))
-* note Actions PR permission for Release Please ([e922459](https://github.com/antongulin/universal-code-reviewer/commit/e922459854f117dd2d7a8feb3e04be27db439ae5))
-* tighten reviewer workflow guidance ([683219a](https://github.com/antongulin/universal-code-reviewer/commit/683219a1c1b21364924aa0d82cfe948143911d9b))
+* Add plain-English architecture explanation for non-technical users ([d238d89](https://github.com/antongulin/robin/commit/d238d89311bad614d95b80c47572e623cce880f8))
+* Add v0.1.0 changelog and v0.2.0 roadmap ([ba4c70c](https://github.com/antongulin/robin/commit/ba4c70c14f5e42f0e5efaf0bccd4127258dc9be2))
+* clarify setup and review limits ([287230b](https://github.com/antongulin/robin/commit/287230be775d6f17ef0e830f74c4a8eae0193d1b))
+* explain reviewer workflow and slash commands ([098fb90](https://github.com/antongulin/robin/commit/098fb9019a1a2142507f016b6468c3afbd83b479))
+* minimize workflow permissions and tighten trigger conditions ([6af07c6](https://github.com/antongulin/robin/commit/6af07c6f3e667270307806464258e063e7162c11))
+* note Actions PR permission for Release Please ([e922459](https://github.com/antongulin/robin/commit/e922459854f117dd2d7a8feb3e04be27db439ae5))
+* tighten reviewer workflow guidance ([683219a](https://github.com/antongulin/robin/commit/683219a1c1b21364924aa0d82cfe948143911d9b))
 
 ## [Unreleased]
 
-## [1.0.0](https://github.com/antongulin/universal-code-reviewer/releases/tag/v1.0.0) - 2026-05-18
+## [1.0.0](https://github.com/antongulin/robin/releases/tag/v1.0.0) - 2026-05-18
 
 ### Features
 

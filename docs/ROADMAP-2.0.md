@@ -1,12 +1,22 @@
-# Robin 1.0 — Roadmap
+# Robin 2.0 — Roadmap
 
-Goal: turn the strong v0.x foundation into a standout, contribution-ready OSS code
+Goal: turn the strong v1.3 foundation into a standout, contribution-ready OSS code
 reviewer that runs at $0 (BYOK + free OpenRouter + free GitHub Actions minutes),
 stays robust even when a weak free model is randomly routed, and is invokable by
 any agent from plain chat ("review this PR with Robin").
 
-No rewrite. This is a focused 1.0 polish across five phases. Ship phases in order;
-each is independently shippable.
+No rewrite. This is a focused push to a **2.0** release across five phases. Ship
+phases in order; each is independently shippable.
+
+## Versioning
+
+The project is already at **v1.3.0**, so this is not a "1.0" — it's the road to 2.0:
+
+- **Phases 1–2 + installer (this work)** are purely additive → release-please ships
+  them as **1.4.0** (minor).
+- **Phase 3** drops input aliases and renames files — breaking. Land it with a
+  `feat!:` / `BREAKING CHANGE:` commit so release-please cuts **2.0.0**.
+- **Phase 4** is the 2.0 release: version bump, CHANGELOG, `@v2` float, site/docs.
 
 ---
 
@@ -20,7 +30,7 @@ each is independently shippable.
 3. **"Robin" is the universal trigger verb.** Same word in three places:
    - chat coding agents → a skill named `robin`
    - GitHub PR → `/robin` slash command (already exists)
-   - bot output → comments headed `## 🤖 Robin`
+   - bot output → comments headed `## 🏹 Robin`
    Consistency is the discoverability strategy. A weak agent only has to learn one word.
 4. **Comments are suggestions, not orders.** The implementing agent is often smarter
    than the reviewer model. It verifies before fixing and fixes only real bugs.
@@ -94,7 +104,7 @@ documents in its final report how many findings it fixed vs. skipped-as-noise an
 
 ---
 
-## Phase 3 — Structural polish / 1.0 cleanup (breaking → major bump)
+## Phase 3 — Structural polish / 2.0 cleanup (breaking → major bump)
 
 Not a mess, but these inconsistencies make it feel unfinished.
 
@@ -118,7 +128,7 @@ Acceptance: one config name per concept; docs and templates agree on every filen
 - [ ] Document the model-robustness design (why line numbers, few-shot, confidence) so
       contributors understand the constraints.
 - [ ] CONTRIBUTING: how to test prompt changes against multiple free models.
-- [ ] Version bump (major), CHANGELOG, tag `@v1`; verify `@v1` / `@v1.0.0` pins work.
+- [ ] Version bump to **2.0.0**, CHANGELOG, float `@v2`; verify `@v2` / `@v2.0.0` pins work.
 - [ ] **Host the installer.** `scripts/install.sh` exists and is tested. Before the
       `curl … robinreview.dev/install.sh | bash` one-liner works publicly, `robinreview.dev`
       must serve/redirect `/install.sh` to the repo raw file
