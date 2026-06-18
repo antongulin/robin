@@ -14,6 +14,10 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 - A short summary plus inline comments on changed lines
 - Your choice of AI provider — including **free** options
 
+When there's nothing worth flagging, Robin says so instead of inventing nitpicks:
+
+![A clean Robin pass on a pull request — no issues found](docs/assets/robin-review-clean.png)
+
 You are **not** signing up for a separate review bot service. The workflow runs in your repo and calls the AI URL you configure.
 
 ## For AI coding agents
