@@ -8,6 +8,9 @@ any agent from plain chat ("review this PR with Robin").
 No rewrite. This is a focused push to a **2.0** release across five phases. Ship
 phases in order; each is independently shippable.
 
+> **Status: shipped.** All five phases are complete. Robin is published at **2.0.0**
+> (latest patch 2.0.1) with floating `@v2` / `@v2.0` tags. Every box below is done.
+
 ## Versioning
 
 The project is already at **v1.3.0**, so this is not a "1.0" — it's the road to 2.0:
@@ -41,16 +44,16 @@ The project is already at **v1.3.0**, so this is not a "1.0" — it's the road t
 
 The keyword that makes Robin discoverable everywhere.
 
-- [ ] Lock `robin` as the canonical name. Skill name, slash command, comment header,
+- [x] Lock `robin` as the canonical name. Skill name, slash command, comment header,
       domain all say "Robin."
-- [ ] Skill `description` frontmatter packed with natural-language triggers so any
+- [x] Skill `description` frontmatter packed with natural-language triggers so any
       agent maps plain phrases to the skill. Cover: `review with Robin`, `run Robin`,
       `Robin review`, `create a PR with Robin`, `ask Robin to review`, `robin this PR`,
       plus generic `review my pull request`, `fix PR feedback`, `wait for review`.
-- [ ] Decide skill home: **source of truth inside this repo** under `skills/robin/`,
+- [x] Decide skill home: **source of truth inside this repo** under `skills/robin/`,
       published to skills.sh as `robin` for registry discovery. Action + driver-skill
       version together.
-- [ ] Clear leftover old-brand strings from live config (not history): `ucr-`
+- [x] Clear leftover old-brand strings from live config (not history): `ucr-`
       concurrency group in `.github/workflows/review.yml`, any `Universal Code Reviewer`
       reference in the skill's started-signal list → `Robin`.
 
@@ -108,14 +111,14 @@ documents in its final report how many findings it fixed vs. skipped-as-noise an
 
 Not a mess, but these inconsistencies make it feel unfinished.
 
-- [ ] Unify `max-comments` default (currently `25` in `action.yml` vs `10` in
+- [x] Unify `max-comments` default (currently `25` in `action.yml` vs `10` in
       `review.yml`). Pick one (recommend 10–15).
-- [ ] Drop dead input aliases: `api-key`/`base-url`/`fail-on-critical`. Keep one
+- [x] Drop dead input aliases: `api-key`/`base-url`/`fail-on-critical`. Keep one
       canonical name each (`llm-api-key`, `llm-base-url`, `fail-on-high`). Breaking →
       land in the major bump with a migration note.
-- [ ] Standardize the consumer workflow filename to `robin.yml` across README, AGENTS.md,
+- [x] Standardize the consumer workflow filename to `robin.yml` across README, AGENTS.md,
       and `templates/` (README currently says `code-review.yml`).
-- [ ] Sweep remaining old-brand live strings; leave CHANGELOG history untouched.
+- [x] Sweep remaining old-brand live strings; leave CHANGELOG history untouched.
 
 Acceptance: one config name per concept; docs and templates agree on every filename.
 
@@ -123,13 +126,13 @@ Acceptance: one config name per concept; docs and templates agree on every filen
 
 ## Phase 4 — Release, docs, contribution-readiness
 
-- [ ] README: add the chat usage path ("review this PR with Robin" + how to install the
+- [x] README: add the chat usage path ("review this PR with Robin" + how to install the
       skill) alongside the existing GitHub setup.
-- [ ] Document the model-robustness design (why line numbers, few-shot, confidence) so
+- [x] Document the model-robustness design (why line numbers, few-shot, confidence) so
       contributors understand the constraints.
-- [ ] CONTRIBUTING: how to test prompt changes against multiple free models.
-- [ ] Version bump to **2.0.0**, CHANGELOG, float `@v2`; verify `@v2` / `@v2.0.0` pins work.
-- [ ] **Host the installer.** `scripts/install.sh` exists and is tested. Before the
+- [x] CONTRIBUTING: how to test prompt changes against multiple free models.
+- [x] Version bump to **2.0.0**, CHANGELOG, float `@v2`; verify `@v2` / `@v2.0.0` pins work.
+- [x] **Host the installer.** `scripts/install.sh` exists and is tested. Before the
       `curl … robinreview.dev/install.sh | bash` one-liner works publicly, `robinreview.dev`
       must serve/redirect `/install.sh` to the repo raw file
       (`raw.githubusercontent.com/antongulin/robin/main/scripts/install.sh`). Until then the
