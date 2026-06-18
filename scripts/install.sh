@@ -56,6 +56,29 @@ YAML
   info "Created $WORKFLOW_PATH (ref: ${REF})"
 fi
 
+# Install the companion chat skill so any coding agent can drive Robin's PR review
+# loop from plain chat ("review with Robin"). Uses the cross-platform skills CLI to
+# install for every detected agent, globally. Best-effort — the GitHub Action works
+# without it. Set ROBIN_SKILL=0 to skip.
+install_skill() {
+  [ "${ROBIN_SKILL:-1}" = "0" ] && return 0
+
+  if ! command -v npx >/dev/null 2>&1; then
+    warn "Skipping companion skill — Node.js/npx not found."
+    warn "Install it later: npx skills add https://github.com/antongulin/robin --all --global"
+    return 0
+  fi
+
+  info "Installing the Robin chat skill for all coding agents…"
+  # --agent '*' = every supported agent, --global = user-level (available everywhere).
+  if npx -y skills add https://github.com/antongulin/robin --skill robin --agent '*' --global --yes >/dev/null 2>&1; then
+    info "Robin chat skill installed (all agents). Say \"review with Robin\"."
+  else
+    warn "Couldn't auto-install the skill. Run: npx skills add https://github.com/antongulin/robin --all --global"
+  fi
+}
+install_skill
+
 cat <<EOF
 
 Next — set three repository secrets (free OpenRouter shown):

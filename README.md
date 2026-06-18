@@ -203,6 +203,21 @@ Focused change. Main risk: timeout errors are not handled clearly.
 **1 (`src/example.ts:24`)** — Retries exist but timeout failures lack context.
 ```
 
+## Robin in your editor
+
+The one-line installer also installs a small **companion skill** into every coding agent
+on your machine (Claude Code, Cursor, Copilot, Windsurf, …) via the cross-platform
+[skills CLI](https://skills.sh) — `npx skills add https://github.com/antongulin/robin --all --global`. It
+ships with Robin; there's nothing separate to sign up for. (Skip it with `ROBIN_SKILL=0`,
+or install it by hand with that command.) Once it's there, you can say things like:
+
+> "review this PR with Robin" · "robin this PR" · "fix the Robin feedback and merge"
+
+…and the agent drives a bounded review → fix → re-review → merge loop: it waits for
+Robin's review, fixes only the findings it can verify (skipping noise from weaker free
+models), replies to each comment, resolves threads, and merges when green — capped at
+five passes. Source: [skills/robin/SKILL.md](skills/robin/SKILL.md).
+
 ## Supported providers
 
 | Provider | `LLM_BASE_URL` | `LLM_MODEL` example |
@@ -261,6 +276,16 @@ Releases and notes are published automatically from [CHANGELOG.md](CHANGELOG.md)
 - [docs/ADVANCED.md](docs/ADVANCED.md) — all settings, strict mode, manual-only reviews, security notes
 - [CONTRIBUTING.md](CONTRIBUTING.md) — run tests and send pull requests
 - [CHANGELOG.md](CHANGELOG.md) — release history
+
+## Support
+
+Robin is free and open source (MIT). If it saves you money on code review, you can help keep it maintained:
+
+- ⭐ Star the repo — it's the cheapest way to help others find it.
+- 💛 [Sponsor the project](https://github.com/sponsors/antongulin) to support ongoing work.
+- 🐛 [Open an issue](https://github.com/antongulin/robin/issues) for bugs or ideas.
+
+Built by [Anton Gulin](https://github.com/antongulin), AI Architect building AI systems, agent workflows, and software automation. Need a custom AI agent, code-review pipeline, or QA automation? Visit [Anton.QA](https://www.anton.qa).
 
 ## Development
 

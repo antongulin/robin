@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Docs & setup
+    url: https://robinreview.dev
+    about: Setup, providers, and troubleshooting before filing an issue.
+  - name: Security report
+    url: https://github.com/antongulin/robin/security/advisories/new
+    about: Report a vulnerability privately (see SECURITY.md).
