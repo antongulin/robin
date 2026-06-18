@@ -8,7 +8,7 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 
 ## What you get
 
-- A review when you open a pull request (or when someone runs `/review`)
+- A review when you open a pull request (or when someone comments `/robin`)
 - A short summary plus inline comments on changed lines
 - Your choice of AI provider — including **free** options
 
@@ -20,7 +20,7 @@ Using Cursor, Copilot, Claude Code, or similar? Copy this prompt after secrets a
 
 ```text
 Add Robin to this repository.
-- Workflow file: .github/workflows/code-review.yml
+- Workflow file: .github/workflows/robin.yml
 - Reusable workflow: antongulin/robin/.github/workflows/review.yml@main
 - Action ref if needed: antongulin/robin@main
 - Secrets: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
@@ -28,6 +28,21 @@ Add Robin to this repository.
 - Do NOT use pull_request_target or synchronize on pull_request
 Read AGENTS.md in the robin repo for full rules.
 ```
+
+## Quick install
+
+In a terminal, from your project folder, run:
+
+```bash
+curl -fsSL https://robinreview.dev/install.sh | bash
+```
+
+This creates `.github/workflows/robin.yml` for you (it never overwrites an existing file).
+You still need to add the three secrets — do **Steps 1 and 2** below, then commit and push.
+You can **skip Step 3**: the script already did it.
+
+Prefer to do it by hand, or read the script first? It's
+[scripts/install.sh](scripts/install.sh) — follow the manual 3 steps instead.
 
 ## Setup in 3 steps
 
@@ -64,9 +79,13 @@ Other providers (OpenAI, Groq, Ollama, etc.) work too. See [Supported providers]
 
 ### Step 3 — Add the workflow file
 
+> [!NOTE]
+> **Ran the Quick install one-liner above?** Skip this step — the script already created
+> this file. Just finish Steps 1 and 2 (the secrets), then commit and push.
+
 Create a new file in your repo:
 
-**Path:** `.github/workflows/code-review.yml`
+**Path:** `.github/workflows/robin.yml`
 
 **Contents:** copy this exactly:
 
@@ -162,26 +181,26 @@ jobs:
 | --- | --- |
 | You open a PR | Review runs once automatically |
 | You push more commits | No new review (saves time and API usage) |
-| You want another review | Comment `/review` on the PR (first line of the comment) |
+| You want another review | Comment `/robin` on the PR (first line of the comment) |
 | You want a short overview only | Comment `/summary` |
 | You need help | Comment `/help` |
 
-Only people with **write** access (or higher) on the repo can use `/review` and `/summary` by default.
+`/review` still works as an alias for `/robin`. Only people with **write** access (or higher) on the repo can run these commands by default.
 
 ## Example
 
 The bot posts a status comment, then a review with severity counts:
 
 ```md
-## Robin
+## 🏹 Robin
 
-1 High | 1 Medium | 2 Suggestions
+🚨 **1 High** | ⚠️ **1 Medium** | 💡 **2 Suggestions**
 
 ### Summary
 Focused change. Main risk: timeout errors are not handled clearly.
 
 ### Findings Not Posted Inline
-**1 (`src/example.ts:24`)** - Retries exist but timeout failures lack context.
+**1 (`src/example.ts:24`)** — Retries exist but timeout failures lack context.
 ```
 
 ## Supported providers
@@ -215,9 +234,9 @@ Add `.github/code-reviewer.md` in your repo:
 | Workflow fails immediately | Check all three secrets exist and the workflow uses `@main` |
 | `Input required: model` or `llm-base-url` | Add missing secrets (Step 2) |
 | Review never appears | Open **Actions** tab → open the failed run → read the error |
-| `/review` does nothing | Put `/review` on the **first** line; you need write access on the repo |
+| `/robin` does nothing | Put `/robin` on the **first** line; you need write access on the repo |
 | Review is very short | PR may be huge — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`) |
-| `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/review` again |
+| `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/robin` again |
 | `404 Provider returned error` | Normal for `openrouter/free` when one provider is down — the action retries up to 5 times; keep `LLM_MODEL=openrouter/free` |
 
 More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)

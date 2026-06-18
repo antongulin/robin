@@ -6,7 +6,7 @@ Security fixes are applied to the latest tagged release and the `main` branch.
 
 ## Reporting A Vulnerability
 
-Please report security issues privately by opening a GitHub security advisory for this repository when available. If advisories are not enabled, email the maintainer listed on the GitHub profile.
+Please report security issues privately by opening a GitHub security advisory for this repository when available. If advisories are not enabled, email **info@robinreview.dev**.
 
 Do not open a public issue for vulnerabilities that could expose secrets, private repository contents, or allow untrusted users to trigger paid LLM usage.
 
