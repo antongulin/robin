@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.0](https://github.com/antongulin/robin/compare/v1.4.0...v1.5.0) (2026-06-18)
+
+
+### Features
+
+* **install:** install companion skill for all agents via skills CLI ([6098654](https://github.com/antongulin/robin/commit/6098654891dd3734e640f8676e2d7f2ff763f395))
+* **repo:** community surface, llms.txt, and bundled chat skill ([7e09dd6](https://github.com/antongulin/robin/commit/7e09dd666298c94ec1384ed037161bb71f13aa8f))
+
+
+### Documentation
+
+* add repo-publishing scorecard, metadata, and plan ([db34269](https://github.com/antongulin/robin/commit/db342696c9190397e2177f1a0f66962fb6844b5d))
+
 ## [1.4.0](https://github.com/antongulin/robin/compare/v1.3.0...v1.4.0) (2026-06-18)
 
 
