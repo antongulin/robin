@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.1](https://github.com/antongulin/robin/compare/v1.5.0...v1.5.1) (2026-06-18)
+
+
+### Documentation
+
+* **config:** fix example to reference .github/robin.yml ([5f85a20](https://github.com/antongulin/robin/commit/5f85a20ff8badeb0962f0c785b843d6c0ddc51f5))
+* **config:** fix example to reference .github/robin.yml ([51f8f93](https://github.com/antongulin/robin/commit/51f8f93b26e59455b841c0d82848cf0ddd2639ff))
+
 ## [1.5.0](https://github.com/antongulin/robin/compare/v1.4.0...v1.5.0) (2026-06-18)
 
 
