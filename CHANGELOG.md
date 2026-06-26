@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.5](https://github.com/antongulin/robin/compare/v2.0.4...v2.0.5) (2026-06-26)
+
+
+### Bug Fixes
+
+* **llm:** update PR status on stalls, retries, and job cancel ([#47](https://github.com/antongulin/robin/issues/47)) ([b1c00d1](https://github.com/antongulin/robin/commit/b1c00d117b60b91681550f553bf58d02e23eb45f))
+
 ## [2.0.4](https://github.com/antongulin/robin/compare/v2.0.3...v2.0.4) (2026-06-26)
 
 
