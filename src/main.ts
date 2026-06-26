@@ -28,12 +28,6 @@ async function run(): Promise<void> {
   let statusModel = "not configured";
   let onJobCancelled: (() => Promise<void>) | undefined;
 
-  registerJobCancelHandler(async () => {
-    if (onJobCancelled) {
-      await onJobCancelled();
-    }
-  });
-
   try {
     const eventName = github.context.eventName;
     const payload = github.context.payload;
@@ -154,6 +148,11 @@ async function run(): Promise<void> {
         );
       }
     };
+    registerJobCancelHandler(async () => {
+      if (onJobCancelled) {
+        await onJobCancelled();
+      }
+    });
 
     if (!baseUrl) {
       throw new Error("Input required and not supplied: llm-base-url");

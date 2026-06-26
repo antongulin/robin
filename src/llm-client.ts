@@ -74,8 +74,11 @@ export class LLMClient {
   }
 
   private async progress(detail: string): Promise<void> {
-    if (this.onProgress) {
+    if (!this.onProgress) return;
+    try {
       await this.onProgress(detail);
+    } catch (error) {
+      core.warning(`LLM progress update failed (non-fatal): ${error}`);
     }
   }
 

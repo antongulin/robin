@@ -644,8 +644,13 @@ class LLMClient {
         return { model: this.model };
     }
     async progress(detail) {
-        if (this.onProgress) {
+        if (!this.onProgress)
+            return;
+        try {
             await this.onProgress(detail);
+        }
+        catch (error) {
+            core.warning(`LLM progress update failed (non-fatal): ${error}`);
         }
     }
     async chatCompletion(systemPrompt, userContent, jsonResponseMode = false) {
@@ -949,11 +954,6 @@ async function run() {
     let statusCommand = "review";
     let statusModel = "not configured";
     let onJobCancelled;
-    registerJobCancelHandler(async () => {
-        if (onJobCancelled) {
-            await onJobCancelled();
-        }
-    });
     try {
         const eventName = github.context.eventName;
         const payload = github.context.payload;
@@ -1042,6 +1042,11 @@ async function run() {
                 await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildCancelledStatusBody(statusCommand));
             }
         };
+        registerJobCancelHandler(async () => {
+            if (onJobCancelled) {
+                await onJobCancelled();
+            }
+        });
         if (!baseUrl) {
             throw new Error("Input required and not supplied: llm-base-url");
         }
