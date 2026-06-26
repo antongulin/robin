@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.4](https://github.com/antongulin/robin/compare/v2.0.3...v2.0.4) (2026-06-26)
+
+
+### Bug Fixes
+
+* **llm:** fail fast when OpenRouter auto-router stalls ([#45](https://github.com/antongulin/robin/issues/45)) ([e114593](https://github.com/antongulin/robin/commit/e114593101753d253495c8c08d82013513d1efce))
+
 ## [2.0.3](https://github.com/antongulin/robin/compare/v2.0.2...v2.0.3) (2026-06-18)
 
 
