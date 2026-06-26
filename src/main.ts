@@ -25,6 +25,14 @@ async function run(): Promise<void> {
   let statusRepo = "";
   let statusCommentId: number | undefined;
   let statusCommand: "review" | "summary" = "review";
+  let statusModel = "not configured";
+  let onJobCancelled: (() => Promise<void>) | undefined;
+
+  registerJobCancelHandler(async () => {
+    if (onJobCancelled) {
+      await onJobCancelled();
+    }
+  });
 
   try {
     const eventName = github.context.eventName;
@@ -133,7 +141,19 @@ async function run(): Promise<void> {
 
     core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
     statusCommand = command === "summary" ? "summary" : "review";
-    statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, model || "not configured");
+    statusModel = model || "not configured";
+    statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, statusModel);
+    onJobCancelled = async () => {
+      if (octokit && statusCommentId) {
+        await updateStatusComment(
+          octokit,
+          statusOwner,
+          statusRepo,
+          statusCommentId,
+          buildCancelledStatusBody(statusCommand)
+        );
+      }
+    };
 
     if (!baseUrl) {
       throw new Error("Input required and not supplied: llm-base-url");
@@ -161,6 +181,13 @@ async function run(): Promise<void> {
     
     if (!diff || diff.trim().length === 0) {
       core.warning("No diff found for this PR.");
+      await updateStatusComment(
+        octokit,
+        owner,
+        repo,
+        statusCommentId,
+        buildFailedStatusBody("No diff found for this pull request.", statusCommand)
+      );
       return;
     }
 
@@ -185,6 +212,13 @@ async function run(): Promise<void> {
     const reviewDiff = filteredDiff.trim() ? filteredDiff : diff;
     if (!reviewDiff.trim()) {
       core.warning("No reviewable diff remained after filtering skipped paths.");
+      await updateStatusComment(
+        octokit,
+        owner,
+        repo,
+        statusCommentId,
+        buildFailedStatusBody("No reviewable diff remained after filtering skipped paths.", statusCommand)
+      );
       return;
     }
 
@@ -208,7 +242,23 @@ async function run(): Promise<void> {
       )
       : "";
 
-    const llm = new LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs);
+    const llm = new LLMClient(
+      baseUrl,
+      apiKey,
+      model,
+      maxOutputTokens,
+      llmTimeoutMs,
+      undefined,
+      async (detail) => {
+        await updateStatusComment(
+          octokit!,
+          owner,
+          repo,
+          statusCommentId,
+          buildProgressStatusBody(detail, statusCommand, statusModel)
+        );
+      }
+    );
     const useJsonMode = command === "review" && jsonResponseMode;
     
     let reviewText: string;
@@ -235,6 +285,17 @@ async function run(): Promise<void> {
 
       if (shouldRetryStructuredReview(findings, parsedReview.usedJson)) {
         core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
+        await updateStatusComment(
+          octokit,
+          owner,
+          repo,
+          statusCommentId,
+          buildProgressStatusBody(
+            "First pass returned no parseable findings — retrying with JSON-only instructions…",
+            statusCommand,
+            statusModel
+          )
+        );
         const retryText = (
           await runReview(
             llm,
@@ -258,6 +319,7 @@ async function run(): Promise<void> {
       }
     }
 
+    onJobCancelled = undefined;
     core.info("Done.");
 
   } catch (error) {
@@ -266,6 +328,8 @@ async function run(): Promise<void> {
       await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(message, statusCommand));
     }
     core.setFailed(message);
+  } finally {
+    onJobCancelled = undefined;
   }
 }
 
@@ -391,6 +455,46 @@ function buildFailedStatusBody(errorMessage: string, command: "review" | "summar
     "",
     "Free model routes drop sometimes — comment `/robin` to try again. (No secrets are included in this message.)",
   ].join("\n");
+}
+
+function buildProgressStatusBody(
+  detail: string,
+  command: "review" | "summary",
+  model: string
+): string {
+  return [
+    "## :bow_and_arrow: Robin",
+    "",
+    ":hourglass_flowing_sand: Still working on this pull request.",
+    "",
+    detail,
+    "",
+    `Mode: ${command === "summary" ? "summary" : "code review"}`,
+    `Model: ${model}`,
+  ].join("\n");
+}
+
+function buildCancelledStatusBody(command: "review" | "summary"): string {
+  return [
+    "## :bow_and_arrow: Robin",
+    "",
+    `:warning: The ${command === "summary" ? "summary" : "review"} was interrupted before it finished.`,
+    "",
+    "This usually means the GitHub Actions job was cancelled or hit its time limit while waiting on the model.",
+    "",
+    "Comment `/robin` to run again.",
+  ].join("\n");
+}
+
+function registerJobCancelHandler(onCancel: () => Promise<void>): void {
+  let handled = false;
+  const run = () => {
+    if (handled) return;
+    handled = true;
+    void onCancel().finally(() => process.exit(143));
+  };
+  process.once("SIGTERM", run);
+  process.once("SIGINT", run);
 }
 
 async function loadRepoConfig(

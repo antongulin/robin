@@ -10,6 +10,7 @@ import {
   getLlmCompletionAttemptCount,
   isOpenRouterRouterModel,
   isRetriableLlmError,
+  openRouterStallError,
   resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
 } from "./llm-retry";
@@ -20,12 +21,15 @@ export interface ChatCompletionResult {
   model?: string;
 }
 
+export type LlmProgressHandler = (detail: string) => void | Promise<void>;
+
 export class LLMClient {
   private client: OpenAI;
   private model: string;
   private maxOutputTokens?: number;
   private maxAttempts: number;
   private routerModel: boolean;
+  private onProgress?: LlmProgressHandler;
 
   constructor(
     baseUrl: string,
@@ -33,10 +37,12 @@ export class LLMClient {
     model: string,
     maxOutputTokens?: number,
     timeoutMs = DEFAULT_LLM_TIMEOUT_MS,
-    maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS
+    maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS,
+    onProgress?: LlmProgressHandler
   ) {
     this.model = model;
     this.routerModel = isOpenRouterRouterModel(model);
+    this.onProgress = onProgress;
     this.maxOutputTokens =
       maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
         ? maxOutputTokens
@@ -67,6 +73,12 @@ export class LLMClient {
     return { model: this.model };
   }
 
+  private async progress(detail: string): Promise<void> {
+    if (this.onProgress) {
+      await this.onProgress(detail);
+    }
+  }
+
   async chatCompletion(
     systemPrompt: string,
     userContent: string,
@@ -80,6 +92,9 @@ export class LLMClient {
 
       try {
         core.info(`LLM attempt ${attempt}/${this.maxAttempts}: waiting for provider...`);
+        await this.progress(
+          `Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`
+        );
         const request = this.buildRequest(systemPrompt, userContent, useJson);
         const { content, model: resolvedModel } = this.routerModel
           ? await this.streamChatCompletion(request)
@@ -108,7 +123,11 @@ export class LLMClient {
 
       if (attempt < this.maxAttempts) {
         const waitMs = computeRetryDelayMs(attempt, this.retryContext());
+        const reason = lastError instanceof Error ? lastError.message : "empty response";
         core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
+        await this.progress(
+          `Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`
+        );
         await delayMs(waitMs);
       }
     }
@@ -145,6 +164,7 @@ export class LLMClient {
     const firstChunkMs = DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
     const controller = new AbortController();
     let gotFirstChunk = false;
+    // ponytail: timer starts before create() so a hung TCP/connect also fails at firstChunkMs
     let stallTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
       controller.abort();
     }, firstChunkMs);
@@ -172,8 +192,10 @@ export class LLMClient {
           resolvedModel = chunk.model || resolvedModel;
           if (chunk.model && chunk.model !== this.model) {
             core.info(`LLM resolved model: ${chunk.model} (requested: ${this.model})`);
+            await this.progress(`Routed to \`${chunk.model}\` — generating review…`);
           } else {
             core.info("OpenRouter stream started — provider accepted the request.");
+            await this.progress("Provider accepted the request — generating review…");
           }
         }
 
@@ -190,7 +212,7 @@ export class LLMClient {
     } catch (error) {
       clearStallTimer();
       if (!gotFirstChunk) {
-        throw new Error(`OpenRouter stall: no first response within ${firstChunkMs} ms`);
+        throw openRouterStallError(firstChunkMs);
       }
       throw error;
     }
