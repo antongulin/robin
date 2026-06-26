@@ -3,6 +3,7 @@ import {
   getLlmCompletionAttemptCount,
   isOpenRouterRouterModel,
   isRetriableLlmError,
+  openRouterStallError,
   resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
 } from "./llm-retry";
@@ -13,6 +14,14 @@ import {
   DEFAULT_LLM_ROUTER_TIMEOUT_MS,
   DEFAULT_LLM_TIMEOUT_MS,
 } from "./config";
+
+describe("openRouterStallError", () => {
+  it("produces a retriable stall message", () => {
+    const error = openRouterStallError(45000);
+    expect(error.message).toContain("OpenRouter stall");
+    expect(isRetriableLlmError(error, { model: "openrouter/free" })).toBe(true);
+  });
+});
 
 describe("resolveLlmTimeoutMs", () => {
   it("shortens the default timeout for OpenRouter routers", () => {

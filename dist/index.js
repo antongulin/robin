@@ -617,9 +617,11 @@ class LLMClient {
     maxOutputTokens;
     maxAttempts;
     routerModel;
-    constructor(baseUrl, apiKey, model, maxOutputTokens, timeoutMs = config_1.DEFAULT_LLM_TIMEOUT_MS, maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS) {
+    onProgress;
+    constructor(baseUrl, apiKey, model, maxOutputTokens, timeoutMs = config_1.DEFAULT_LLM_TIMEOUT_MS, maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS, onProgress) {
         this.model = model;
         this.routerModel = (0, llm_retry_1.isOpenRouterRouterModel)(model);
+        this.onProgress = onProgress;
         this.maxOutputTokens =
             maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
                 ? maxOutputTokens
@@ -641,6 +643,16 @@ class LLMClient {
     retryContext() {
         return { model: this.model };
     }
+    async progress(detail) {
+        if (!this.onProgress)
+            return;
+        try {
+            await this.onProgress(detail);
+        }
+        catch (error) {
+            core.warning(`LLM progress update failed (non-fatal): ${error}`);
+        }
+    }
     async chatCompletion(systemPrompt, userContent, jsonResponseMode = false) {
         let lastFinishReason = "unknown";
         let lastError;
@@ -648,6 +660,7 @@ class LLMClient {
             const useJson = (0, llm_retry_1.shouldUseJsonResponseMode)(attempt, jsonResponseMode);
             try {
                 core.info(`LLM attempt ${attempt}/${this.maxAttempts}: waiting for provider...`);
+                await this.progress(`Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`);
                 const request = this.buildRequest(systemPrompt, userContent, useJson);
                 const { content, model: resolvedModel } = this.routerModel
                     ? await this.streamChatCompletion(request)
@@ -671,7 +684,9 @@ class LLMClient {
             }
             if (attempt < this.maxAttempts) {
                 const waitMs = (0, llm_retry_1.computeRetryDelayMs)(attempt, this.retryContext());
+                const reason = lastError instanceof Error ? lastError.message : "empty response";
                 core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
+                await this.progress(`Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`);
                 await (0, llm_retry_1.delayMs)(waitMs);
             }
         }
@@ -696,6 +711,7 @@ class LLMClient {
         const firstChunkMs = config_1.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
         const controller = new AbortController();
         let gotFirstChunk = false;
+        // ponytail: timer starts before create() so a hung TCP/connect also fails at firstChunkMs
         let stallTimer = setTimeout(() => {
             controller.abort();
         }, firstChunkMs);
@@ -716,9 +732,11 @@ class LLMClient {
                     resolvedModel = chunk.model || resolvedModel;
                     if (chunk.model && chunk.model !== this.model) {
                         core.info(`LLM resolved model: ${chunk.model} (requested: ${this.model})`);
+                        await this.progress(`Routed to \`${chunk.model}\` — generating review…`);
                     }
                     else {
                         core.info("OpenRouter stream started — provider accepted the request.");
+                        await this.progress("Provider accepted the request — generating review…");
                     }
                 }
                 const delta = chunk.choices?.[0]?.delta?.content;
@@ -734,7 +752,7 @@ class LLMClient {
         catch (error) {
             clearStallTimer();
             if (!gotFirstChunk) {
-                throw new Error(`OpenRouter stall: no first response within ${firstChunkMs} ms`);
+                throw (0, llm_retry_1.openRouterStallError)(firstChunkMs);
             }
             throw error;
         }
@@ -801,6 +819,7 @@ exports.shouldUseJsonResponseMode = shouldUseJsonResponseMode;
 exports.computeRetryDelayMs = computeRetryDelayMs;
 exports.getLlmCompletionAttemptCount = getLlmCompletionAttemptCount;
 exports.delayMs = delayMs;
+exports.openRouterStallError = openRouterStallError;
 const config_1 = __nccwpck_require__(4008);
 /** OpenRouter routers (e.g. openrouter/free) pick models dynamically — no secret updates needed. */
 function resolveLlmTimeoutMs(model, timeoutMs) {
@@ -868,6 +887,9 @@ function getLlmCompletionAttemptCount(maxAttempts = config_1.DEFAULT_LLM_COMPLET
 async function delayMs(ms) {
     await new Promise((resolve) => setTimeout(resolve, ms));
 }
+function openRouterStallError(firstChunkMs) {
+    return new Error(`OpenRouter stall: no first response within ${firstChunkMs} ms`);
+}
 //# sourceMappingURL=llm-retry.js.map
 
 /***/ }),
@@ -930,6 +952,8 @@ async function run() {
     let statusRepo = "";
     let statusCommentId;
     let statusCommand = "review";
+    let statusModel = "not configured";
+    let onJobCancelled;
     try {
         const eventName = github.context.eventName;
         const payload = github.context.payload;
@@ -1011,7 +1035,18 @@ async function run() {
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
-        statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, model || "not configured");
+        statusModel = model || "not configured";
+        statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, statusModel);
+        onJobCancelled = async () => {
+            if (octokit && statusCommentId) {
+                await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildCancelledStatusBody(statusCommand));
+            }
+        };
+        registerJobCancelHandler(async () => {
+            if (onJobCancelled) {
+                await onJobCancelled();
+            }
+        });
         if (!baseUrl) {
             throw new Error("Input required and not supplied: llm-base-url");
         }
@@ -1027,6 +1062,7 @@ async function run() {
         const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
         if (!diff || diff.trim().length === 0) {
             core.warning("No diff found for this PR.");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildFailedStatusBody("No diff found for this pull request.", statusCommand));
             return;
         }
         const diffFiles = (0, diff_filter_1.splitDiffIntoFiles)(diff);
@@ -1042,6 +1078,7 @@ async function run() {
         const reviewDiff = filteredDiff.trim() ? filteredDiff : diff;
         if (!reviewDiff.trim()) {
             core.warning("No reviewable diff remained after filtering skipped paths.");
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildFailedStatusBody("No reviewable diff remained after filtering skipped paths.", statusCommand));
             return;
         }
         const truncatedDiff = reviewDiff.length > maxDiffSize
@@ -1051,7 +1088,9 @@ async function run() {
         const reviewInstructions = command === "review"
             ? await loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineReviewInstructions, reviewInstructionsFile, baseRef)
             : "";
-        const llm = new llm_client_1.LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs);
+        const llm = new llm_client_1.LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs, undefined, async (detail) => {
+            await updateStatusComment(octokit, owner, repo, statusCommentId, buildProgressStatusBody(detail, statusCommand, statusModel));
+        });
         const useJsonMode = command === "review" && jsonResponseMode;
         let reviewText;
         if (command === "summary") {
@@ -1077,6 +1116,7 @@ async function run() {
             let findings = parsedReview.findings;
             if ((0, review_retry_1.shouldRetryStructuredReview)(findings, parsedReview.usedJson)) {
                 core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
+                await updateStatusComment(octokit, owner, repo, statusCommentId, buildProgressStatusBody("First pass returned no parseable findings — retrying with JSON-only instructions…", statusCommand, statusModel));
                 const retryText = (await runReview(llm, truncatedDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true)).content;
                 parsedReview = review_parser_1.ReviewParser.parseDetailed(retryText);
                 findings = parsedReview.findings;
@@ -1089,6 +1129,7 @@ async function run() {
                 core.setFailed(`Found ${findings.high.length} high severity issue(s). Failing check.`);
             }
         }
+        onJobCancelled = undefined;
         core.info("Done.");
     }
     catch (error) {
@@ -1097,6 +1138,9 @@ async function run() {
             await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(message, statusCommand));
         }
         core.setFailed(message);
+    }
+    finally {
+        onJobCancelled = undefined;
     }
 }
 async function addEyesReaction(octokit, owner, repo, commentId) {
@@ -1198,6 +1242,40 @@ function buildFailedStatusBody(errorMessage, command) {
         "",
         "Free model routes drop sometimes — comment `/robin` to try again. (No secrets are included in this message.)",
     ].join("\n");
+}
+function buildProgressStatusBody(detail, command, model) {
+    return [
+        "## :bow_and_arrow: Robin",
+        "",
+        ":hourglass_flowing_sand: Still working on this pull request.",
+        "",
+        detail,
+        "",
+        `Mode: ${command === "summary" ? "summary" : "code review"}`,
+        `Model: ${model}`,
+    ].join("\n");
+}
+function buildCancelledStatusBody(command) {
+    return [
+        "## :bow_and_arrow: Robin",
+        "",
+        `:warning: The ${command === "summary" ? "summary" : "review"} was interrupted before it finished.`,
+        "",
+        "This usually means the GitHub Actions job was cancelled or hit its time limit while waiting on the model.",
+        "",
+        "Comment `/robin` to run again.",
+    ].join("\n");
+}
+function registerJobCancelHandler(onCancel) {
+    let handled = false;
+    const run = () => {
+        if (handled)
+            return;
+        handled = true;
+        void onCancel().finally(() => process.exit(143));
+    };
+    process.once("SIGTERM", run);
+    process.once("SIGINT", run);
 }
 async function loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef) {
     const filePath = configFile.trim();

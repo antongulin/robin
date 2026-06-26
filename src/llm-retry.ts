@@ -100,3 +100,7 @@ export function getLlmCompletionAttemptCount(
 export async function delayMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+export function openRouterStallError(firstChunkMs: number): Error {
+  return new Error(`OpenRouter stall: no first response within ${firstChunkMs} ms`);
+}
