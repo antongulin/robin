@@ -7,12 +7,43 @@
 
 * **llm:** update PR status on stalls, retries, and job cancel ([#47](https://github.com/antongulin/robin/issues/47)) ([b1c00d1](https://github.com/antongulin/robin/commit/b1c00d117b60b91681550f553bf58d02e23eb45f))
 
+### Release notes
+
+**Recommended pin:** `@v2.0.5` or `@v2`.
+
+The PR status comment now stays in sync during review instead of freezing on `:eyes: On it…` while OpenRouter hangs:
+
+- Each LLM attempt updates the comment (`Still working…`, attempt N/M)
+- OpenRouter routing logs `Routed to \`model\`…` as soon as the first SSE chunk arrives
+- Retries show the failure reason and backoff countdown
+- `SIGTERM` / job cancel posts `interrupted before it finished` (no more stuck status)
+- Early exits (no diff, empty filter) post a failure reason
+
+Progress updates are best-effort — a GitHub API error during a status edit will not fail the review.
+
+Includes all **v2.0.4** OpenRouter stall detection below. Upgrade from v2.0.3 or older in one step.
+
 ## [2.0.4](https://github.com/antongulin/robin/compare/v2.0.3...v2.0.4) (2026-06-26)
 
 
 ### Bug Fixes
 
 * **llm:** fail fast when OpenRouter auto-router stalls ([#45](https://github.com/antongulin/robin/issues/45)) ([e114593](https://github.com/antongulin/robin/commit/e114593101753d253495c8c08d82013513d1efce))
+
+### Release notes
+
+For `openrouter/free` and other OpenRouter router models — hung auto-router requests no longer burn the full **15 min** GitHub Actions job budget:
+
+| Layer | Timeout | Behavior |
+| --- | --- | --- |
+| First SSE chunk | 45s | Stream request; log `LLM resolved model: …` when routed. No chunk → `OpenRouter stall` → retry. |
+| Full stream | 2 min | Per-attempt cap when `llm-timeout-ms` is default (600000). |
+| Attempts | 5× | Provider fallbacks + backoff. |
+| SDK retries | 0 | Robin owns retries (no 10 min × SDK multiplier). |
+
+Worst case when OpenRouter is fully dead: ~4 min + backoff with a failure comment on the PR.
+
+Non-router models (`gpt-4o`, Ollama, etc.) unchanged. For live PR status updates during review, use **v2.0.5+**.
 
 ## [2.0.3](https://github.com/antongulin/robin/compare/v2.0.2...v2.0.3) (2026-06-18)
 
