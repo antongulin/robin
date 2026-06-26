@@ -277,8 +277,9 @@ No daily quota from this action. Real limits:
 | `Input required: model` | Missing secret | Add `LLM_MODEL` |
 | `Input required: llm-base-url` | Missing secret | Add `LLM_BASE_URL` |
 | `Empty response from LLM` | Free/unstable model returned no text | Action retries with backoff; comment `/review` again |
+| `OpenRouter stall: no first response` | Auto-router hung before picking a provider | Action retries every 45s (up to 5×); check Actions log for `LLM resolved model` — that line means routing worked |
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |
-| `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` |
+| `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
 | `Resource not accessible by integration` | Missing permissions | Add `pull-requests: write` |
 | Slash command ignored | Wrong format or permission | `/review` as first line; need write access |
 | Shallow review | Small model or truncated diff | Stronger model or higher `max-diff-size` |

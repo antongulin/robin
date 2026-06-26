@@ -1,11 +1,16 @@
 import { OpenAI } from "openai";
-import { DEFAULT_LLM_COMPLETION_ATTEMPTS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
+import {
+  DEFAULT_LLM_COMPLETION_ATTEMPTS,
+  DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS,
+  DEFAULT_LLM_TIMEOUT_MS,
+} from "./config";
 import {
   computeRetryDelayMs,
   delayMs,
   getLlmCompletionAttemptCount,
   isOpenRouterRouterModel,
   isRetriableLlmError,
+  resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
 } from "./llm-retry";
 import * as core from "@actions/core";
@@ -20,6 +25,7 @@ export class LLMClient {
   private model: string;
   private maxOutputTokens?: number;
   private maxAttempts: number;
+  private routerModel: boolean;
 
   constructor(
     baseUrl: string,
@@ -29,26 +35,30 @@ export class LLMClient {
     timeoutMs = DEFAULT_LLM_TIMEOUT_MS,
     maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS
   ) {
-    core.info(
-      `Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${timeoutMs} ms, maxAttempts=${maxAttempts}`
-    );
-
-    this.client = new OpenAI({
-      baseURL: baseUrl,
-      apiKey: apiKey || "ollama",
-      maxRetries: 3,
-      timeout: timeoutMs,
-    });
-
     this.model = model;
+    this.routerModel = isOpenRouterRouterModel(model);
     this.maxOutputTokens =
       maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
         ? maxOutputTokens
         : undefined;
     this.maxAttempts = getLlmCompletionAttemptCount(maxAttempts, model);
-    if (isOpenRouterRouterModel(model)) {
+    const effectiveTimeoutMs = resolveLlmTimeoutMs(model, timeoutMs);
+
+    core.info(
+      `Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}`
+    );
+
+    // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
+    this.client = new OpenAI({
+      baseURL: baseUrl,
+      apiKey: apiKey || "ollama",
+      maxRetries: 0,
+      timeout: effectiveTimeoutMs,
+    });
+
+    if (this.routerModel) {
       core.info(
-        "OpenRouter router model detected — using extra retries and provider fallbacks for rotating free models."
+        `OpenRouter router model — ${DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS / 1000}s first-chunk stall detect, ${effectiveTimeoutMs / 1000}s stream cap, provider fallbacks.`
       );
     }
   }
@@ -69,20 +79,22 @@ export class LLMClient {
       const useJson = shouldUseJsonResponseMode(attempt, jsonResponseMode);
 
       try {
-        const response = await this.client.chat.completions.create(
-          this.buildRequest(systemPrompt, userContent, useJson)
-        );
-        const content = this.extractMessageContent(response);
-        const resolvedModel = response.model || this.model;
+        core.info(`LLM attempt ${attempt}/${this.maxAttempts}: waiting for provider...`);
+        const request = this.buildRequest(systemPrompt, userContent, useJson);
+        const { content, model: resolvedModel } = this.routerModel
+          ? await this.streamChatCompletion(request)
+          : await this.blockingChatCompletion(request);
 
         if (content) {
-          this.logResolvedModel(resolvedModel);
+          if (!this.routerModel) {
+            this.logResolvedModel(resolvedModel || this.model);
+          }
           return { content, model: resolvedModel };
         }
 
-        lastFinishReason = response.choices?.[0]?.finish_reason || "unknown";
+        lastFinishReason = "empty";
         core.warning(
-          `LLM attempt ${attempt}/${this.maxAttempts}: empty content (finish_reason=${lastFinishReason}${useJson ? ", json mode" : ""})`
+          `LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`
         );
       } catch (error) {
         lastError = error;
@@ -113,12 +125,83 @@ export class LLMClient {
     );
   }
 
+  private async blockingChatCompletion(
+    request: OpenAI.Chat.Completions.ChatCompletionCreateParams
+  ): Promise<ChatCompletionResult> {
+    const response = await this.client.chat.completions.create({
+      ...request,
+      stream: false,
+    });
+    return {
+      content: this.extractMessageContent(response),
+      model: response.model || this.model,
+    };
+  }
+
+  /** Stream so the first SSE chunk (model id) proves OpenRouter routed; abort if none arrives. */
+  private async streamChatCompletion(
+    request: OpenAI.Chat.Completions.ChatCompletionCreateParams
+  ): Promise<ChatCompletionResult> {
+    const firstChunkMs = DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
+    const controller = new AbortController();
+    let gotFirstChunk = false;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+      controller.abort();
+    }, firstChunkMs);
+
+    const clearStallTimer = () => {
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+        stallTimer = undefined;
+      }
+    };
+
+    try {
+      const stream = await this.client.chat.completions.create(
+        { ...request, stream: true },
+        { signal: controller.signal }
+      );
+
+      const parts: string[] = [];
+      let resolvedModel = this.model;
+
+      for await (const chunk of stream) {
+        if (!gotFirstChunk) {
+          gotFirstChunk = true;
+          clearStallTimer();
+          resolvedModel = chunk.model || resolvedModel;
+          if (chunk.model && chunk.model !== this.model) {
+            core.info(`LLM resolved model: ${chunk.model} (requested: ${this.model})`);
+          } else {
+            core.info("OpenRouter stream started — provider accepted the request.");
+          }
+        }
+
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (typeof delta === "string" && delta) {
+          parts.push(delta);
+        }
+        if (chunk.model) {
+          resolvedModel = chunk.model;
+        }
+      }
+
+      return { content: parts.join(""), model: resolvedModel };
+    } catch (error) {
+      clearStallTimer();
+      if (!gotFirstChunk) {
+        throw new Error(`OpenRouter stall: no first response within ${firstChunkMs} ms`);
+      }
+      throw error;
+    }
+  }
+
   private buildRequest(
     systemPrompt: string,
     userContent: string,
     jsonResponseMode: boolean
-  ): OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming {
-    const request: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+  ): OpenAI.Chat.Completions.ChatCompletionCreateParams {
+    const request: OpenAI.Chat.Completions.ChatCompletionCreateParams = {
       model: this.model,
       messages: [
         { role: "system", content: systemPrompt },
@@ -135,9 +218,9 @@ export class LLMClient {
       request.response_format = { type: "json_object" };
     }
 
-    if (isOpenRouterRouterModel(this.model)) {
+    if (this.routerModel) {
       // OpenRouter extension: try other providers when the first free route 404s.
-      (request as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
+      (request as OpenAI.Chat.Completions.ChatCompletionCreateParams & {
         provider?: { allow_fallbacks: boolean };
       }).provider = { allow_fallbacks: true };
     }

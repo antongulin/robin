@@ -258,6 +258,7 @@ Add `.github/code-reviewer.md` in your repo:
 | `/robin` does nothing | Put `/robin` on the **first** line; you need write access on the repo |
 | Review is very short | PR may be huge — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`) |
 | `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/robin` again |
+| `OpenRouter stall` / job runs 15 min with no review | Auto-router hung — action now aborts after 45s with no stream and retries | Watch Actions log for `LLM resolved model` (routing OK); pin `@v2` or `@main` for the fix |
 | `404 Provider returned error` | Normal for `openrouter/free` when one provider is down — the action retries up to 5 times; keep `LLM_MODEL=openrouter/free` |
 
 More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)

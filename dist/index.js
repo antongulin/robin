@@ -52,9 +52,11 @@ function hasRequiredPermission(permission, minimumPermission) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
+exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
 exports.parseLLMTimeout = parseLLMTimeout;
 exports.DEFAULT_LLM_TIMEOUT_MS = 600000; // 10 minutes
+exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = 120000; // 2 minutes — openrouter/free happy path is ~60-90s
+exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = 45000; // no SSE = stacked router; fail fast and retry
 exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = 3;
 exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = 5;
 exports.DEFAULT_LLM_RETRY_DELAY_MS = 2000;
@@ -614,22 +616,26 @@ class LLMClient {
     model;
     maxOutputTokens;
     maxAttempts;
+    routerModel;
     constructor(baseUrl, apiKey, model, maxOutputTokens, timeoutMs = config_1.DEFAULT_LLM_TIMEOUT_MS, maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS) {
-        core.info(`Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${timeoutMs} ms, maxAttempts=${maxAttempts}`);
-        this.client = new openai_1.OpenAI({
-            baseURL: baseUrl,
-            apiKey: apiKey || "ollama",
-            maxRetries: 3,
-            timeout: timeoutMs,
-        });
         this.model = model;
+        this.routerModel = (0, llm_retry_1.isOpenRouterRouterModel)(model);
         this.maxOutputTokens =
             maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
                 ? maxOutputTokens
                 : undefined;
         this.maxAttempts = (0, llm_retry_1.getLlmCompletionAttemptCount)(maxAttempts, model);
-        if ((0, llm_retry_1.isOpenRouterRouterModel)(model)) {
-            core.info("OpenRouter router model detected — using extra retries and provider fallbacks for rotating free models.");
+        const effectiveTimeoutMs = (0, llm_retry_1.resolveLlmTimeoutMs)(model, timeoutMs);
+        core.info(`Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}`);
+        // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
+        this.client = new openai_1.OpenAI({
+            baseURL: baseUrl,
+            apiKey: apiKey || "ollama",
+            maxRetries: 0,
+            timeout: effectiveTimeoutMs,
+        });
+        if (this.routerModel) {
+            core.info(`OpenRouter router model — ${config_1.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS / 1000}s first-chunk stall detect, ${effectiveTimeoutMs / 1000}s stream cap, provider fallbacks.`);
         }
     }
     retryContext() {
@@ -641,15 +647,19 @@ class LLMClient {
         for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
             const useJson = (0, llm_retry_1.shouldUseJsonResponseMode)(attempt, jsonResponseMode);
             try {
-                const response = await this.client.chat.completions.create(this.buildRequest(systemPrompt, userContent, useJson));
-                const content = this.extractMessageContent(response);
-                const resolvedModel = response.model || this.model;
+                core.info(`LLM attempt ${attempt}/${this.maxAttempts}: waiting for provider...`);
+                const request = this.buildRequest(systemPrompt, userContent, useJson);
+                const { content, model: resolvedModel } = this.routerModel
+                    ? await this.streamChatCompletion(request)
+                    : await this.blockingChatCompletion(request);
                 if (content) {
-                    this.logResolvedModel(resolvedModel);
+                    if (!this.routerModel) {
+                        this.logResolvedModel(resolvedModel || this.model);
+                    }
                     return { content, model: resolvedModel };
                 }
-                lastFinishReason = response.choices?.[0]?.finish_reason || "unknown";
-                core.warning(`LLM attempt ${attempt}/${this.maxAttempts}: empty content (finish_reason=${lastFinishReason}${useJson ? ", json mode" : ""})`);
+                lastFinishReason = "empty";
+                core.warning(`LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`);
             }
             catch (error) {
                 lastError = error;
@@ -671,6 +681,64 @@ class LLMClient {
         }
         throw new Error(`Empty response from LLM after ${this.maxAttempts} attempts (finish_reason=${lastFinishReason})`);
     }
+    async blockingChatCompletion(request) {
+        const response = await this.client.chat.completions.create({
+            ...request,
+            stream: false,
+        });
+        return {
+            content: this.extractMessageContent(response),
+            model: response.model || this.model,
+        };
+    }
+    /** Stream so the first SSE chunk (model id) proves OpenRouter routed; abort if none arrives. */
+    async streamChatCompletion(request) {
+        const firstChunkMs = config_1.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
+        const controller = new AbortController();
+        let gotFirstChunk = false;
+        let stallTimer = setTimeout(() => {
+            controller.abort();
+        }, firstChunkMs);
+        const clearStallTimer = () => {
+            if (stallTimer) {
+                clearTimeout(stallTimer);
+                stallTimer = undefined;
+            }
+        };
+        try {
+            const stream = await this.client.chat.completions.create({ ...request, stream: true }, { signal: controller.signal });
+            const parts = [];
+            let resolvedModel = this.model;
+            for await (const chunk of stream) {
+                if (!gotFirstChunk) {
+                    gotFirstChunk = true;
+                    clearStallTimer();
+                    resolvedModel = chunk.model || resolvedModel;
+                    if (chunk.model && chunk.model !== this.model) {
+                        core.info(`LLM resolved model: ${chunk.model} (requested: ${this.model})`);
+                    }
+                    else {
+                        core.info("OpenRouter stream started — provider accepted the request.");
+                    }
+                }
+                const delta = chunk.choices?.[0]?.delta?.content;
+                if (typeof delta === "string" && delta) {
+                    parts.push(delta);
+                }
+                if (chunk.model) {
+                    resolvedModel = chunk.model;
+                }
+            }
+            return { content: parts.join(""), model: resolvedModel };
+        }
+        catch (error) {
+            clearStallTimer();
+            if (!gotFirstChunk) {
+                throw new Error(`OpenRouter stall: no first response within ${firstChunkMs} ms`);
+            }
+            throw error;
+        }
+    }
     buildRequest(systemPrompt, userContent, jsonResponseMode) {
         const request = {
             model: this.model,
@@ -686,7 +754,7 @@ class LLMClient {
         if (jsonResponseMode) {
             request.response_format = { type: "json_object" };
         }
-        if ((0, llm_retry_1.isOpenRouterRouterModel)(this.model)) {
+        if (this.routerModel) {
             // OpenRouter extension: try other providers when the first free route 404s.
             request.provider = { allow_fallbacks: true };
         }
@@ -725,6 +793,7 @@ exports.LLMClient = LLMClient;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveLlmTimeoutMs = resolveLlmTimeoutMs;
 exports.isOpenRouterRouterModel = isOpenRouterRouterModel;
 exports.isOpenRouterProviderError = isOpenRouterProviderError;
 exports.isRetriableLlmError = isRetriableLlmError;
@@ -734,6 +803,11 @@ exports.getLlmCompletionAttemptCount = getLlmCompletionAttemptCount;
 exports.delayMs = delayMs;
 const config_1 = __nccwpck_require__(4008);
 /** OpenRouter routers (e.g. openrouter/free) pick models dynamically — no secret updates needed. */
+function resolveLlmTimeoutMs(model, timeoutMs) {
+    if (timeoutMs !== config_1.DEFAULT_LLM_TIMEOUT_MS)
+        return timeoutMs;
+    return isOpenRouterRouterModel(model) ? config_1.DEFAULT_LLM_ROUTER_TIMEOUT_MS : timeoutMs;
+}
 function isOpenRouterRouterModel(model) {
     if (!model)
         return false;
@@ -774,7 +848,8 @@ function isRetriableLlmError(error, context = {}) {
         message.includes("socket hang up") ||
         message.includes("rate limit") ||
         message.includes("overloaded") ||
-        message.includes("empty response from llm"));
+        message.includes("empty response from llm") ||
+        message.includes("openrouter stall"));
 }
 function shouldUseJsonResponseMode(attempt, jsonResponseMode) {
     return jsonResponseMode && attempt === 1;

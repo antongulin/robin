@@ -3,6 +3,8 @@ import {
   DEFAULT_LLM_RETRY_DELAY_MS,
   DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS,
   DEFAULT_LLM_ROUTER_RETRY_DELAY_MS,
+  DEFAULT_LLM_ROUTER_TIMEOUT_MS,
+  DEFAULT_LLM_TIMEOUT_MS,
 } from "./config";
 
 export interface LlmRetryContext {
@@ -10,6 +12,11 @@ export interface LlmRetryContext {
 }
 
 /** OpenRouter routers (e.g. openrouter/free) pick models dynamically — no secret updates needed. */
+export function resolveLlmTimeoutMs(model: string | undefined, timeoutMs: number): number {
+  if (timeoutMs !== DEFAULT_LLM_TIMEOUT_MS) return timeoutMs;
+  return isOpenRouterRouterModel(model) ? DEFAULT_LLM_ROUTER_TIMEOUT_MS : timeoutMs;
+}
+
 export function isOpenRouterRouterModel(model: string | undefined): boolean {
   if (!model) return false;
   const normalized = model.trim().toLowerCase();
@@ -57,7 +64,8 @@ export function isRetriableLlmError(error: unknown, context: LlmRetryContext = {
     message.includes("socket hang up") ||
     message.includes("rate limit") ||
     message.includes("overloaded") ||
-    message.includes("empty response from llm")
+    message.includes("empty response from llm") ||
+    message.includes("openrouter stall")
   );
 }
 
