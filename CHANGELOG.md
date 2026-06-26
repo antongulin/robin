@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.6](https://github.com/antongulin/robin/compare/v2.0.5...v2.0.6) (2026-06-26)
+
+
+### Documentation
+
+* **changelog:** expand v2.0.4 and v2.0.5 release notes ([310836a](https://github.com/antongulin/robin/commit/310836a9238eee6a7cae28625b882e3771c6dac1))
+
 ## [2.0.5](https://github.com/antongulin/robin/compare/v2.0.4...v2.0.5) (2026-06-26)
 
 
