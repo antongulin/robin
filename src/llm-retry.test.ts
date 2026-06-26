@@ -3,13 +3,29 @@ import {
   getLlmCompletionAttemptCount,
   isOpenRouterRouterModel,
   isRetriableLlmError,
+  resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
 } from "./llm-retry";
 import {
   DEFAULT_LLM_COMPLETION_ATTEMPTS,
   DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS,
   DEFAULT_LLM_ROUTER_RETRY_DELAY_MS,
+  DEFAULT_LLM_ROUTER_TIMEOUT_MS,
+  DEFAULT_LLM_TIMEOUT_MS,
 } from "./config";
+
+describe("resolveLlmTimeoutMs", () => {
+  it("shortens the default timeout for OpenRouter routers", () => {
+    expect(resolveLlmTimeoutMs("openrouter/free", DEFAULT_LLM_TIMEOUT_MS)).toBe(
+      DEFAULT_LLM_ROUTER_TIMEOUT_MS
+    );
+    expect(resolveLlmTimeoutMs("gpt-4o", DEFAULT_LLM_TIMEOUT_MS)).toBe(DEFAULT_LLM_TIMEOUT_MS);
+  });
+
+  it("keeps an explicit consumer override", () => {
+    expect(resolveLlmTimeoutMs("openrouter/free", 300000)).toBe(300000);
+  });
+});
 
 describe("isOpenRouterRouterModel", () => {
   it("detects OpenRouter free and auto routers", () => {
@@ -33,6 +49,11 @@ describe("isRetriableLlmError", () => {
   it("retries network and timeout messages", () => {
     expect(isRetriableLlmError(new Error("Request timed out"))).toBe(true);
     expect(isRetriableLlmError(new Error("ECONNRESET"))).toBe(true);
+    expect(
+      isRetriableLlmError(new Error("OpenRouter stall: no first response within 45000 ms"), {
+        model: "openrouter/free",
+      })
+    ).toBe(true);
   });
 
   it("retries OpenRouter provider 404s for router models", () => {
