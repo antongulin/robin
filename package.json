@@ -1,6 +1,6 @@
 {
   "name": "robin",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "Free AI code reviews for every PR. BYOK, works with OpenRouter free tier.",
   "main": "dist/index.js",
   "repository": {

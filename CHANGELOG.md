@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.7](https://github.com/antongulin/robin/compare/v2.0.6...v2.0.7) (2026-07-01)
+
+
+### Bug Fixes
+
+* **ci:** keep /robin working for [@v1](https://github.com/v1) and exact pre-1.4 pins ([97ef20b](https://github.com/antongulin/robin/commit/97ef20b91342f2e06a8cf23e6ab6943087396933))
+* **ci:** keep /robin working for [@v1](https://github.com/v1) consumers ([7a1d062](https://github.com/antongulin/robin/commit/7a1d062c9f8679a6ff9fdc520fc4722f240409ff))
+* **ci:** only resync v1 tag on v2+ releases ([32ff649](https://github.com/antongulin/robin/commit/32ff64955f12a6eb8ad161cdb6be6053f70b74e1))
+
 ## [2.0.6](https://github.com/antongulin/robin/compare/v2.0.5...v2.0.6) (2026-06-26)
 
 
