@@ -255,7 +255,7 @@ Add `.github/code-reviewer.md` in your repo:
 | Workflow fails immediately | Check all three secrets exist and the workflow uses `@main` |
 | `Input required: model` or `llm-base-url` | Add missing secrets (Step 2) |
 | Review never appears | Open **Actions** tab → open the failed run → read the error |
-| `/robin` does nothing | Put `/robin` on the **first** line; you need write access on the repo |
+| `/robin` does nothing | Put `/robin` on the **first** line; you need write access on the repo. On `@v1`, pin `@v1.4.0`+ or use `/review` if the tag predates v1.4.0 |
 | Review is very short | PR may be huge — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`) |
 | `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/robin` again |
 | `OpenRouter stall` / job runs 15 min with no review | Auto-router hung — action now aborts after 45s with no stream and retries | Watch Actions log for `LLM resolved model` (routing OK); pin `@v2` or `@main` for the fix |

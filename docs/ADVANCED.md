@@ -174,6 +174,7 @@ jobs:
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
         (
           startsWith(github.event.comment.body, '/review') ||
+          startsWith(github.event.comment.body, '/robin') ||
           startsWith(github.event.comment.body, '/summary') ||
           startsWith(github.event.comment.body, '/help')
         )
@@ -211,7 +212,7 @@ If you raise `llm-timeout-ms` above 10 minutes, also raise the job `timeout-minu
 1. PR opened, reopened, or marked ready for review → automatic review.
 2. Status comment appears, then updates when done.
 3. Author pushes fixes → no automatic re-review (by default).
-4. Maintainer comments `/review` for another pass.
+4. Maintainer comments `/robin` or `/review` for another pass.
 
 The action fetches diffs via the GitHub API. `actions/checkout` is not required unless other steps need local files.
 
@@ -282,7 +283,8 @@ No daily quota from this action. Real limits:
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |
 | `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
 | `Resource not accessible by integration` | Missing permissions | Add `pull-requests: write` |
-| Slash command ignored | Wrong format or permission | `/review` as first line; need write access |
+| Slash command ignored | Wrong format or permission | `/robin` or `/review` as first line; need write access |
+| `/robin` does nothing on `@v1` | Stale `v1` tag before v1.4.0 | Use `/review`, pin `@v1.4.0`+, or `@v2`; floating `v1` tracks latest `1.x` on release |
 | Shallow review | Small model or truncated diff | Stronger model or higher `max-diff-size` |
 
 ## Comparison

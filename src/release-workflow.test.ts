@@ -60,6 +60,9 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain("gh pr merge \"$number\" --merge --delete-branch");
     expect(releaseWorkflow).toContain("gh release create \"$tag\"");
     expect(releaseWorkflow).toContain("git push origin -f \"v$major\" \"v$major.$minor\"");
+    expect(releaseWorkflow).toContain('git tag -l "v1.*" --sort=-v:refname');
+    expect(releaseWorkflow).toContain("git tag -f v1 \"$v1_sha\"");
+    expect(releaseWorkflow).toContain("git push origin -f v1");
     expect(releaseWorkflow).toContain('RELEASE_PENDING_LABEL: "autorelease: pending"');
     expect(releaseWorkflow).toContain('RELEASE_TAGGED_LABEL: "autorelease: tagged"');
     expect(releaseWorkflow).toContain("pending_label=\"$RELEASE_PENDING_LABEL\"");

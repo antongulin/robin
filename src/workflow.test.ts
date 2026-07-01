@@ -6,9 +6,26 @@ const reviewWorkflow = readFileSync(
   join(repoRoot, ".github", "workflows", "review.yml"),
   "utf8",
 );
+const selfTestWorkflow = readFileSync(
+  join(repoRoot, ".github", "workflows", "self-test.yml"),
+  "utf8",
+);
+const robinTemplate = readFileSync(join(repoRoot, "templates", "robin.yml"), "utf8");
 const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
 
+const slashCommandGate =
+  "startsWith(github.event.comment.body, '/robin')";
+
 describe("reusable review workflow", () => {
+  it.each([
+    ["review.yml", reviewWorkflow],
+    ["self-test.yml", selfTestWorkflow],
+    ["templates/robin.yml", robinTemplate],
+  ])("accepts /robin comment triggers in %s", (_name, workflow) => {
+    expect(workflow).toContain(slashCommandGate);
+    expect(workflow).toContain("startsWith(github.event.comment.body, '/review')");
+  });
+
   it("lets callers choose a GitHub-hosted or self-hosted runner", () => {
     expect(reviewWorkflow).toContain("runner:");
     expect(reviewWorkflow).toContain(
