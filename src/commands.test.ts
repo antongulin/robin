@@ -3,6 +3,8 @@ import { hasRequiredPermission, parseSlashCommand } from "./commands";
 describe("parseSlashCommand", () => {
   it("parses supported commands from the first non-empty line", () => {
     expect(parseSlashCommand("\n  /review please")).toBe("review");
+    expect(parseSlashCommand("/robin")).toBe("review");
+    expect(parseSlashCommand("/ROBIN please")).toBe("review");
     expect(parseSlashCommand("/summary")).toBe("summary");
     expect(parseSlashCommand("/help")).toBe("help");
   });
