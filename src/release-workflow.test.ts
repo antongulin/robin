@@ -60,6 +60,7 @@ describe("release workflow", () => {
     expect(releaseWorkflow).toContain("gh pr merge \"$number\" --merge --delete-branch");
     expect(releaseWorkflow).toContain("gh release create \"$tag\"");
     expect(releaseWorkflow).toContain("git push origin -f \"v$major\" \"v$major.$minor\"");
+    expect(releaseWorkflow).toContain('if [ "$major" -ne 1 ]; then');
     expect(releaseWorkflow).toContain('git tag -l "v1.*" --sort=-v:refname');
     expect(releaseWorkflow).toContain("git tag -f v1 \"$v1_sha\"");
     expect(releaseWorkflow).toContain("git push origin -f v1");

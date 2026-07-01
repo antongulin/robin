@@ -189,16 +189,19 @@ jobs:
           git push origin -f "v$major" "v$major.$minor"
 
           # v2+ releases do not move v1, but @v1 consumers need the latest 1.x workflow
-          # (including /robin in the issue_comment gate since v1.4.0).
-          latest_v1=$(
-            git tag -l "v1.*" --sort=-v:refname |
-              grep -E "^v1\\.[0-9]+\\.[0-9]+$" |
-              head -1
-          )
-          if [ -n "$latest_v1" ]; then
-            v1_sha=$(git rev-list -n 1 "$latest_v1")
-            git tag -f v1 "$v1_sha"
-            git push origin -f v1
+          # (including /robin in the issue_comment gate since v1.4.0). On a v1.x release
+          # line 189 already moved v1, so only resync for major >= 2.
+          if [ "$major" -ne 1 ]; then
+            latest_v1=$(
+              git tag -l "v1.*" --sort=-v:refname |
+                grep -E "^v1\\.[0-9]+\\.[0-9]+$" |
+                head -1
+            )
+            if [ -n "$latest_v1" ]; then
+              v1_sha=$(git rev-list -n 1 "$latest_v1")
+              git tag -f v1 "$v1_sha"
+              git push origin -f v1
+            fi
           fi
 
           if ! gh pr view "$number" --json number >/dev/null 2>&1; then
