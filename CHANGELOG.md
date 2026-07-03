@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0](https://github.com/antongulin/robin/compare/v2.0.7...v2.1.0) (2026-07-03)
+
+
+### Features
+
+* **skill:** harden Robin PR-review loop and add version self-check ([b00cdb8](https://github.com/antongulin/robin/commit/b00cdb8b563e5ae76cf90ba8862a57e3b6b996b9))
+* **skill:** harden Robin PR-review loop and add version self-check ([96aee07](https://github.com/antongulin/robin/commit/96aee0706c9ffc533f221d668aefef2024b5c2c9))
+
+
+### Bug Fixes
+
+* **skill:** make update.sh error fallbacks match the real command and use if/else ([ba682d7](https://github.com/antongulin/robin/commit/ba682d7a3184c8f4be7e1d0b02399e1d2a215726))
+
 ## [2.0.7](https://github.com/antongulin/robin/compare/v2.0.6...v2.0.7) (2026-07-01)
 
 
