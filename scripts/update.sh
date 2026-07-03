@@ -19,10 +19,12 @@ info() { printf '\033[0;32m🏹 %s\033[0m\n' "$1"; }
 die()  { printf '\033[0;31m🏹 %s\033[0m\n' "$1" >&2; exit 1; }
 
 command -v npx >/dev/null 2>&1 \
-  || die "npx (Node.js) not found — install Node, then re-run, or: npx skills add $REPO_URL --all --global"
+  || die "npx (Node.js) not found — install Node, then re-run, or: npx -y skills add $REPO_URL --skill robin --agent '*' --global --yes"
 
 info "Updating the Robin skill across all coding agents…"
 # `skills add` is idempotent — re-adding upgrades an existing install in place.
-npx -y skills add "$REPO_URL" --skill robin --agent '*' --global --yes \
-  && info "Done. The new version applies on the next skill run." \
-  || die "Update failed. Try manually: npx skills add $REPO_URL --all --global"
+if npx -y skills add "$REPO_URL" --skill robin --agent '*' --global --yes; then
+  info "Done. The new version applies on the next skill run."
+else
+  die "Update failed. Try manually: npx -y skills add $REPO_URL --skill robin --agent '*' --global --yes"
+fi
