@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/antongulin/robin/compare/v2.1.1...v2.2.0) (2026-07-03)
+
+
+### Features
+
+* **skill:** auto-enrich published release notes after a release is cut ([#57](https://github.com/antongulin/robin/issues/57)) ([58ab0c6](https://github.com/antongulin/robin/commit/58ab0c642e44bc91612510a95d5121ed54013c6f))
+
 ## [2.1.1](https://github.com/antongulin/robin/compare/v2.1.0...v2.1.1) (2026-07-03)
 
 
