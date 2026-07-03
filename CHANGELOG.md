@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/antongulin/robin/compare/v2.1.0...v2.1.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **skill:** prefer squash merges in auto-releasing repos to avoid duplicate changelog entries ([#54](https://github.com/antongulin/robin/issues/54)) ([4f3107d](https://github.com/antongulin/robin/commit/4f3107dc20591e403d25636a9c4c402cacb877e1))
+
 ## [2.1.0](https://github.com/antongulin/robin/compare/v2.0.7...v2.1.0) (2026-07-03)
 
 
