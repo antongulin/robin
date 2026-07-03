@@ -6,6 +6,9 @@
       "package-name": "robin",
       "include-component-in-tag": false,
       "pull-request-title-pattern": "chore: release ${version}",
+      "extra-files": [
+        { "type": "generic", "path": "skills/robin/SKILL.md" }
+      ],
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },
