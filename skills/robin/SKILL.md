@@ -379,44 +379,77 @@ if it looks unmerged after a squash — confirm the merge landed via `gh pr view
 If the tree wasn't clean going in, you likely staged unrelated files back in step 1 —
 resolve that rather than carrying junk onto the default branch.
 
-## Release Notes (reference for step 8 — do this *before* merging)
+**If this merge published a release** — you merged a `chore: release X.Y.Z` PR, or the
+merge auto-tagged a version — enrich that release's notes now, automatically. See **Release
+Notes → Phase B**. It's commit-free and bump-free, so there's nothing to confirm.
 
-Optional and detection-gated. Step 8 sends you here before the merge in step 9, because
-the leverage is entirely pre-merge (a squash commit and the release bot read the PR
-title/body you set now, and after merge the branch is gone). Skip the whole thing if the
-repo publishes no release notes.
+## Release Notes
 
-You already hold the full context of what this PR did, so you're well placed to make its
-release note *useful* — "Add retry with backoff to the upload client, fixing dropped
-uploads on flaky networks" beats an auto-generated "Merged PR #123." But how you help
-depends entirely on the repo's release mechanism, and the common mistake is hand-writing
-notes that a bot then overwrites. **Detect the mechanism first**, then act:
+Detection-gated — skip the whole thing if the repo publishes no release notes. There are
+**two phases**: *before* merge you feed the release tooling; *after* the release is cut
+you enrich the published notes. Detect the mechanism once, up front:
 
 ```bash
 ls .changeset/ .release-please-manifest.json release-please-config.json 2>/dev/null
 grep -rilE 'release-please|semantic-release|changesets' .github/workflows 2>/dev/null
+gh release list --limit 1        # does the repo publish GitHub Releases at all?
 ls CHANGELOG.md HISTORY.md 2>/dev/null
 ```
 
-- **Automated from commits/PRs** (release-please, semantic-release, changesets — this
-  applies to many repos): the notes are generated from your **conventional-commit
-  messages and PR title/body**, not from a file you edit. Here the leverage is entirely
-  *before* merge — make the PR title a clean conventional summary (`feat(upload): retry
-  with backoff on network errors`) and write a body that reads well, since a squash merge
-  and the release bot pull from exactly that. Editing the generated `CHANGELOG.md`
-  directly is wasted work; the next release run overwrites it.
-- **Changesets specifically**: add a changeset file (`.changeset/<name>.md`) describing
-  the change in user-facing terms, rather than editing the changelog.
+### Phase A — before merge: feed the tooling (reference for step 8)
+
+You already hold the full context of what this PR did, so you're well placed to make its
+release note *useful* — "Add retry with backoff to the upload client, fixing dropped
+uploads on flaky networks" beats an auto-generated "Merged PR #123." The leverage is
+entirely pre-merge, and the common mistake is hand-writing notes a bot then overwrites:
+
+- **Automated from commits/PRs** (release-please, semantic-release, changesets): the notes
+  are generated from your **conventional-commit messages and PR title/body**, not a file
+  you edit. Make the PR title a clean conventional summary (`feat(upload): retry with
+  backoff on network errors`) and write a body that reads well — a squash merge and the
+  release bot pull from exactly that. Editing the generated `CHANGELOG.md` directly is
+  wasted work; the next release run overwrites it.
+- **Changesets specifically**: add a changeset file (`.changeset/<name>.md`) describing the
+  change in user-facing terms, rather than editing the changelog.
 - **Manually curated changelog** (a Keep-a-Changelog `CHANGELOG.md` with an `Unreleased`
   section and no bot): offer to add a short human-readable entry under `Unreleased` as a
   small commit on the branch before merge.
-- **No release notes at all**: skip this — don't introduce a changelog the repo never
-  asked for.
+- **No release notes at all**: skip — don't introduce a changelog the repo never asked for.
 
-Release notes are outward-facing, so **confirm the wording with the user before writing
-or committing** it, and match the repo's existing tone and entry format. If unsure which
-mechanism a repo uses, ask rather than guess — a wrong guess either gets overwritten or
-adds noise a maintainer has to clean up.
+### Phase B — after release: enrich the published notes (automatic)
+
+Auto-generated release notes are terse — release-please and friends build them from commit
+*subjects*, so a released version often reads as a bare one-liner. Because you hold the full
+context of what shipped, you can make the published GitHub Release genuinely useful, and
+doing so is **cheap and side-effect-free**: `gh release edit` rewrites the Release body in
+place — **no commit, no new tag, no version bump** (only `feat`/`fix` commits bump). So do
+this **automatically, without asking**, whenever a release you have context for is published.
+
+The trigger depends on the mechanism:
+
+- **A release publishes as part of your loop** — you merged a `chore: release X.Y.Z` PR
+  (release-please), or a `semantic-release` run tagged a version right after your merge. As
+  soon as the `vX.Y.Z` tag / GitHub Release exists, enrich it.
+- **A release will follow later** — you merged an ordinary feature PR into a release-please
+  repo, so no release is cut yet (a separate `chore: release` PR will be, later). You can't
+  enrich a release that doesn't exist; note that it happens when that release PR merges, and
+  if you're also driving that PR, enrich right after it publishes.
+
+To enrich: pull the auto-notes, rewrite them into grouped, plain-language highlights that
+say *what changed and why it matters*, keep the compare/footer link, and replace the body:
+
+```bash
+version=<X.Y.Z>; tag="v$version"
+gh release view "$tag" --json body -q .body          # read the auto-generated notes
+# draft richer notes from the PRs/commits in this release (group by theme, explain impact,
+# keep the "Full changelog: …/compare/…" link), write them to a file, then:
+gh release edit "$tag" --notes-file <path>
+```
+
+Stay faithful — summarize what actually shipped, don't invent features, and match the repo's
+existing tone. If `gh release edit` fails (permissions, no such release), report it and move
+on; enrichment is a nicety, never a blocker. The user can turn it off for a run ("leave the
+release notes alone").
 
 ## Common Mistakes
 
@@ -435,6 +468,7 @@ adds noise a maintainer has to clean up.
 - Merging while outdated or unresolved threads remain.
 - Leaving the user on the dead merged branch instead of checking out the default branch and deleting the local branch.
 - Hand-editing a generated `CHANGELOG.md` that the release bot will overwrite.
+- Leaving a published release's notes as the terse auto-generated one-liner when you have the context to enrich them (`gh release edit` is commit-free and bump-free — just do it).
 - Staging unrelated dirty files while fixing PR feedback.
 
 ## References
