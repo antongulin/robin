@@ -92,5 +92,8 @@ fixing and re-requesting, burning GitHub Actions minutes and free-model calls fo
 without converging.
 
 **Fix in the skill:** Cap the loop at 5 review passes. On the ceiling, fix remaining verified
-bugs, reply/resolve open threads, run the green-light gate, and merge. Most PRs converge in
-one or two passes; five is the hard stop.
+bugs, reply/resolve open threads, run the green-light gate, and then **stop and ask the user**
+whether to keep going or merge as-is — do not auto-merge or auto-loop past 5 on your own.
+(Note: pushing that last fix auto-triggers Robin again; that re-review is the current pass
+completing, not a licence to start a 6th round.) Most PRs converge in one or two passes; five
+is the hard stop.

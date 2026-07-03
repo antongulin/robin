@@ -125,8 +125,13 @@ Returns all required checks and their current state. Use as final confirmation b
 ## Merge
 
 ```bash
-gh pr merge <number> --merge --delete-branch
+# Pick the method the repo allows — --merge fails on a squash-only repo.
+gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed
+gh pr merge <number> --squash --delete-branch   # or --merge / --rebase per the repo
 ```
+
+`--delete-branch` removes both the local and remote branch and checks you out onto the
+base branch, so no manual `git branch -d` is needed.
 
 Confirm after merge:
 
