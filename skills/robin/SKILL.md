@@ -348,9 +348,15 @@ squash commit. Check first:
 gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed
 ```
 
-Choose the matching flag — `--squash`, `--merge`, or `--rebase`. If several are allowed,
-follow the repo's convention (release-please / changeset repos almost always squash); if
-still unsure, ask. Then merge, letting `gh` handle the branch:
+Choose the matching flag — `--squash`, `--merge`, or `--rebase`. **In a repo that
+auto-releases (release-please / semantic-release / changesets), prefer `--squash` even
+when merge commits are also allowed.** A merge commit embeds the (conventional) PR title
+in its own message, so the release tool counts it *and* the underlying commit — you get
+duplicate changelog entries. Squash collapses the PR to one commit whose subject is the
+PR title, which becomes exactly one clean release-note line. Only fall back to `--merge`
+when the individual commits are each meant to be their own changelog entry (rare, and
+usually a sign the PR should have been split). If still unsure, ask. Then merge, letting
+`gh` handle the branch:
 
 ```bash
 gh pr merge <number> --squash --delete-branch   # swap --squash for the allowed method

@@ -97,3 +97,16 @@ whether to keep going or merge as-is — do not auto-merge or auto-loop past 5 o
 (Note: pushing that last fix auto-triggers Robin again; that re-review is the current pass
 completing, not a licence to start a 6th round.) Most PRs converge in one or two passes; five
 is the hard stop.
+
+## Merge commits duplicated a release-please changelog entry
+
+**What happened:** A PR was merged with `--merge` into a release-please repo. The resulting
+release notes listed the same feature twice — once for the original `feat` commit, once for
+the merge commit, because the merge commit's message carried the conventional PR title and
+release-please parsed both.
+
+**Fix in the skill:** In an auto-releasing repo (release-please / semantic-release /
+changesets), **prefer `--squash`** even when merge commits are allowed. Squash collapses the
+PR into one commit whose subject is the PR title, yielding exactly one clean changelog line.
+Reserve `--merge` for the rare case where each underlying commit is deliberately its own
+release-note entry.
