@@ -107,7 +107,8 @@ jobs:
           set -euo pipefail
 
           number="${{ steps.release-pr.outputs.number }}"
-          gh pr merge "$number" --merge --delete-branch
+          # Repo is squash-only; --merge would be rejected by branch settings.
+          gh pr merge "$number" --squash --delete-branch
           merge_sha=$(gh pr view "$number" --json mergeCommit -q '.mergeCommit.oid')
 
           if [ -z "$merge_sha" ] || [ "$merge_sha" = "null" ]; then
