@@ -422,8 +422,10 @@ Auto-generated release notes are terse — release-please and friends build them
 *subjects*, so a released version often reads as a bare one-liner. Because you hold the full
 context of what shipped, you can make the published GitHub Release genuinely useful, and
 doing so is **cheap and side-effect-free**: `gh release edit` rewrites the Release body in
-place — **no commit, no new tag, no version bump** (only `feat`/`fix` commits bump). So do
-this **automatically, without asking**, whenever a release you have context for is published.
+place — **no commit, no new tag, no version bump** (only `feat`/`fix` commits bump), and
+because it edits in place it is fully reversible: a bad rewrite is one more `gh release edit`
+away. So do this **automatically, without asking**, whenever a release you have context for
+is published — unless the user has told you to leave release notes alone (see below).
 
 The trigger depends on the mechanism:
 
@@ -447,9 +449,12 @@ gh release edit "$tag" --notes-file <path>
 ```
 
 Stay faithful — summarize what actually shipped, don't invent features, and match the repo's
-existing tone. If `gh release edit` fails (permissions, no such release), report it and move
-on; enrichment is a nicety, never a blocker. The user can turn it off for a run ("leave the
-release notes alone").
+existing tone. A published release is outward-facing, so accuracy matters even though the
+edit is reversible. If `gh release edit` fails (permissions, no such release), report it and
+move on; enrichment is a nicety, never a blocker. This runs by default; a user who wants to
+review first can say so as a standing preference ("ask me before editing release notes" /
+"leave the release notes alone"), and you honor that over the default rather than prompting
+on every release.
 
 ## Common Mistakes
 
