@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.2](https://github.com/antongulin/robin/compare/v2.4.1...v2.4.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* grant actions:read for superseded-run detection ([#70](https://github.com/antongulin/robin/issues/70)) ([dc500e7](https://github.com/antongulin/robin/commit/dc500e7de51fc411932b2a8deecc8f93c0b014cc))
+
 ## [2.4.1](https://github.com/antongulin/robin/compare/v2.4.0...v2.4.1) (2026-07-08)
 
 
