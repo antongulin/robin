@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/antongulin/robin/compare/v2.2.0...v2.2.1) (2026-07-08)
+
+
+### Documentation
+
+* correct GitHub Actions free-minutes claim ([ec0cc02](https://github.com/antongulin/robin/commit/ec0cc020b6cb068f7be5f6e3c1a17e1da64a86b4))
+
 ## [2.2.0](https://github.com/antongulin/robin/compare/v2.1.1...v2.2.0) (2026-07-03)
 
 
