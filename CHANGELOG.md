@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/antongulin/robin/compare/v2.2.1...v2.3.0) (2026-07-08)
+
+
+### Features
+
+* configurable review event (request_changes vs comment) ([#61](https://github.com/antongulin/robin/issues/61)) ([03ad80d](https://github.com/antongulin/robin/commit/03ad80d2c9e400bc7239f255ce7cee380da96ba8))
+
 ## [2.2.1](https://github.com/antongulin/robin/compare/v2.2.0...v2.2.1) (2026-07-08)
 
 
