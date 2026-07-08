@@ -19,7 +19,7 @@ const die = (msg) => {
 };
 
 const ref = process.env.ROBIN_REF || "main";
-if (!/^[A-Za-z0-9._/-]+$/.test(ref)) die("Invalid ROBIN_REF: " + JSON.stringify(ref));
+if (!/^[A-Za-z0-9._/-]{1,100}$/.test(ref)) die("Invalid ROBIN_REF: " + JSON.stringify(ref));
 
 let root;
 try {
@@ -66,7 +66,7 @@ if (process.env.ROBIN_SKILL !== "0") {
   try {
     cp.execSync(
       'npx -y skills add https://github.com/antongulin/robin --skill robin --agent "*" --global --yes',
-      { stdio: "ignore" }
+      { stdio: "ignore", timeout: 180000 }
     );
     info('Robin chat skill installed (all agents). Say "review with Robin".');
   } catch {
