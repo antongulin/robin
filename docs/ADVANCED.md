@@ -78,9 +78,8 @@ jobs:
 
 - Keep the default flow: one review on PR open, then `/review` after fixes (do not enable `review-on-synchronize` unless you need it).
 - Use a smaller `max-diff-size` for huge PRs.
-- **Public repos:** standard GitHub-hosted runners are free with no monthly minute cap ([billing docs](https://docs.github.com/en/billing/concepts/product-billing/github-actions)).
-- **Private repos:** GitHub Free includes about **2,000 minutes/month**; GitHub Pro about **3,000 minutes/month** (limits can change — see GitHub billing for your account).
-- **Private repos (heavy usage):** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
+- **Free tier:** GitHub Free includes about **2,000 Actions minutes/month** for public and private repos; GitHub Pro about **3,000 minutes/month** (limits can change — see [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) for your account).
+- **Heavy usage:** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
 
 To use a self-hosted runner with the reusable workflow, pass `runner` as valid JSON. A single label is a JSON string; multiple labels are a JSON array.
 

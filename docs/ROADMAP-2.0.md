@@ -1,7 +1,7 @@
 # Robin 2.0 — Roadmap
 
 Goal: turn the strong v1.3 foundation into a standout, contribution-ready OSS code
-reviewer that runs at $0 (BYOK + free OpenRouter + free GitHub Actions minutes),
+reviewer that runs at $0 (BYOK + free OpenRouter + GitHub's free Actions minutes),
 stays robust even when a weak free model is randomly routed, and is invokable by
 any agent from plain chat ("review this PR with Robin").
 

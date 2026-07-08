@@ -69,8 +69,7 @@ The easiest free setup uses [OpenRouter](https://openrouter.ai/):
 > [!TIP]
 > `openrouter/free` picks a free model for each review — **$0 from OpenRouter**. OpenRouter rotates which model runs; **leave this secret as `openrouter/free`** — the action retries and uses provider fallbacks when a route is temporarily unavailable. You only spend [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) minutes while the job runs (often a few minutes per review).
 >
-> - **Public repos:** standard GitHub-hosted runners are free with no monthly minute cap.
-> - **Private repos:** GitHub Free includes about **2,000 minutes/month**; [GitHub Pro](https://docs.github.com/en/billing/concepts/product-billing/github-actions) includes about **3,000 minutes/month** (check your plan for current limits).
+> GitHub Free includes about **2,000 Actions minutes/month** (public and private repos); [GitHub Pro](https://docs.github.com/en/billing/concepts/product-billing/github-actions) includes about **3,000 minutes/month** (check your plan for current limits). Reviews usually take a few minutes each.
 
 Other providers (OpenAI, Groq, Ollama, etc.) work too. See [Supported providers](#supported-providers) or [docs/ADVANCED.md](docs/ADVANCED.md).
 
