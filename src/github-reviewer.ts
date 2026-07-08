@@ -2,6 +2,9 @@ import { Octokit } from "@octokit/rest";
 import * as core from "@actions/core";
 import { StructuredReview, ReviewFinding } from "./review-parser";
 
+/** Marker present in every Robin review body; used to recognize Robin's own reviews. */
+export const ROBIN_SIGNATURE = ":bow_and_arrow: Robin";
+
 export class GitHubReviewer {
   private octokit: Octokit;
   private maxComments: number;
@@ -14,6 +17,57 @@ export class GitHubReviewer {
   /** COMMENT unless a High finding exists AND request-changes is enabled (gatekeeper mode). */
   static resolveReviewEvent(hasHigh: boolean, requestChanges: boolean): "REQUEST_CHANGES" | "COMMENT" {
     return hasHigh && requestChanges ? "REQUEST_CHANGES" : "COMMENT";
+  }
+
+  /** A prior Robin CHANGES_REQUESTED review that a newly posted review supersedes. */
+  static isStaleRobinReview(
+    review: { id: number; state?: string; body?: string | null; user?: { type?: string } | null },
+    newReviewId: number
+  ): boolean {
+    return (
+      review.id !== newReviewId &&
+      review.state === "CHANGES_REQUESTED" &&
+      review.user?.type === "Bot" &&
+      (review.body || "").includes(ROBIN_SIGNATURE)
+    );
+  }
+
+  /**
+   * Dismiss earlier Robin CHANGES_REQUESTED reviews so a stale blocking review
+   * from a previous (possibly cancelled) run doesn't keep gating the PR.
+   */
+  private async dismissStaleRobinReviews(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    newReviewId: number
+  ): Promise<void> {
+    try {
+      const reviews = await this.octokit.paginate(this.octokit.rest.pulls.listReviews, {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: 100,
+      });
+
+      for (const review of reviews) {
+        if (!GitHubReviewer.isStaleRobinReview(review, newReviewId)) continue;
+        try {
+          await this.octokit.rest.pulls.dismissReview({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            review_id: review.id,
+            message: "Superseded by a newer Robin review.",
+          });
+          core.info("Dismissed stale Robin review #" + review.id);
+        } catch (error) {
+          core.warning("Could not dismiss stale Robin review #" + review.id + ": " + error);
+        }
+      }
+    } catch (error) {
+      core.warning("Could not check for stale Robin reviews: " + error);
+    }
   }
 
   async postReview(
@@ -78,6 +132,8 @@ export class GitHubReviewer {
       core.info(
         "Posted review #" + review.id + " with " + postedInlineComments + " individual line comments"
       );
+
+      await this.dismissStaleRobinReviews(owner, repo, pullNumber, review.id);
 
     } catch (error) {
       core.error("Failed to post review: " + error);
@@ -198,7 +254,7 @@ export class GitHubReviewer {
   private buildReviewBody(findings: StructuredReview, postedFindings: Set<ReviewFinding>): string {
     const parts: string[] = [];
 
-    parts.push("## :bow_and_arrow: Robin");
+    parts.push("## " + ROBIN_SIGNATURE);
     parts.push("");
     parts.push(
       "> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass."

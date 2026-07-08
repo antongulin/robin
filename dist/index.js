@@ -306,8 +306,10 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GitHubReviewer = void 0;
+exports.GitHubReviewer = exports.ROBIN_SIGNATURE = void 0;
 const core = __importStar(__nccwpck_require__(7484));
+/** Marker present in every Robin review body; used to recognize Robin's own reviews. */
+exports.ROBIN_SIGNATURE = ":bow_and_arrow: Robin";
 class GitHubReviewer {
     octokit;
     maxComments;
@@ -318,6 +320,47 @@ class GitHubReviewer {
     /** COMMENT unless a High finding exists AND request-changes is enabled (gatekeeper mode). */
     static resolveReviewEvent(hasHigh, requestChanges) {
         return hasHigh && requestChanges ? "REQUEST_CHANGES" : "COMMENT";
+    }
+    /** A prior Robin CHANGES_REQUESTED review that a newly posted review supersedes. */
+    static isStaleRobinReview(review, newReviewId) {
+        return (review.id !== newReviewId &&
+            review.state === "CHANGES_REQUESTED" &&
+            review.user?.type === "Bot" &&
+            (review.body || "").includes(exports.ROBIN_SIGNATURE));
+    }
+    /**
+     * Dismiss earlier Robin CHANGES_REQUESTED reviews so a stale blocking review
+     * from a previous (possibly cancelled) run doesn't keep gating the PR.
+     */
+    async dismissStaleRobinReviews(owner, repo, pullNumber, newReviewId) {
+        try {
+            const reviews = await this.octokit.paginate(this.octokit.rest.pulls.listReviews, {
+                owner,
+                repo,
+                pull_number: pullNumber,
+                per_page: 100,
+            });
+            for (const review of reviews) {
+                if (!GitHubReviewer.isStaleRobinReview(review, newReviewId))
+                    continue;
+                try {
+                    await this.octokit.rest.pulls.dismissReview({
+                        owner,
+                        repo,
+                        pull_number: pullNumber,
+                        review_id: review.id,
+                        message: "Superseded by a newer Robin review.",
+                    });
+                    core.info("Dismissed stale Robin review #" + review.id);
+                }
+                catch (error) {
+                    core.warning("Could not dismiss stale Robin review #" + review.id + ": " + error);
+                }
+            }
+        }
+        catch (error) {
+            core.warning("Could not check for stale Robin reviews: " + error);
+        }
     }
     async postReview(owner, repo, pullNumber, findings, requestChanges = true) {
         try {
@@ -365,6 +408,7 @@ class GitHubReviewer {
                 postedInlineComments = 0;
             }
             core.info("Posted review #" + review.id + " with " + postedInlineComments + " individual line comments");
+            await this.dismissStaleRobinReviews(owner, repo, pullNumber, review.id);
         }
         catch (error) {
             core.error("Failed to post review: " + error);
@@ -452,7 +496,7 @@ class GitHubReviewer {
      */
     buildReviewBody(findings, postedFindings) {
         const parts = [];
-        parts.push("## :bow_and_arrow: Robin");
+        parts.push("## " + exports.ROBIN_SIGNATURE);
         parts.push("");
         parts.push("> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass.");
         parts.push("");
@@ -1044,7 +1088,16 @@ async function run() {
         statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, statusModel);
         onJobCancelled = async () => {
             if (octokit && statusCommentId) {
-                await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildCancelledStatusBody(statusCommand));
+                // The SIGTERM grace period is short — never let the superseded check
+                // delay the status update past it. On timeout the check is abandoned
+                // fire-and-forget; its own try/catch swallows any late rejection.
+                const superseded = await Promise.race([
+                    isSupersededByNewerRun(octokit, statusOwner, statusRepo),
+                    new Promise((resolve) => setTimeout(() => resolve(false), 3000).unref()),
+                ]);
+                await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, superseded
+                    ? buildSupersededStatusBody(statusCommand)
+                    : buildCancelledStatusBody(statusCommand));
             }
         };
         registerJobCancelHandler(async () => {
@@ -1111,7 +1164,7 @@ async function run() {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: ["## :bow_and_arrow: Robin · Summary", "", reviewText].join("\n"),
+                body: ["## " + github_reviewer_1.ROBIN_SIGNATURE + " · Summary", "", reviewText].join("\n"),
             });
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
         }
@@ -1171,7 +1224,7 @@ async function postStatusComment(octokit, owner, repo, issueNumber, command, mod
             repo,
             issue_number: issueNumber,
             body: [
-                "## :bow_and_arrow: Robin",
+                "## " + github_reviewer_1.ROBIN_SIGNATURE,
                 "",
                 ":eyes: On it — taking a look at this pull request.",
                 "",
@@ -1204,7 +1257,7 @@ async function updateStatusComment(octokit, owner, repo, commentId, body) {
 function buildCompletedStatusBody(command, findings) {
     if (command === "summary") {
         return [
-            "## :bow_and_arrow: Robin",
+            "## " + github_reviewer_1.ROBIN_SIGNATURE,
             "",
             ":white_check_mark: Summary's ready above.",
             "",
@@ -1218,7 +1271,7 @@ function buildCompletedStatusBody(command, findings) {
         ? "Nothing worth flagging — looks clean to me."
         : `I flagged ${totalFindings} thing${totalFindings === 1 ? "" : "s"} worth a look.`;
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         `:white_check_mark: Review done. ${result}`,
         "",
@@ -1229,7 +1282,7 @@ function buildSkippedFilterStatusBody(removedFiles) {
     const preview = removedFiles.slice(0, 8).join(", ");
     const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         ":white_check_mark: Nothing to review here — only ignored paths changed.",
         "",
@@ -1240,7 +1293,7 @@ function buildSkippedFilterStatusBody(removedFiles) {
 }
 function buildFailedStatusBody(errorMessage, command) {
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         `:warning: I couldn't finish the ${command === "summary" ? "summary" : "review"} this time.`,
         "",
@@ -1251,7 +1304,7 @@ function buildFailedStatusBody(errorMessage, command) {
 }
 function buildProgressStatusBody(detail, command, model) {
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         ":hourglass_flowing_sand: Still working on this pull request.",
         "",
@@ -1261,9 +1314,53 @@ function buildProgressStatusBody(detail, command, model) {
         `Model: ${model}`,
     ].join("\n");
 }
+/**
+ * True when a newer run of this same workflow is queued or in progress —
+ * i.e. this run was cancelled by concurrency `cancel-in-progress`, not by a
+ * human or a timeout. Best-effort: any API failure returns false.
+ * Note: may match a newer run on a different PR; acceptable — it only
+ * softens the wording of a cancel notice. Upgrade to per-PR matching if needed.
+ */
+async function isSupersededByNewerRun(octokit, owner, repo) {
+    try {
+        const runId = Number(process.env.GITHUB_RUN_ID);
+        if (!runId)
+            return false;
+        const { data: currentRun } = await octokit.rest.actions.getWorkflowRun({
+            owner,
+            repo,
+            run_id: runId,
+        });
+        const results = await Promise.all(["queued", "in_progress"].map((status) => octokit.rest.actions.listWorkflowRuns({
+            owner,
+            repo,
+            workflow_id: currentRun.workflow_id,
+            status,
+            per_page: 30,
+        })));
+        for (const { data } of results) {
+            if (data.workflow_runs.some((run) => run.id !== runId && run.run_number > currentRun.run_number)) {
+                return true;
+            }
+        }
+    }
+    catch (error) {
+        core.warning(`Could not check for a superseding run: ${error}`);
+    }
+    return false;
+}
+function buildSupersededStatusBody(command) {
+    return [
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
+        "",
+        `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run.`,
+        "",
+        "No action needed — the newer run posts its own result when it finishes.",
+    ].join("\n");
+}
 function buildCancelledStatusBody(command) {
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         `:warning: The ${command === "summary" ? "summary" : "review"} was interrupted before it finished.`,
         "",

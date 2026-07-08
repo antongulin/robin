@@ -4,7 +4,7 @@ import { LLMClient } from "./llm-client";
 import { GitUtils } from "./git-utils";
 import { ReviewParser, StructuredReview } from "./review-parser";
 import { shouldRetryStructuredReview } from "./review-retry";
-import { GitHubReviewer } from "./github-reviewer";
+import { GitHubReviewer, ROBIN_SIGNATURE } from "./github-reviewer";
 import { DEFAULT_LLM_TIMEOUT_MS, parseLLMTimeout } from "./config";
 import { filterDiff, splitDiffIntoFiles } from "./diff-filter";
 import { annotateDiffWithLineNumbers } from "./diff-annotate";
@@ -141,12 +141,21 @@ async function run(): Promise<void> {
     statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, statusModel);
     onJobCancelled = async () => {
       if (octokit && statusCommentId) {
+        // The SIGTERM grace period is short — never let the superseded check
+        // delay the status update past it. On timeout the check is abandoned
+        // fire-and-forget; its own try/catch swallows any late rejection.
+        const superseded = await Promise.race([
+          isSupersededByNewerRun(octokit, statusOwner, statusRepo),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000).unref()),
+        ]);
         await updateStatusComment(
           octokit,
           statusOwner,
           statusRepo,
           statusCommentId,
-          buildCancelledStatusBody(statusCommand)
+          superseded
+            ? buildSupersededStatusBody(statusCommand)
+            : buildCancelledStatusBody(statusCommand)
         );
       }
     };
@@ -276,7 +285,7 @@ async function run(): Promise<void> {
         owner,
         repo,
         issue_number: prNumber,
-        body: ["## :bow_and_arrow: Robin · Summary", "", reviewText].join("\n"),
+        body: ["## " + ROBIN_SIGNATURE + " · Summary", "", reviewText].join("\n"),
       });
       await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
     } else {
@@ -369,7 +378,7 @@ async function postStatusComment(
       repo,
       issue_number: issueNumber,
       body: [
-        "## :bow_and_arrow: Robin",
+        "## " + ROBIN_SIGNATURE,
         "",
         ":eyes: On it — taking a look at this pull request.",
         "",
@@ -408,7 +417,7 @@ async function updateStatusComment(
 function buildCompletedStatusBody(command: "review" | "summary", findings?: StructuredReview): string {
   if (command === "summary") {
     return [
-      "## :bow_and_arrow: Robin",
+      "## " + ROBIN_SIGNATURE,
       "",
       ":white_check_mark: Summary's ready above.",
       "",
@@ -424,7 +433,7 @@ function buildCompletedStatusBody(command: "review" | "summary", findings?: Stru
     : `I flagged ${totalFindings} thing${totalFindings === 1 ? "" : "s"} worth a look.`;
 
   return [
-    "## :bow_and_arrow: Robin",
+    "## " + ROBIN_SIGNATURE,
     "",
     `:white_check_mark: Review done. ${result}`,
     "",
@@ -437,7 +446,7 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
   const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
 
   return [
-    "## :bow_and_arrow: Robin",
+    "## " + ROBIN_SIGNATURE,
     "",
     ":white_check_mark: Nothing to review here — only ignored paths changed.",
     "",
@@ -449,7 +458,7 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
 
 function buildFailedStatusBody(errorMessage: string, command: "review" | "summary"): string {
   return [
-    "## :bow_and_arrow: Robin",
+    "## " + ROBIN_SIGNATURE,
     "",
     `:warning: I couldn't finish the ${command === "summary" ? "summary" : "review"} this time.`,
     "",
@@ -465,7 +474,7 @@ function buildProgressStatusBody(
   model: string
 ): string {
   return [
-    "## :bow_and_arrow: Robin",
+    "## " + ROBIN_SIGNATURE,
     "",
     ":hourglass_flowing_sand: Still working on this pull request.",
     "",
@@ -476,9 +485,59 @@ function buildProgressStatusBody(
   ].join("\n");
 }
 
+/**
+ * True when a newer run of this same workflow is queued or in progress —
+ * i.e. this run was cancelled by concurrency `cancel-in-progress`, not by a
+ * human or a timeout. Best-effort: any API failure returns false.
+ * Note: may match a newer run on a different PR; acceptable — it only
+ * softens the wording of a cancel notice. Upgrade to per-PR matching if needed.
+ */
+async function isSupersededByNewerRun(octokit: any, owner: string, repo: string): Promise<boolean> {
+  try {
+    const runId = Number(process.env.GITHUB_RUN_ID);
+    if (!runId) return false;
+
+    const { data: currentRun } = await octokit.rest.actions.getWorkflowRun({
+      owner,
+      repo,
+      run_id: runId,
+    });
+
+    const results = await Promise.all(
+      (["queued", "in_progress"] as const).map((status) =>
+        octokit.rest.actions.listWorkflowRuns({
+          owner,
+          repo,
+          workflow_id: currentRun.workflow_id,
+          status,
+          per_page: 30,
+        })
+      )
+    );
+    for (const { data } of results) {
+      if (data.workflow_runs.some((run: any) => run.id !== runId && run.run_number > currentRun.run_number)) {
+        return true;
+      }
+    }
+  } catch (error) {
+    core.warning(`Could not check for a superseding run: ${error}`);
+  }
+  return false;
+}
+
+function buildSupersededStatusBody(command: "review" | "summary"): string {
+  return [
+    "## " + ROBIN_SIGNATURE,
+    "",
+    `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run.`,
+    "",
+    "No action needed — the newer run posts its own result when it finishes.",
+  ].join("\n");
+}
+
 function buildCancelledStatusBody(command: "review" | "summary"): string {
   return [
-    "## :bow_and_arrow: Robin",
+    "## " + ROBIN_SIGNATURE,
     "",
     `:warning: The ${command === "summary" ? "summary" : "review"} was interrupted before it finished.`,
     "",
