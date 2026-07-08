@@ -41,6 +41,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      actions: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_PENDING_LABEL: "autorelease: pending"
@@ -221,3 +222,10 @@ jobs:
             echo "Failed to $label_action on release PR #$number." >&2
             exit 1
           fi
+
+      # Releases created with GITHUB_TOKEN don't trigger `release:` workflows
+      # (GitHub recursion guard). workflow_dispatch is exempt, so kick off the
+      # npm publish explicitly.
+      - name: Dispatch npm publish
+        shell: bash
+        run: gh workflow run publish.yml --ref main
