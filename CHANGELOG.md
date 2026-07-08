@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/antongulin/robin/compare/v2.3.0...v2.3.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* superseded-run cancel notice and dismiss stale Robin reviews ([#63](https://github.com/antongulin/robin/issues/63)) ([f8160a6](https://github.com/antongulin/robin/commit/f8160a6bc974483820affe0b43306c4299009c79))
+
 ## [2.3.0](https://github.com/antongulin/robin/compare/v2.2.1...v2.3.0) (2026-07-08)
 
 
