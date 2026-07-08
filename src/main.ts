@@ -142,7 +142,8 @@ async function run(): Promise<void> {
     onJobCancelled = async () => {
       if (octokit && statusCommentId) {
         // The SIGTERM grace period is short — never let the superseded check
-        // delay the status update past it.
+        // delay the status update past it. On timeout the check is abandoned
+        // fire-and-forget; its own try/catch swallows any late rejection.
         const superseded = await Promise.race([
           isSupersededByNewerRun(octokit, statusOwner, statusRepo),
           new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000).unref()),
@@ -502,14 +503,18 @@ async function isSupersededByNewerRun(octokit: any, owner: string, repo: string)
       run_id: runId,
     });
 
-    for (const status of ["queued", "in_progress"] as const) {
-      const { data } = await octokit.rest.actions.listWorkflowRuns({
-        owner,
-        repo,
-        workflow_id: currentRun.workflow_id,
-        status,
-        per_page: 30,
-      });
+    const results = await Promise.all(
+      (["queued", "in_progress"] as const).map((status) =>
+        octokit.rest.actions.listWorkflowRuns({
+          owner,
+          repo,
+          workflow_id: currentRun.workflow_id,
+          status,
+          per_page: 30,
+        })
+      )
+    );
+    for (const { data } of results) {
       if (data.workflow_runs.some((run: any) => run.id !== runId && run.run_number > currentRun.run_number)) {
         return true;
       }
