@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/antongulin/robin/compare/v2.4.0...v2.4.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* dispatch npm publish after auto-release ([#68](https://github.com/antongulin/robin/issues/68)) ([59ba4fa](https://github.com/antongulin/robin/commit/59ba4fa9dfd4b6246596d7b814c2988cb0da775a))
+
 ## [2.4.0](https://github.com/antongulin/robin/compare/v2.3.1...v2.4.0) (2026-07-08)
 
 
