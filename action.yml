@@ -25,7 +25,7 @@ inputs:
     required: false
     default: "false"
   request-changes:
-    description: "If true (default), a high severity finding submits a blocking REQUEST_CHANGES review. Set to false to always post as a non-blocking COMMENT (advisor mode). Leave empty to use the repo config default."
+    description: "Whether a high severity finding submits a blocking REQUEST_CHANGES review. true posts REQUEST_CHANGES; false always posts a non-blocking COMMENT (advisor mode). Leave empty to use the repo config, which defaults to true."
     required: false
     default: ""
   max-diff-size:

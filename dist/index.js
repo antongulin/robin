@@ -1604,6 +1604,7 @@ function parseRepoConfigYaml(text) {
         const requestChangesMatch = trimmed.match(/^request-changes:\s*(true|false)\s*$/i);
         if (requestChangesMatch) {
             config.requestChanges = requestChangesMatch[1].toLowerCase() === "true";
+            continue;
         }
     }
     return config;

@@ -57,6 +57,7 @@ export function parseRepoConfigYaml(text: string): RepoConfig {
     const requestChangesMatch = trimmed.match(/^request-changes:\s*(true|false)\s*$/i);
     if (requestChangesMatch) {
       config.requestChanges = requestChangesMatch[1].toLowerCase() === "true";
+      continue;
     }
   }
 
