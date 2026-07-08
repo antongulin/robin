@@ -62,6 +62,7 @@ on:
         required: true
 
 permissions:
+  actions: read # lets Robin detect when a cancelled run was superseded by a newer one
   contents: read
   pull-requests: write
 
@@ -88,7 +89,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Robin
-        uses: ./
+        uses: antongulin/robin@main
         with:
           github-token: ${{ github.token }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}

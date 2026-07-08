@@ -16,6 +16,7 @@ jobs:
        (startsWith(github.event.comment.body, '/review') ||
         startsWith(github.event.comment.body, '/robin')))
     permissions:
+      actions: read # lets Robin detect when a cancelled run was superseded by a newer one
       pull-requests: write
       contents: read
 
