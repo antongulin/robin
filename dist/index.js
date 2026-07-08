@@ -1087,7 +1087,12 @@ async function run() {
         statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, statusModel);
         onJobCancelled = async () => {
             if (octokit && statusCommentId) {
-                const superseded = await isSupersededByNewerRun(octokit, statusOwner, statusRepo);
+                // The SIGTERM grace period is short — never let the superseded check
+                // delay the status update past it.
+                const superseded = await Promise.race([
+                    isSupersededByNewerRun(octokit, statusOwner, statusRepo),
+                    new Promise((resolve) => setTimeout(() => resolve(false), 3000).unref()),
+                ]);
                 await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, superseded
                     ? buildSupersededStatusBody(statusCommand)
                     : buildCancelledStatusBody(statusCommand));
@@ -1157,7 +1162,7 @@ async function run() {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: ["## :bow_and_arrow: Robin · Summary", "", reviewText].join("\n"),
+                body: ["## " + github_reviewer_1.ROBIN_SIGNATURE + " · Summary", "", reviewText].join("\n"),
             });
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary"));
         }
@@ -1217,7 +1222,7 @@ async function postStatusComment(octokit, owner, repo, issueNumber, command, mod
             repo,
             issue_number: issueNumber,
             body: [
-                "## :bow_and_arrow: Robin",
+                "## " + github_reviewer_1.ROBIN_SIGNATURE,
                 "",
                 ":eyes: On it — taking a look at this pull request.",
                 "",
@@ -1250,7 +1255,7 @@ async function updateStatusComment(octokit, owner, repo, commentId, body) {
 function buildCompletedStatusBody(command, findings) {
     if (command === "summary") {
         return [
-            "## :bow_and_arrow: Robin",
+            "## " + github_reviewer_1.ROBIN_SIGNATURE,
             "",
             ":white_check_mark: Summary's ready above.",
             "",
@@ -1264,7 +1269,7 @@ function buildCompletedStatusBody(command, findings) {
         ? "Nothing worth flagging — looks clean to me."
         : `I flagged ${totalFindings} thing${totalFindings === 1 ? "" : "s"} worth a look.`;
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         `:white_check_mark: Review done. ${result}`,
         "",
@@ -1275,7 +1280,7 @@ function buildSkippedFilterStatusBody(removedFiles) {
     const preview = removedFiles.slice(0, 8).join(", ");
     const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         ":white_check_mark: Nothing to review here — only ignored paths changed.",
         "",
@@ -1286,7 +1291,7 @@ function buildSkippedFilterStatusBody(removedFiles) {
 }
 function buildFailedStatusBody(errorMessage, command) {
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         `:warning: I couldn't finish the ${command === "summary" ? "summary" : "review"} this time.`,
         "",
@@ -1297,7 +1302,7 @@ function buildFailedStatusBody(errorMessage, command) {
 }
 function buildProgressStatusBody(detail, command, model) {
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         ":hourglass_flowing_sand: Still working on this pull request.",
         "",
@@ -1344,7 +1349,7 @@ async function isSupersededByNewerRun(octokit, owner, repo) {
 }
 function buildSupersededStatusBody(command) {
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run on this pull request.`,
         "",
@@ -1353,7 +1358,7 @@ function buildSupersededStatusBody(command) {
 }
 function buildCancelledStatusBody(command) {
     return [
-        "## :bow_and_arrow: Robin",
+        "## " + github_reviewer_1.ROBIN_SIGNATURE,
         "",
         `:warning: The ${command === "summary" ? "summary" : "review"} was interrupted before it finished.`,
         "",
