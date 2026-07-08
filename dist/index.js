@@ -306,8 +306,10 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GitHubReviewer = void 0;
+exports.GitHubReviewer = exports.ROBIN_SIGNATURE = void 0;
 const core = __importStar(__nccwpck_require__(7484));
+/** Marker present in every Robin review body; used to recognize Robin's own reviews. */
+exports.ROBIN_SIGNATURE = ":bow_and_arrow: Robin";
 class GitHubReviewer {
     octokit;
     maxComments;
@@ -323,7 +325,7 @@ class GitHubReviewer {
     static isStaleRobinReview(review, newReviewId) {
         return (review.id !== newReviewId &&
             review.state === "CHANGES_REQUESTED" &&
-            (review.body || "").includes(":bow_and_arrow: Robin"));
+            (review.body || "").includes(exports.ROBIN_SIGNATURE));
     }
     /**
      * Dismiss earlier Robin CHANGES_REQUESTED reviews so a stale blocking review
@@ -493,7 +495,7 @@ class GitHubReviewer {
      */
     buildReviewBody(findings, postedFindings) {
         const parts = [];
-        parts.push("## :bow_and_arrow: Robin");
+        parts.push("## " + exports.ROBIN_SIGNATURE);
         parts.push("");
         parts.push("> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass.");
         parts.push("");

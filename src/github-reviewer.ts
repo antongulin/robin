@@ -2,6 +2,9 @@ import { Octokit } from "@octokit/rest";
 import * as core from "@actions/core";
 import { StructuredReview, ReviewFinding } from "./review-parser";
 
+/** Marker present in every Robin review body; used to recognize Robin's own reviews. */
+export const ROBIN_SIGNATURE = ":bow_and_arrow: Robin";
+
 export class GitHubReviewer {
   private octokit: Octokit;
   private maxComments: number;
@@ -24,7 +27,7 @@ export class GitHubReviewer {
     return (
       review.id !== newReviewId &&
       review.state === "CHANGES_REQUESTED" &&
-      (review.body || "").includes(":bow_and_arrow: Robin")
+      (review.body || "").includes(ROBIN_SIGNATURE)
     );
   }
 
@@ -250,7 +253,7 @@ export class GitHubReviewer {
   private buildReviewBody(findings: StructuredReview, postedFindings: Set<ReviewFinding>): string {
     const parts: string[] = [];
 
-    parts.push("## :bow_and_arrow: Robin");
+    parts.push("## " + ROBIN_SIGNATURE);
     parts.push("");
     parts.push(
       "> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass."

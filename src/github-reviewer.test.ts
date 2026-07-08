@@ -28,6 +28,29 @@ describe("GitHubReviewer", () => {
     expect(GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: null }, 2)).toBe(false);
   });
 
+  it("dismisses only stale Robin CHANGES_REQUESTED reviews after posting", async () => {
+    const robinBody = "## :bow_and_arrow: Robin\n\nfindings…";
+    const reviews = [
+      { id: 10, state: "CHANGES_REQUESTED", body: robinBody }, // stale — dismiss
+      { id: 11, state: "COMMENTED", body: robinBody }, // non-blocking — keep
+      { id: 12, state: "CHANGES_REQUESTED", body: "human review" }, // human — keep
+      { id: 20, state: "CHANGES_REQUESTED", body: robinBody }, // the new review itself
+    ];
+    const dismissReview = jest.fn().mockResolvedValue({});
+    const octokit = {
+      paginate: jest.fn().mockResolvedValue(reviews),
+      rest: { pulls: { listReviews: {}, dismissReview } },
+    };
+
+    const reviewer = new GitHubReviewer(octokit as any);
+    await (reviewer as any).dismissStaleRobinReviews("o", "r", 1, 20);
+
+    expect(dismissReview).toHaveBeenCalledTimes(1);
+    expect(dismissReview).toHaveBeenCalledWith(
+      expect.objectContaining({ review_id: 10, pull_number: 1 })
+    );
+  });
+
   it("detects new-file line numbers present in the diff", () => {
     const reviewer = new GitHubReviewer({} as any);
     const isLineInNewDiff = (reviewer as any).isLineInNewDiff.bind(reviewer) as (
