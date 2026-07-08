@@ -488,6 +488,8 @@ function buildProgressStatusBody(
 /**
  * True when a newer run of this same workflow exists — i.e. this run was
  * cancelled by concurrency `cancel-in-progress`, not by a human or a timeout.
+ * Note: runs are matched per workflow, not per PR — a newer run on a different
+ * PR can also count. Acceptable: this only softens the cancel-notice wording.
  * Best-effort: any API failure returns false.
  */
 async function isSupersededByNewerRun(octokit: any, owner: string, repo: string): Promise<boolean> {
