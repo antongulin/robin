@@ -141,12 +141,15 @@ async function run(): Promise<void> {
     statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, statusModel);
     onJobCancelled = async () => {
       if (octokit && statusCommentId) {
+        const superseded = await isSupersededByNewerRun(octokit, statusOwner, statusRepo);
         await updateStatusComment(
           octokit,
           statusOwner,
           statusRepo,
           statusCommentId,
-          buildCancelledStatusBody(statusCommand)
+          superseded
+            ? buildSupersededStatusBody(statusCommand)
+            : buildCancelledStatusBody(statusCommand)
         );
       }
     };
@@ -473,6 +476,52 @@ function buildProgressStatusBody(
     "",
     `Mode: ${command === "summary" ? "summary" : "code review"}`,
     `Model: ${model}`,
+  ].join("\n");
+}
+
+/**
+ * True when a newer run of this same workflow is queued or in progress —
+ * i.e. this run was cancelled by concurrency `cancel-in-progress`, not by a
+ * human or a timeout. Best-effort: any API failure returns false.
+ * ponytail: may match a newer run on a different PR; acceptable — it only
+ * softens the wording of a cancel notice, upgrade to per-PR matching if needed.
+ */
+async function isSupersededByNewerRun(octokit: any, owner: string, repo: string): Promise<boolean> {
+  try {
+    const runId = Number(process.env.GITHUB_RUN_ID);
+    if (!runId) return false;
+
+    const { data: currentRun } = await octokit.rest.actions.getWorkflowRun({
+      owner,
+      repo,
+      run_id: runId,
+    });
+
+    for (const status of ["queued", "in_progress"] as const) {
+      const { data } = await octokit.rest.actions.listWorkflowRuns({
+        owner,
+        repo,
+        workflow_id: currentRun.workflow_id,
+        status,
+        per_page: 30,
+      });
+      if (data.workflow_runs.some((run: any) => run.id !== runId && run.run_number > currentRun.run_number)) {
+        return true;
+      }
+    }
+  } catch (error) {
+    core.warning(`Could not check for a superseding run: ${error}`);
+  }
+  return false;
+}
+
+function buildSupersededStatusBody(command: "review" | "summary"): string {
+  return [
+    "## :bow_and_arrow: Robin",
+    "",
+    `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run on this pull request.`,
+    "",
+    "No action needed — the newer run's comment below has the result.",
   ].join("\n");
 }
 

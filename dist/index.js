@@ -319,6 +319,46 @@ class GitHubReviewer {
     static resolveReviewEvent(hasHigh, requestChanges) {
         return hasHigh && requestChanges ? "REQUEST_CHANGES" : "COMMENT";
     }
+    /** A prior Robin CHANGES_REQUESTED review that a newly posted review supersedes. */
+    static isStaleRobinReview(review, newReviewId) {
+        return (review.id !== newReviewId &&
+            review.state === "CHANGES_REQUESTED" &&
+            (review.body || "").includes(":bow_and_arrow: Robin"));
+    }
+    /**
+     * Dismiss earlier Robin CHANGES_REQUESTED reviews so a stale blocking review
+     * from a previous (possibly cancelled) run doesn't keep gating the PR.
+     */
+    async dismissStaleRobinReviews(owner, repo, pullNumber, newReviewId) {
+        try {
+            const reviews = await this.octokit.paginate(this.octokit.rest.pulls.listReviews, {
+                owner,
+                repo,
+                pull_number: pullNumber,
+                per_page: 100,
+            });
+            for (const review of reviews) {
+                if (!GitHubReviewer.isStaleRobinReview(review, newReviewId))
+                    continue;
+                try {
+                    await this.octokit.rest.pulls.dismissReview({
+                        owner,
+                        repo,
+                        pull_number: pullNumber,
+                        review_id: review.id,
+                        message: "Superseded by a newer Robin review.",
+                    });
+                    core.info("Dismissed stale Robin review #" + review.id);
+                }
+                catch (error) {
+                    core.warning("Could not dismiss stale Robin review #" + review.id + ": " + error);
+                }
+            }
+        }
+        catch (error) {
+            core.warning("Could not check for stale Robin reviews: " + error);
+        }
+    }
     async postReview(owner, repo, pullNumber, findings, requestChanges = true) {
         try {
             core.info("Posting review to PR #" + pullNumber + "...");
@@ -365,6 +405,7 @@ class GitHubReviewer {
                 postedInlineComments = 0;
             }
             core.info("Posted review #" + review.id + " with " + postedInlineComments + " individual line comments");
+            await this.dismissStaleRobinReviews(owner, repo, pullNumber, review.id);
         }
         catch (error) {
             core.error("Failed to post review: " + error);
@@ -1044,7 +1085,10 @@ async function run() {
         statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, statusModel);
         onJobCancelled = async () => {
             if (octokit && statusCommentId) {
-                await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildCancelledStatusBody(statusCommand));
+                const superseded = await isSupersededByNewerRun(octokit, statusOwner, statusRepo);
+                await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, superseded
+                    ? buildSupersededStatusBody(statusCommand)
+                    : buildCancelledStatusBody(statusCommand));
             }
         };
         registerJobCancelHandler(async () => {
@@ -1259,6 +1303,50 @@ function buildProgressStatusBody(detail, command, model) {
         "",
         `Mode: ${command === "summary" ? "summary" : "code review"}`,
         `Model: ${model}`,
+    ].join("\n");
+}
+/**
+ * True when a newer run of this same workflow is queued or in progress —
+ * i.e. this run was cancelled by concurrency `cancel-in-progress`, not by a
+ * human or a timeout. Best-effort: any API failure returns false.
+ * ponytail: may match a newer run on a different PR; acceptable — it only
+ * softens the wording of a cancel notice, upgrade to per-PR matching if needed.
+ */
+async function isSupersededByNewerRun(octokit, owner, repo) {
+    try {
+        const runId = Number(process.env.GITHUB_RUN_ID);
+        if (!runId)
+            return false;
+        const { data: currentRun } = await octokit.rest.actions.getWorkflowRun({
+            owner,
+            repo,
+            run_id: runId,
+        });
+        for (const status of ["queued", "in_progress"]) {
+            const { data } = await octokit.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: currentRun.workflow_id,
+                status,
+                per_page: 30,
+            });
+            if (data.workflow_runs.some((run) => run.id !== runId && run.run_number > currentRun.run_number)) {
+                return true;
+            }
+        }
+    }
+    catch (error) {
+        core.warning(`Could not check for a superseding run: ${error}`);
+    }
+    return false;
+}
+function buildSupersededStatusBody(command) {
+    return [
+        "## :bow_and_arrow: Robin",
+        "",
+        `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run on this pull request.`,
+        "",
+        "No action needed — the newer run's comment below has the result.",
     ].join("\n");
 }
 function buildCancelledStatusBody(command) {

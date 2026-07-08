@@ -16,6 +16,56 @@ export class GitHubReviewer {
     return hasHigh && requestChanges ? "REQUEST_CHANGES" : "COMMENT";
   }
 
+  /** A prior Robin CHANGES_REQUESTED review that a newly posted review supersedes. */
+  static isStaleRobinReview(
+    review: { id: number; state?: string; body?: string | null },
+    newReviewId: number
+  ): boolean {
+    return (
+      review.id !== newReviewId &&
+      review.state === "CHANGES_REQUESTED" &&
+      (review.body || "").includes(":bow_and_arrow: Robin")
+    );
+  }
+
+  /**
+   * Dismiss earlier Robin CHANGES_REQUESTED reviews so a stale blocking review
+   * from a previous (possibly cancelled) run doesn't keep gating the PR.
+   */
+  private async dismissStaleRobinReviews(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    newReviewId: number
+  ): Promise<void> {
+    try {
+      const reviews = await this.octokit.paginate(this.octokit.rest.pulls.listReviews, {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: 100,
+      });
+
+      for (const review of reviews) {
+        if (!GitHubReviewer.isStaleRobinReview(review, newReviewId)) continue;
+        try {
+          await this.octokit.rest.pulls.dismissReview({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            review_id: review.id,
+            message: "Superseded by a newer Robin review.",
+          });
+          core.info("Dismissed stale Robin review #" + review.id);
+        } catch (error) {
+          core.warning("Could not dismiss stale Robin review #" + review.id + ": " + error);
+        }
+      }
+    } catch (error) {
+      core.warning("Could not check for stale Robin reviews: " + error);
+    }
+  }
+
   async postReview(
     owner: string,
     repo: string,
@@ -78,6 +128,8 @@ export class GitHubReviewer {
       core.info(
         "Posted review #" + review.id + " with " + postedInlineComments + " individual line comments"
       );
+
+      await this.dismissStaleRobinReviews(owner, repo, pullNumber, review.id);
 
     } catch (error) {
       core.error("Failed to post review: " + error);

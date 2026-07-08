@@ -8,6 +8,26 @@ describe("GitHubReviewer", () => {
     expect(GitHubReviewer.resolveReviewEvent(false, false)).toBe("COMMENT");
   });
 
+  it("identifies stale Robin CHANGES_REQUESTED reviews to dismiss", () => {
+    const robinBody = "## :bow_and_arrow: Robin\n\nfindings…";
+    expect(
+      GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: robinBody }, 2)
+    ).toBe(true);
+    // the review just posted
+    expect(
+      GitHubReviewer.isStaleRobinReview({ id: 2, state: "CHANGES_REQUESTED", body: robinBody }, 2)
+    ).toBe(false);
+    // non-blocking Robin review
+    expect(
+      GitHubReviewer.isStaleRobinReview({ id: 1, state: "COMMENTED", body: robinBody }, 2)
+    ).toBe(false);
+    // human review must never be dismissed
+    expect(
+      GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: "LGTM-ish" }, 2)
+    ).toBe(false);
+    expect(GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: null }, 2)).toBe(false);
+  });
+
   it("detects new-file line numbers present in the diff", () => {
     const reviewer = new GitHubReviewer({} as any);
     const isLineInNewDiff = (reviewer as any).isLineInNewDiff.bind(reviewer) as (
