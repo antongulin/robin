@@ -1,8 +1,19 @@
 {
-  "name": "robin",
+  "name": "robin-review",
   "version": "2.3.1",
   "description": "Free AI code reviews for every PR. BYOK, works with OpenRouter free tier.",
-  "main": "dist/index.js",
+  "bin": {
+    "robin-review": "bin/robin-review.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/antongulin/robin.git"

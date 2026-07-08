@@ -37,18 +37,30 @@ Read AGENTS.md in the robin repo for full rules.
 
 ## Quick install
 
-In a terminal, from your project folder, run:
+In a terminal, from your project folder, run either:
+
+```bash
+npx robin-review
+```
+
+or, without Node.js:
 
 ```bash
 curl -fsSL https://robinreview.dev/install.sh | bash
 ```
 
-This creates `.github/workflows/robin.yml` for you (it never overwrites an existing file).
+Either one creates `.github/workflows/robin.yml` for you (it never overwrites an existing
+file) and installs the [companion chat skill](#robin-in-your-editor) into your coding agents.
 You still need to add the three secrets — do **Steps 1 and 2** below, then commit and push.
-You can **skip Step 3**: the script already did it.
+You can **skip Step 3**: the installer already did it.
 
-Prefer to do it by hand, or read the script first? It's
-[scripts/install.sh](scripts/install.sh) — follow the manual 3 steps instead.
+**Auto-updates:** the generated workflow references `antongulin/robin@main`, so every
+review runs the latest Robin automatically — nothing to bump or re-install. Prefer fixed
+versions? Pin a tag with `ROBIN_REF=v2 npx robin-review` (see [Version pins](#version-pins)).
+
+Prefer to do it by hand, or read the installer first? It's
+[bin/robin-review.js](bin/robin-review.js) (npm) / [scripts/install.sh](scripts/install.sh)
+(curl) — or follow the manual 3 steps instead.
 
 ## Setup in 3 steps
 
