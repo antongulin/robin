@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/antongulin/robin/compare/v2.3.1...v2.4.0) (2026-07-08)
+
+
+### Features
+
+* publish robin-review to npm with npx installer ([#65](https://github.com/antongulin/robin/issues/65)) ([bef87dd](https://github.com/antongulin/robin/commit/bef87dd74a477f51bfd2db46879373c20ce27d84))
+
 ## [2.3.1](https://github.com/antongulin/robin/compare/v2.3.0...v2.3.1) (2026-07-08)
 
 
