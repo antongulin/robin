@@ -1,6 +1,13 @@
 import { GitHubReviewer } from "./github-reviewer";
 
 describe("GitHubReviewer", () => {
+  it("resolves review event from high findings and request-changes mode", () => {
+    expect(GitHubReviewer.resolveReviewEvent(true, true)).toBe("REQUEST_CHANGES");
+    expect(GitHubReviewer.resolveReviewEvent(true, false)).toBe("COMMENT");
+    expect(GitHubReviewer.resolveReviewEvent(false, true)).toBe("COMMENT");
+    expect(GitHubReviewer.resolveReviewEvent(false, false)).toBe("COMMENT");
+  });
+
   it("detects new-file line numbers present in the diff", () => {
     const reviewer = new GitHubReviewer({} as any);
     const isLineInNewDiff = (reviewer as any).isLineInNewDiff.bind(reviewer) as (

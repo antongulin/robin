@@ -11,11 +11,17 @@ export class GitHubReviewer {
     this.maxComments = Number.isFinite(maxComments) ? Math.max(0, maxComments) : 25;
   }
 
+  /** COMMENT unless a High finding exists AND request-changes is enabled (gatekeeper mode). */
+  static resolveReviewEvent(hasHigh: boolean, requestChanges: boolean): "REQUEST_CHANGES" | "COMMENT" {
+    return hasHigh && requestChanges ? "REQUEST_CHANGES" : "COMMENT";
+  }
+
   async postReview(
     owner: string,
     repo: string,
     pullNumber: number,
-    findings: StructuredReview
+    findings: StructuredReview,
+    requestChanges = true
   ): Promise<void> {
     try {
       core.info("Posting review to PR #" + pullNumber + "...");
@@ -35,7 +41,7 @@ export class GitHubReviewer {
       const body = this.buildReviewBody(findings, postedFindings);
       
       // Determine review event type
-      const event = findings.high.length > 0 ? "REQUEST_CHANGES" : "COMMENT";
+      const event = GitHubReviewer.resolveReviewEvent(findings.high.length > 0, requestChanges);
       
       let review;
       let postedInlineComments = comments.length;

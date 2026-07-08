@@ -24,6 +24,10 @@ inputs:
     description: "If true, the action will fail when high severity issues are found."
     required: false
     default: "false"
+  request-changes:
+    description: "Whether a high severity finding submits a blocking REQUEST_CHANGES review. true posts REQUEST_CHANGES; false always posts a non-blocking COMMENT (advisor mode). Leave empty to use the repo config, which defaults to true."
+    required: false
+    default: ""
   max-diff-size:
     description: "Maximum diff size in characters to send to the model. Large diffs are truncated."
     required: false
