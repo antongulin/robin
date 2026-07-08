@@ -4,7 +4,7 @@
 max-diff-size: 25000
 max-comments: 10
 json-response-mode: true
-# request-changes: false  # advisor mode — never block the PR, even on high findings
+# request-changes: true   # default; set false for advisor mode (never block the PR, even on high findings)
 
 skip-paths:
   - "**/generated/**"
