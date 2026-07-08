@@ -19,6 +19,7 @@ describe("robin-review CLI", () => {
 
   const run = (env: Record<string, string> = {}) =>
     cp.execSync(`node "${BIN}"`, {
+      stdio: "pipe",
       cwd: dir,
       env: { ...process.env, ROBIN_SKILL: "0", ...env },
     }).toString();
@@ -35,6 +36,11 @@ describe("robin-review CLI", () => {
     const output = run();
     expect(output).toContain("leaving it untouched");
     expect(fs.readFileSync(workflowPath, "utf8")).toBe("custom: yes\n");
+  });
+
+  it("rejects a ROBIN_REF with YAML metacharacters", () => {
+    expect(() => run({ ROBIN_REF: "main\njobs: {}" })).toThrow();
+    expect(fs.existsSync(path.join(dir, ".github", "workflows", "robin.yml"))).toBe(false);
   });
 
   it("fails outside a git repository", () => {

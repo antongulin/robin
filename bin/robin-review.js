@@ -19,6 +19,7 @@ const die = (msg) => {
 };
 
 const ref = process.env.ROBIN_REF || "main";
+if (!/^[A-Za-z0-9._/-]+$/.test(ref)) die("Invalid ROBIN_REF: " + JSON.stringify(ref));
 
 let root;
 try {
@@ -70,7 +71,7 @@ if (process.env.ROBIN_SKILL !== "0") {
     info('Robin chat skill installed (all agents). Say "review with Robin".');
   } catch {
     warn(
-      "Couldn't auto-install the skill. Run: npx skills add https://github.com/antongulin/robin --all --global"
+      "Couldn't auto-install the skill. Run: npx -y skills add https://github.com/antongulin/robin --skill robin --agent \"*\" --global --yes"
     );
   }
 }
