@@ -488,8 +488,8 @@ function buildProgressStatusBody(
  * True when a newer run of this same workflow is queued or in progress —
  * i.e. this run was cancelled by concurrency `cancel-in-progress`, not by a
  * human or a timeout. Best-effort: any API failure returns false.
- * ponytail: may match a newer run on a different PR; acceptable — it only
- * softens the wording of a cancel notice, upgrade to per-PR matching if needed.
+ * Note: may match a newer run on a different PR; acceptable — it only
+ * softens the wording of a cancel notice. Upgrade to per-PR matching if needed.
  */
 async function isSupersededByNewerRun(octokit: any, owner: string, repo: string): Promise<boolean> {
   try {
@@ -524,9 +524,9 @@ function buildSupersededStatusBody(command: "review" | "summary"): string {
   return [
     "## " + ROBIN_SIGNATURE,
     "",
-    `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run on this pull request.`,
+    `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run.`,
     "",
-    "No action needed — the newer run's comment below has the result.",
+    "No action needed — the newer run posts its own result when it finishes.",
   ].join("\n");
 }
 
