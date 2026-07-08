@@ -315,7 +315,11 @@ class GitHubReviewer {
         this.octokit = octokit;
         this.maxComments = Number.isFinite(maxComments) ? Math.max(0, maxComments) : 25;
     }
-    async postReview(owner, repo, pullNumber, findings) {
+    /** COMMENT unless a High finding exists AND request-changes is enabled (gatekeeper mode). */
+    static resolveReviewEvent(hasHigh, requestChanges) {
+        return hasHigh && requestChanges ? "REQUEST_CHANGES" : "COMMENT";
+    }
+    async postReview(owner, repo, pullNumber, findings, requestChanges = true) {
         try {
             core.info("Posting review to PR #" + pullNumber + "...");
             // Fetch file patches to map line positions
@@ -330,7 +334,7 @@ class GitHubReviewer {
             // Build the review summary body (high-level)
             const body = this.buildReviewBody(findings, postedFindings);
             // Determine review event type
-            const event = findings.high.length > 0 ? "REQUEST_CHANGES" : "COMMENT";
+            const event = GitHubReviewer.resolveReviewEvent(findings.high.length > 0, requestChanges);
             let review;
             let postedInlineComments = comments.length;
             try {
@@ -1032,6 +1036,7 @@ async function run() {
         const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
         const configFile = core.getInput("config-file") || repo_config_1.DEFAULT_CONFIG_FILE;
         const jsonResponseModeInput = core.getInput("use-json-response-mode") || "";
+        const requestChangesInput = core.getInput("request-changes") || "";
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
@@ -1059,6 +1064,7 @@ async function run() {
         const maxDiffSize = (0, repo_config_1.resolveMaxDiffSize)(maxDiffSizeInput, repoConfig);
         const maxComments = (0, repo_config_1.resolveMaxComments)(maxCommentsInput, repoConfig);
         const jsonResponseMode = (0, repo_config_1.resolveJsonResponseMode)(jsonResponseModeInput, repoConfig);
+        const requestChanges = (0, repo_config_1.resolveRequestChanges)(requestChangesInput, repoConfig);
         const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
         if (!diff || diff.trim().length === 0) {
             core.warning("No diff found for this PR.");
@@ -1123,7 +1129,7 @@ async function run() {
             }
             core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
             const reviewer = new github_reviewer_1.GitHubReviewer(octokit, maxComments);
-            await reviewer.postReview(owner, repo, prNumber, findings);
+            await reviewer.postReview(owner, repo, prNumber, findings, requestChanges);
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("review", findings));
             if (findings.high.length > 0 && failOnHigh) {
                 core.setFailed(`Found ${findings.high.length} high severity issue(s). Failing check.`);
@@ -1553,6 +1559,7 @@ exports.parseRepoConfigYaml = parseRepoConfigYaml;
 exports.resolveMaxDiffSize = resolveMaxDiffSize;
 exports.resolveMaxComments = resolveMaxComments;
 exports.resolveJsonResponseMode = resolveJsonResponseMode;
+exports.resolveRequestChanges = resolveRequestChanges;
 exports.DEFAULT_CONFIG_FILE = ".github/robin.yml";
 exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
 /** Single default shared by action.yml and the reusable review.yml workflow. */
@@ -1592,6 +1599,11 @@ function parseRepoConfigYaml(text) {
         const jsonModeMatch = trimmed.match(/^json-response-mode:\s*(true|false)\s*$/i);
         if (jsonModeMatch) {
             config.jsonResponseMode = jsonModeMatch[1].toLowerCase() === "true";
+            continue;
+        }
+        const requestChangesMatch = trimmed.match(/^request-changes:\s*(true|false)\s*$/i);
+        if (requestChangesMatch) {
+            config.requestChanges = requestChangesMatch[1].toLowerCase() === "true";
         }
     }
     return config;
@@ -1620,6 +1632,14 @@ function resolveJsonResponseMode(actionInput, repoConfig) {
     if (actionInput === "false")
         return false;
     return repoConfig?.jsonResponseMode ?? true;
+}
+/** Whether a High finding submits a blocking REQUEST_CHANGES review. Default true (gatekeeper). */
+function resolveRequestChanges(actionInput, repoConfig) {
+    if (actionInput === "true")
+        return true;
+    if (actionInput === "false")
+        return false;
+    return repoConfig?.requestChanges ?? true;
 }
 //# sourceMappingURL=repo-config.js.map
 

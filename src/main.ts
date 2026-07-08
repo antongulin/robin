@@ -15,6 +15,7 @@ import {
   resolveJsonResponseMode,
   resolveMaxComments,
   resolveMaxDiffSize,
+  resolveRequestChanges,
 } from "./repo-config";
 import { getReviewPrompt, getSummaryPrompt, getHelpMessage } from "./prompts/review-prompts";
 import { ReviewerCommand, hasRequiredPermission, parseSlashCommand } from "./commands";
@@ -130,6 +131,7 @@ async function run(): Promise<void> {
     const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
     const configFile = core.getInput("config-file") || DEFAULT_CONFIG_FILE;
     const jsonResponseModeInput = core.getInput("use-json-response-mode") || "";
+    const requestChangesInput = core.getInput("request-changes") || "";
 
     core.info(`Model: ${model || "(not configured)"}`);
 
@@ -175,6 +177,7 @@ async function run(): Promise<void> {
     const maxDiffSize = resolveMaxDiffSize(maxDiffSizeInput, repoConfig);
     const maxComments = resolveMaxComments(maxCommentsInput, repoConfig);
     const jsonResponseMode = resolveJsonResponseMode(jsonResponseModeInput, repoConfig);
+    const requestChanges = resolveRequestChanges(requestChangesInput, repoConfig);
 
     const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
     
@@ -310,7 +313,7 @@ async function run(): Promise<void> {
       core.info(`Found ${findings.high.length} high, ${findings.medium.length} medium, ${findings.low.length} low, ${findings.suggestions.length} suggestions`);
 
       const reviewer = new GitHubReviewer(octokit as any, maxComments);
-      await reviewer.postReview(owner, repo, prNumber, findings);
+      await reviewer.postReview(owner, repo, prNumber, findings, requestChanges);
       await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("review", findings));
 
       if (findings.high.length > 0 && failOnHigh) {

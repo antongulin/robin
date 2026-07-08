@@ -10,6 +10,7 @@ Copy [`.github/robin.yml.example`](../.github/robin.yml.example) to `.github/rob
 max-diff-size: 25000
 max-comments: 10
 json-response-mode: true
+request-changes: true
 skip-paths:
   - "**/generated/**"
 ```
@@ -19,6 +20,7 @@ skip-paths:
 | `max-diff-size` | Used when the workflow still passes the action default (`50000`) |
 | `max-comments` | Used when the workflow passes action default `25` or reusable workflow default `10` |
 | `json-response-mode` | Used when `use-json-response-mode` is empty (action default defers to this file) |
+| `request-changes` | Used when `request-changes` input is empty. `true` (default) blocks on high findings; `false` posts advisor-only comments |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
 
 Lockfiles (npm, yarn, pnpm, Cargo, Gemfile, poetry), `dist/`, `node_modules/`, and minified assets are always skipped automatically. If every changed file is skipped, the action posts a status comment and skips the LLM call.
@@ -108,6 +110,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `llm-base-url` | — | OpenAI-compatible base URL (required) |
 | `model` | — | Model name (required) |
 | `fail-on-high` | `false` | Fail the check if high-severity issues are found |
+| `request-changes` | empty → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode) |
 | `max-diff-size` | `50000` | Max diff characters sent to the model |
 | `max-output-tokens` | empty | Cap response tokens (optional) |
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
