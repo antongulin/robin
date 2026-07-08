@@ -10,31 +10,41 @@ describe("GitHubReviewer", () => {
 
   it("identifies stale Robin CHANGES_REQUESTED reviews to dismiss", () => {
     const robinBody = "## :bow_and_arrow: Robin\n\nfindings…";
+    const bot = { type: "Bot" };
     expect(
-      GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: robinBody }, 2)
+      GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: robinBody, user: bot }, 2)
     ).toBe(true);
     // the review just posted
     expect(
-      GitHubReviewer.isStaleRobinReview({ id: 2, state: "CHANGES_REQUESTED", body: robinBody }, 2)
+      GitHubReviewer.isStaleRobinReview({ id: 2, state: "CHANGES_REQUESTED", body: robinBody, user: bot }, 2)
     ).toBe(false);
     // non-blocking Robin review
     expect(
-      GitHubReviewer.isStaleRobinReview({ id: 1, state: "COMMENTED", body: robinBody }, 2)
+      GitHubReviewer.isStaleRobinReview({ id: 1, state: "COMMENTED", body: robinBody, user: bot }, 2)
     ).toBe(false);
-    // human review must never be dismissed
+    // human review must never be dismissed — even one quoting Robin's signature
     expect(
-      GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: "LGTM-ish" }, 2)
+      GitHubReviewer.isStaleRobinReview(
+        { id: 1, state: "CHANGES_REQUESTED", body: robinBody, user: { type: "User" } },
+        2
+      )
     ).toBe(false);
-    expect(GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: null }, 2)).toBe(false);
+    expect(
+      GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: "LGTM-ish", user: bot }, 2)
+    ).toBe(false);
+    expect(
+      GitHubReviewer.isStaleRobinReview({ id: 1, state: "CHANGES_REQUESTED", body: null, user: bot }, 2)
+    ).toBe(false);
   });
 
   it("dismisses only stale Robin CHANGES_REQUESTED reviews after posting", async () => {
     const robinBody = "## :bow_and_arrow: Robin\n\nfindings…";
+    const bot = { type: "Bot" };
     const reviews = [
-      { id: 10, state: "CHANGES_REQUESTED", body: robinBody }, // stale — dismiss
-      { id: 11, state: "COMMENTED", body: robinBody }, // non-blocking — keep
-      { id: 12, state: "CHANGES_REQUESTED", body: "human review" }, // human — keep
-      { id: 20, state: "CHANGES_REQUESTED", body: robinBody }, // the new review itself
+      { id: 10, state: "CHANGES_REQUESTED", body: robinBody, user: bot }, // stale — dismiss
+      { id: 11, state: "COMMENTED", body: robinBody, user: bot }, // non-blocking — keep
+      { id: 12, state: "CHANGES_REQUESTED", body: "human review", user: { type: "User" } }, // human — keep
+      { id: 20, state: "CHANGES_REQUESTED", body: robinBody, user: bot }, // the new review itself
     ];
     const dismissReview = jest.fn().mockResolvedValue({});
     const octokit = {

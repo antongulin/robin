@@ -325,6 +325,7 @@ class GitHubReviewer {
     static isStaleRobinReview(review, newReviewId) {
         return (review.id !== newReviewId &&
             review.state === "CHANGES_REQUESTED" &&
+            review.user?.type === "Bot" &&
             (review.body || "").includes(exports.ROBIN_SIGNATURE));
     }
     /**

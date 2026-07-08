@@ -21,12 +21,13 @@ export class GitHubReviewer {
 
   /** A prior Robin CHANGES_REQUESTED review that a newly posted review supersedes. */
   static isStaleRobinReview(
-    review: { id: number; state?: string; body?: string | null },
+    review: { id: number; state?: string; body?: string | null; user?: { type?: string } | null },
     newReviewId: number
   ): boolean {
     return (
       review.id !== newReviewId &&
       review.state === "CHANGES_REQUESTED" &&
+      review.user?.type === "Bot" &&
       (review.body || "").includes(ROBIN_SIGNATURE)
     );
   }
