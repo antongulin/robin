@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Robin
-        uses: antongulin/robin@${{ github.ref_name }}
+        uses: antongulin/robin@fix/actions-read-for-supersede
         with:
           github-token: ${{ github.token }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}
