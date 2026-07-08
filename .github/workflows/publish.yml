@@ -34,4 +34,4 @@ jobs:
             echo "${NAME}@${VERSION} is already on npm — nothing to do."
             exit 0
           fi
-          npm publish
+          npm publish --access public --provenance
