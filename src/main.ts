@@ -486,16 +486,15 @@ function buildProgressStatusBody(
 }
 
 /**
- * True when a newer run of this same workflow is queued or in progress —
- * i.e. this run was cancelled by concurrency `cancel-in-progress`, not by a
- * human or a timeout. Best-effort: any API failure returns false.
- * Note: may match a newer run on a different PR; acceptable — it only
- * softens the wording of a cancel notice. Upgrade to per-PR matching if needed.
+ * True when a newer run of this same workflow exists — i.e. this run was
+ * cancelled by concurrency `cancel-in-progress`, not by a human or a timeout.
+ * Best-effort: any API failure returns false.
  */
 async function isSupersededByNewerRun(octokit: any, owner: string, repo: string): Promise<boolean> {
   try {
     const runId = Number(process.env.GITHUB_RUN_ID);
-    if (!runId) return false;
+    const runNumber = Number(process.env.GITHUB_RUN_NUMBER);
+    if (!runId || !runNumber) return false;
 
     const { data: currentRun } = await octokit.rest.actions.getWorkflowRun({
       owner,
@@ -503,22 +502,22 @@ async function isSupersededByNewerRun(octokit: any, owner: string, repo: string)
       run_id: runId,
     });
 
-    const results = await Promise.all(
-      (["queued", "in_progress"] as const).map((status) =>
-        octokit.rest.actions.listWorkflowRuns({
-          owner,
-          repo,
-          workflow_id: currentRun.workflow_id,
-          status,
-          per_page: 30,
-        })
-      )
+    const { data } = await octokit.rest.actions.listWorkflowRuns({
+      owner,
+      repo,
+      workflow_id: currentRun.workflow_id,
+      per_page: 10,
+    });
+
+    const superseded = data.workflow_runs.some(
+      (run: { id: number; run_number: number }) => run.id !== runId && run.run_number > runNumber
     );
-    for (const { data } of results) {
-      if (data.workflow_runs.some((run: any) => run.id !== runId && run.run_number > currentRun.run_number)) {
-        return true;
-      }
-    }
+    core.info(
+      superseded
+        ? `Superseded by a newer workflow run (this is #${runNumber})`
+        : `No newer workflow run found (this is #${runNumber})`
+    );
+    return superseded;
   } catch (error) {
     core.warning(`Could not check for a superseding run: ${error}`);
   }
