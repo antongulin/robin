@@ -62,7 +62,7 @@ on:
         required: true
 
 permissions:
-  actions: read
+  actions: read # lets Robin detect when a cancelled run was superseded by a newer one
   contents: read
   pull-requests: write
 
