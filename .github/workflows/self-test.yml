@@ -30,6 +30,15 @@ jobs:
       
       - name: Lint
         run: npm run lint
+
+      - name: Install actionlint
+        run: bash <(curl -sL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+
+      - name: Lint workflows
+        # Catches undeclared workflow_call inputs the same way GitHub does for
+        # consumers (e.g. request-changes missing from review.yml). Also lints
+        # testdata/consumer-workflows fixtures that pass every reusable input.
+        run: ./actionlint -shellcheck= -pyflakes= .github/workflows/*.yml testdata/consumer-workflows/*.yml
        
       - name: Test
         run: npm test

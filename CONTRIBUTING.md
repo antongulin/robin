@@ -45,6 +45,24 @@ helps a strong model can quietly regress a weak one, so test against more than o
 - Update the README when changing user-facing inputs or behavior.
 - Do not commit secrets, provider keys, or private endpoint URLs.
 
+### Dual entry points (action inputs)
+
+Most consumers call the reusable workflow, not the action directly:
+
+```yaml
+uses: antongulin/robin/.github/workflows/review.yml@main
+```
+
+When you add or change an action input:
+
+1. Declare it in `action.yml`.
+2. Declare it under `on.workflow_call.inputs` in `.github/workflows/review.yml` and forward it to the action step.
+3. If it should be settable without editing the workflow, parse it in `.github/robin.yml` (see `src/repo-config.ts`).
+4. Document it in `docs/ADVANCED.md`.
+5. Update `testdata/consumer-workflows/all-inputs.yml` so actionlint + the Jest parity test stay green.
+
+CI runs [actionlint](https://github.com/rhysd/actionlint) on workflows and that consumer fixture — the same class of error GitHub returns for an undeclared `with:` input.
+
 ## Commit messages (for releases)
 
 Merges to `main` use [Release Please](https://github.com/googleapis/release-please) to bump versions and write release notes. Use [Conventional Commits](https://www.conventionalcommits.org/) in PR titles or squash-merge messages:

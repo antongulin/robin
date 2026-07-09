@@ -139,7 +139,7 @@ jobs:
   review:
     uses: antongulin/robin/.github/workflows/review.yml@main
     with:
-      request-changes: "false"
+      request-changes: false   # string input; bare false / "false" both work
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
