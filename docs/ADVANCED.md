@@ -110,7 +110,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `llm-base-url` / `LLM_BASE_URL` | — | OpenAI-compatible base URL (required) |
 | `model` / `LLM_MODEL` | — | Model name (required) |
 | `fail-on-high` | `false` | Fail the check if high-severity issues are found |
-| `request-changes` | empty → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode). Pass `"true"` / `"false"` on the reusable workflow (string input so empty still defers to `.github/robin.yml`) |
+| `request-changes` | omit → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode). Reusable workflow input is a boolean with no default — omit it to let `.github/robin.yml` win |
 | `max-diff-size` | `50000` | Max diff characters sent to the model |
 | `max-output-tokens` | empty | Cap response tokens (optional) |
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
@@ -139,7 +139,7 @@ jobs:
   review:
     uses: antongulin/robin/.github/workflows/review.yml@main
     with:
-      request-changes: false   # string input; bare false / "false" both work
+      request-changes: false   # boolean; omit this line to defer to .github/robin.yml
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}

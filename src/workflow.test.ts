@@ -29,8 +29,14 @@ const ACTION_ONLY_SECRETS = new Set([
 /** Workflow-only input (not an action input). */
 const WORKFLOW_ONLY_INPUTS = new Set(["runner"]);
 
-/** Empty default means "defer to .github/robin.yml" — must stay string, not boolean. */
-const DEFER_TO_CONFIG_INPUTS = ["request-changes", "use-json-response-mode"] as const;
+/**
+ * Defer-to-config knobs must not force a boolean default of true/false on the
+ * reusable workflow — that would override `.github/robin.yml`.
+ * - request-changes: boolean, no default (omit → empty → repo config)
+ * - use-json-response-mode: string, default ""
+ */
+const DEFER_BOOLEAN_NO_DEFAULT = ["request-changes"] as const;
+const DEFER_STRING_EMPTY_DEFAULT = ["use-json-response-mode"] as const;
 
 function parseActionInputs(source: string): string[] {
   // Scope to the inputs: section so a future outputs: block cannot pollute parity.
@@ -139,8 +145,15 @@ describe("reusable review workflow", () => {
     ]);
   });
 
-  it("keeps defer-to-config knobs as empty-default strings (not booleans)", () => {
-    for (const name of DEFER_TO_CONFIG_INPUTS) {
+  it("keeps defer-to-config knobs from forcing a boolean default", () => {
+    for (const name of DEFER_BOOLEAN_NO_DEFAULT) {
+      const block = workflowCallInputBlock(reviewWorkflow, name);
+      expect(block).toBeDefined();
+      expect(block).toContain("type: boolean");
+      // Ignore comments that mention "default"; only a real YAML key would break deferral.
+      expect(block).not.toMatch(/^\s*default:/m);
+    }
+    for (const name of DEFER_STRING_EMPTY_DEFAULT) {
       const block = workflowCallInputBlock(reviewWorkflow, name);
       expect(block).toBeDefined();
       expect(block).toContain("type: string");

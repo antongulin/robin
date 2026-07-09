@@ -20,10 +20,9 @@ jobs:
     uses: ./.github/workflows/review.yml
     with:
       fail-on-high: false
-      # String-typed defer-to-config knobs: use an expression so actionlint
-      # does not treat a YAML bool as a type error. GitHub also accepts bare
-      # false / "false" at runtime.
-      request-changes: ${{ 'false' }}
+      # Boolean workflow_call input — bare false matches real consumer YAML
+      # (e.g. request-changes: false). Omit to defer to .github/robin.yml.
+      request-changes: false
       max-diff-size: "25000"
       max-comments: "10"
       max-output-tokens: ""
@@ -33,6 +32,7 @@ jobs:
       review-instructions: ""
       review-on-synchronize: false
       config-file: .github/robin.yml
+      # String-typed defer-to-config knob: expression avoids actionlint bool/string clash.
       use-json-response-mode: ${{ 'true' }}
       runner: '"ubuntu-latest"'
     secrets:
