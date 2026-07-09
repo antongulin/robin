@@ -1,6 +1,6 @@
 ---
 name: robin
-version: 2.4.2 # x-release-please-version
+version: 2.4.3 # x-release-please-version
 description: Use when the user mentions Robin for a pull request — "review with Robin", "run Robin", "robin this PR", "create a PR with Robin", "ask Robin to review", "start the Robin loop" — or, more generally, when a GitHub pull request needs review monitoring, reviewer-comment triage, PR feedback fixes, comment replies, unresolved-thread cleanup, or a bounded wait → fix → re-review → merge loop.
 ---
 

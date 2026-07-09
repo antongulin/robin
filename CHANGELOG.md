@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.3](https://github.com/antongulin/robin/compare/v2.4.2...v2.4.3) (2026-07-09)
+
+
+### Bug Fixes
+
+* expose request-changes on reusable review workflow ([#72](https://github.com/antongulin/robin/issues/72)) ([d648b4b](https://github.com/antongulin/robin/commit/d648b4b5d6c577489426687b411ec1adae85247f))
+
 ## [2.4.2](https://github.com/antongulin/robin/compare/v2.4.1...v2.4.2) (2026-07-08)
 
 
