@@ -1,0 +1,41 @@
+# Fixture: a consumer workflow that passes every reusable-workflow input.
+# actionlint validates these against review.yml's workflow_call schema — the
+# same class of failure that occurs when an input is missing from that schema.
+# Keep this in sync when adding action inputs.
+name: Consumer all-inputs
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+jobs:
+  review:
+    uses: ./.github/workflows/review.yml
+    with:
+      fail-on-high: false
+      # Boolean workflow_call input — bare false matches real consumer YAML
+      # (e.g. request-changes: false). Omit to defer to .github/robin.yml.
+      request-changes: false
+      max-diff-size: "25000"
+      max-comments: "10"
+      max-output-tokens: ""
+      llm-timeout-ms: "600000"
+      min-command-permission: write
+      review-instructions-file: .github/code-reviewer.md
+      review-instructions: ""
+      review-on-synchronize: false
+      config-file: .github/robin.yml
+      # String-typed defer-to-config knob: expression avoids actionlint bool/string clash.
+      use-json-response-mode: ${{ 'true' }}
+      runner: '"ubuntu-latest"'
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}

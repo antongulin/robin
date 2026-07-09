@@ -30,6 +30,26 @@ jobs:
       
       - name: Lint
         run: npm run lint
+
+      - name: Install actionlint
+        # Pin version + SHA256 of the linux_amd64 release tarball (no curl|bash).
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSL -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" actionlint
+          ./actionlint -version
+
+      - name: Lint workflows
+        # Catches undeclared workflow_call inputs the same way GitHub does for
+        # consumers (e.g. request-changes missing from review.yml). Also lints
+        # testdata/consumer-workflows fixtures that pass every reusable input.
+        run: ./actionlint -shellcheck= -pyflakes= .github/workflows/*.yml testdata/consumer-workflows/*.yml
        
       - name: Test
         run: npm test

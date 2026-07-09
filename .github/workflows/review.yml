@@ -8,6 +8,12 @@ on:
         required: false
         type: boolean
         default: false
+      request-changes:
+        description: "Whether a high severity finding submits a blocking REQUEST_CHANGES review. true posts REQUEST_CHANGES; false always posts COMMENT (advisor mode). Omit to use the repo config, which defaults to true."
+        required: false
+        type: boolean
+        # No default: omitted must stay unset so .github/robin.yml can still win.
+        # A boolean default of true would override repo-config advisor mode.
       max-diff-size:
         description: "Maximum diff characters sent to the model."
         required: false
@@ -48,6 +54,16 @@ on:
         required: false
         type: boolean
         default: false
+      config-file:
+        description: "Optional repository config file on the PR base branch."
+        required: false
+        type: string
+        default: ".github/robin.yml"
+      use-json-response-mode:
+        description: "Request JSON object responses when the provider supports response_format. Leave empty to use repo config or default true."
+        required: false
+        type: string
+        default: ""
       runner:
         description: "Runner label or JSON array of labels to use for the review job."
         required: false
@@ -96,6 +112,7 @@ jobs:
           llm-base-url: ${{ secrets.LLM_BASE_URL }}
           model: ${{ secrets.LLM_MODEL }}
           fail-on-high: ${{ inputs.fail-on-high }}
+          request-changes: ${{ inputs.request-changes }}
           max-diff-size: ${{ inputs.max-diff-size }}
           max-comments: ${{ inputs.max-comments }}
           max-output-tokens: ${{ inputs.max-output-tokens }}
@@ -104,3 +121,5 @@ jobs:
           review-instructions: ${{ inputs.review-instructions }}
           review-instructions-file: ${{ inputs.review-instructions-file }}
           review-on-synchronize: ${{ inputs.review-on-synchronize }}
+          config-file: ${{ inputs.config-file }}
+          use-json-response-mode: ${{ inputs.use-json-response-mode }}
