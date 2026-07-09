@@ -33,7 +33,12 @@ const WORKFLOW_ONLY_INPUTS = new Set(["runner"]);
 const DEFER_TO_CONFIG_INPUTS = ["request-changes", "use-json-response-mode"] as const;
 
 function parseActionInputs(source: string): string[] {
-  return [...source.matchAll(/^  ([a-z0-9-]+):\n    description:/gm)].map(
+  // Scope to the inputs: section so a future outputs: block cannot pollute parity.
+  const inputsBlock = source
+    .split(/^inputs:\n/m)[1]
+    ?.split(/^(?:outputs|runs|branding):/m)[0];
+  if (!inputsBlock) return [];
+  return [...inputsBlock.matchAll(/^  ([a-z0-9-]+):\n    description:/gm)].map(
     (match) => match[1],
   );
 }
@@ -111,6 +116,27 @@ describe("reusable review workflow", () => {
     for (const name of publicActionInputs()) {
       expect(reviewWorkflow).toContain(`${name}: \${{ inputs.${name} }}`);
     }
+  });
+
+  it("scopes action input parsing to the inputs section (ignores outputs)", () => {
+    const synthetic = [
+      "name: Test",
+      "inputs:",
+      "  fail-on-high:",
+      "    description: Fail on high",
+      "  request-changes:",
+      "    description: Advisor mode",
+      "outputs:",
+      "  summary:",
+      "    description: Review summary",
+      "runs:",
+      "  using: node24",
+      "",
+    ].join("\n");
+    expect(parseActionInputs(synthetic)).toEqual([
+      "fail-on-high",
+      "request-changes",
+    ]);
   });
 
   it("keeps defer-to-config knobs as empty-default strings (not booleans)", () => {
