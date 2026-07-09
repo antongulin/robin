@@ -1,7 +1,7 @@
 # Fixture: a consumer workflow that passes every reusable-workflow input.
 # actionlint validates these against review.yml's workflow_call schema — the
-# same class of failure Cesar hit when request-changes was missing from that
-# schema. Keep this in sync when adding action inputs.
+# same class of failure that occurs when an input is missing from that schema.
+# Keep this in sync when adding action inputs.
 name: Consumer all-inputs
 
 on:
