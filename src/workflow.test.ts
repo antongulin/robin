@@ -26,6 +26,27 @@ describe("reusable review workflow", () => {
     expect(workflow).toContain("startsWith(github.event.comment.body, '/review')");
   });
 
+  it("exposes every non-secret action input through workflow_call and forwards it", () => {
+    // Secrets / token are wired separately; runner is workflow-only.
+    const actionOnlySecrets = new Set([
+      "github-token",
+      "llm-api-key",
+      "llm-base-url",
+      "model",
+    ]);
+    const action = readFileSync(join(repoRoot, "action.yml"), "utf8");
+    const actionInputs = [
+      ...action.matchAll(/^  ([a-z0-9-]+):\n    description:/gm),
+    ].map((match) => match[1]);
+    const publicInputs = actionInputs.filter((name) => !actionOnlySecrets.has(name));
+
+    const workflowCallSection = reviewWorkflow.split("secrets:")[0];
+    for (const name of publicInputs) {
+      expect(workflowCallSection).toContain(`      ${name}:`);
+      expect(reviewWorkflow).toContain(`${name}: \${{ inputs.${name} }}`);
+    }
+  });
+
   it("lets callers choose a GitHub-hosted or self-hosted runner", () => {
     expect(reviewWorkflow).toContain("runner:");
     expect(reviewWorkflow).toContain(

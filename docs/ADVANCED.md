@@ -18,7 +18,7 @@ skip-paths:
 | Key | Purpose |
 | --- | --- |
 | `max-diff-size` | Used when the workflow still passes the action default (`50000`) |
-| `max-comments` | Used when the workflow passes action default `25` or reusable workflow default `10` |
+| `max-comments` | Used when the workflow still passes the action default (`15`) |
 | `json-response-mode` | Used when `use-json-response-mode` is empty (action default defers to this file) |
 | `request-changes` | Used when `request-changes` input is empty. `true` (default) blocks on high findings; `false` posts advisor-only comments |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
@@ -101,29 +101,50 @@ jobs:
 
 ## All workflow inputs
 
-Available on the [direct action](../action.yml) and the [reusable workflow](../.github/workflows/review.yml).
+Available on the [direct action](../action.yml) and the [reusable workflow](../.github/workflows/review.yml), unless noted. LLM credentials are action inputs / reusable-workflow secrets respectively.
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `github-token` | `${{ github.token }}` | Token for PR API and comments |
-| `llm-api-key` | `ollama` | Provider API key |
-| `llm-base-url` | — | OpenAI-compatible base URL (required) |
-| `model` | — | Model name (required) |
+| `github-token` | `${{ github.token }}` | Token for PR API and comments (direct action only; reusable workflow uses `github.token`) |
+| `llm-api-key` / `LLM_API_KEY` | `ollama` | Provider API key |
+| `llm-base-url` / `LLM_BASE_URL` | — | OpenAI-compatible base URL (required) |
+| `model` / `LLM_MODEL` | — | Model name (required) |
 | `fail-on-high` | `false` | Fail the check if high-severity issues are found |
-| `request-changes` | empty → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode) |
+| `request-changes` | empty → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode). Pass `"true"` / `"false"` on the reusable workflow (string input so empty still defers to `.github/robin.yml`) |
 | `max-diff-size` | `50000` | Max diff characters sent to the model |
 | `max-output-tokens` | empty | Cap response tokens (optional) |
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
-| `max-comments` | `25` (action) / `10` (reusable workflow) | Max inline comments |
+| `max-comments` | `15` | Max inline comments |
 | `review-on-synchronize` | `false` | Review every new commit on the PR |
-| `runner` | `'"ubuntu-latest"'` | Reusable workflow runner as a JSON string or JSON array |
+| `runner` | `'"ubuntu-latest"'` | Reusable workflow only: runner as a JSON string or JSON array |
 | `min-command-permission` | `write` | Who can run `/review` |
 | `review-instructions` | empty | Extra prompt text |
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch |
 | `config-file` | `.github/robin.yml` | Repo config path on the base branch |
-| `use-json-response-mode` | empty (defer to repo config, else true) | Request `response_format: json_object` when supported |
+| `use-json-response-mode` | empty (defer to repo config, else true) | Request `response_format: json_object` when supported. Pass `"true"` / `"false"` on the reusable workflow |
 
 ## Usage patterns
+
+### Advisor mode (never block the PR)
+
+Useful when Robin is an assistant and humans own merge decisions. Prefer `.github/robin.yml` for repo-wide defaults; use the workflow input to override per workflow:
+
+```yaml
+# .github/robin.yml
+request-changes: false
+```
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    with:
+      request-changes: "false"
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
 
 ### Review on every commit
 
