@@ -51,6 +51,7 @@ on:
     types: [created]
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
@@ -69,6 +70,7 @@ The job needs:
 
 ```yaml
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 ```

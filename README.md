@@ -54,14 +54,19 @@ or, without Node.js:
 curl -fsSL https://robinreview.dev/install.sh | bash
 ```
 
-Either one creates `.github/workflows/robin.yml` for you (it never overwrites an existing
-file) and installs the [companion chat skill](#robin-in-your-editor) into your coding agents.
-Run an installer separately in every repository that should use Robin. Re-running the
-global skill installation is safe and idempotent.
+Either one keeps a single canonical `.github/workflows/robin.yml` and installs or updates
+the [companion chat skill](#robin-in-your-editor) in your coding agents. If it finds an
+older Robin or Universal Code Reviewer workflow under another name, it moves that file to
+`.github/robin-workflow-archive/` (where GitHub cannot trigger it) before creating the
+canonical workflow. Inspect the archived copy, then remove it after confirming the
+migration. An unrelated file already using the canonical path is never overwritten.
+Run an installer separately in every repository that should use Robin. Re-running it is
+safe and idempotent.
 You still need to add the three secrets — do **Steps 1 and 2** below, then commit and push.
 You can **skip Step 3**: the installer already did it.
 
-**Auto-updates:** the generated workflow references `antongulin/robin@main`, so every
+**Auto-updates:** the generated workflow references
+`antongulin/robin/.github/workflows/review.yml@main`, so every
 review runs the latest Robin automatically — nothing to bump or re-install. Prefer fixed
 versions? Pin a tag with `ROBIN_REF=v2 npx robin-review` (see [Version pins](#version-pins)).
 
@@ -123,6 +128,7 @@ on:
     types: [created]
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
@@ -231,7 +237,8 @@ Focused change. Main risk: timeout errors are not handled clearly.
 
 The one-line installer also installs a small **companion skill** into every coding agent
 on your machine (Claude Code, Cursor, Copilot, Windsurf, …) via the cross-platform
-[skills CLI](https://skills.sh) — `npx skills add https://github.com/antongulin/robin --all --global`. It
+[skills CLI](https://skills.sh) —
+`npx -y skills add https://github.com/antongulin/robin --skill robin --agent '*' --global --yes`. It
 ships with Robin; there's nothing separate to sign up for. (Skip it with `ROBIN_SKILL=0`,
 or install it by hand with that command.) Once installed, the skill activates for ordinary
 pull-request work: the agent detects Robin on the base branch, so you do not need to ask

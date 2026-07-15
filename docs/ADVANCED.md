@@ -279,7 +279,7 @@ PR diffs are sent to **your** configured LLM endpoint.
 Practices:
 
 - Store keys in GitHub Secrets only.
-- Use `permissions: contents: read` and `pull-requests: write`.
+- Use `permissions: actions: read`, `contents: read`, and `pull-requests: write`.
 - Do not use `pull_request_target` with this action.
 - Keep slash commands at `min-command-permission: write` unless you accept cost/abuse risk.
 - Fork PRs from outsiders may not receive secrets — use manual `/review` from a maintainer.
