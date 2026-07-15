@@ -146,12 +146,17 @@ git branch --list <task-branch>
 git ls-remote --heads origin refs/heads/<task-branch> # no output means deleted
 ```
 
-After merge confirmation, delete the exact remote or local task branch only if either
-still exists. Do not touch unrelated branches:
+After merge confirmation and the base-branch switch, delete the exact remote or local
+task branch only if it still exists. Do not touch unrelated branches:
 
 ```bash
-git push origin --delete <task-branch>
-git branch -D <task-branch>
+task_branch="<task-branch>"
+if git ls-remote --exit-code --heads origin "refs/heads/$task_branch" >/dev/null; then
+  git push origin --delete "$task_branch"
+fi
+if git show-ref --verify --quiet "refs/heads/$task_branch"; then
+  git branch -D "$task_branch" # safe only after the merge was confirmed
+fi
 ```
 
 ## Common field gotchas

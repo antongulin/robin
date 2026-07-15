@@ -288,10 +288,13 @@ git fetch --prune origin
 git status --short --branch
 git branch --list <task-branch>
 git ls-remote --heads origin refs/heads/<task-branch> # no output means deleted
-# Only when the exact remote task branch still exists:
-git push origin --delete <task-branch>
-# Only when the exact local task branch still exists after merge confirmation:
-git branch -D <task-branch>
+task_branch="<task-branch>"
+if git ls-remote --exit-code --heads origin "refs/heads/$task_branch" >/dev/null; then
+  git push origin --delete "$task_branch"
+fi
+if git show-ref --verify --quiet "refs/heads/$task_branch"; then
+  git branch -D "$task_branch" # only after confirmed merge and base-branch switch
+fi
 ```
 
 Delete only the branch created for this task. Never delete unrelated local or remote
