@@ -37,7 +37,12 @@ Read AGENTS.md in the robin repo for full rules.
 
 ## Quick install
 
-In a terminal, from your project folder, run either:
+> [!IMPORTANT]
+> Run the installer from the root of the Git repository you want Robin to review — not
+> from your home directory. The workflow and secrets are configured once per repository;
+> the companion agent skill is installed globally once per machine.
+
+From the target repository, run either:
 
 ```bash
 npx robin-review
@@ -51,6 +56,8 @@ curl -fsSL https://robinreview.dev/install.sh | bash
 
 Either one creates `.github/workflows/robin.yml` for you (it never overwrites an existing
 file) and installs the [companion chat skill](#robin-in-your-editor) into your coding agents.
+Run an installer separately in every repository that should use Robin. Re-running the
+global skill installation is safe and idempotent.
 You still need to add the three secrets — do **Steps 1 and 2** below, then commit and push.
 You can **skip Step 3**: the installer already did it.
 

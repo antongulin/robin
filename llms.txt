@@ -14,7 +14,7 @@
 
 ## Setup
 
-- One-line install (writes the workflow): `npx robin-review` or `curl -fsSL https://robinreview.dev/install.sh | bash`
+- From the target Git repository root, run `npx robin-review` or `curl -fsSL https://robinreview.dev/install.sh | bash`. The workflow and secrets are per repository; the companion agent skill is global per machine. Running either command from `~` fails because there is no target Git repository.
 - Or add `.github/workflows/robin.yml` calling `antongulin/robin/.github/workflows/review.yml@v1`.
 - Three secrets: `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`. Free OpenRouter: base `https://openrouter.ai/api/v1`, model `openrouter/free`.
 
