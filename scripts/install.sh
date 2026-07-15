@@ -56,8 +56,8 @@ YAML
   info "Created $WORKFLOW_PATH (ref: ${REF})"
 fi
 
-# Install the companion chat skill so any coding agent can drive Robin's PR review
-# loop from plain chat ("review with Robin"). Uses the cross-platform skills CLI to
+# Install the companion chat skill so any coding agent can automatically drive Robin's
+# review loop during ordinary PR work. Uses the cross-platform skills CLI to
 # install for every detected agent, globally. Best-effort — the GitHub Action works
 # without it. Set ROBIN_SKILL=0 to skip.
 install_skill() {
@@ -72,7 +72,7 @@ install_skill() {
   info "Installing the Robin chat skill for all coding agents…"
   # --agent '*' = every supported agent, --global = user-level (available everywhere).
   if npx -y skills add https://github.com/antongulin/robin --skill robin --agent '*' --global --yes >/dev/null 2>&1; then
-    info "Robin chat skill installed (all agents). Say \"review with Robin\"."
+    info "Robin chat skill installed (all agents). It activates automatically for PR work."
   else
     warn "Couldn't auto-install the skill. Run: npx skills add https://github.com/antongulin/robin --all --global"
   fi

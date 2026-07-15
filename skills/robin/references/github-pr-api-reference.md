@@ -130,15 +130,28 @@ gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed
 gh pr merge <number> --squash --delete-branch   # or --merge / --rebase per the repo
 ```
 
-`--delete-branch` removes both the local and remote branch and checks you out onto the
-base branch, so no manual `git branch -d` is needed.
+`--delete-branch` requests local and remote branch deletion, but do not assume every
+cleanup step succeeded. Confirm the merge, switch explicitly to the recorded base branch,
+sync it, and verify both task-branch refs.
 
 Confirm after merge:
 
 ```bash
 gh pr view <number> --json state,closedAt,mergedAt,mergedBy,mergeCommit,url
+git switch <base-branch>
+git pull --ff-only origin <base-branch>
 git fetch --prune origin
 git status --short --branch
+git branch --list <task-branch>
+git ls-remote --heads origin refs/heads/<task-branch> # no output means deleted
+```
+
+After merge confirmation, delete the exact remote or local task branch only if either
+still exists. Do not touch unrelated branches:
+
+```bash
+git push origin --delete <task-branch>
+git branch -D <task-branch>
 ```
 
 ## Common field gotchas

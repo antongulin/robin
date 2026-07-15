@@ -1,482 +1,345 @@
 ---
 name: robin
-version: 2.4.3 # x-release-please-version
-description: Use when the user mentions Robin for a pull request — "review with Robin", "run Robin", "robin this PR", "create a PR with Robin", "ask Robin to review", "start the Robin loop" — or, more generally, when a GitHub pull request needs review monitoring, reviewer-comment triage, PR feedback fixes, comment replies, unresolved-thread cleanup, or a bounded wait → fix → re-review → merge loop.
+description: Use whenever an agent creates, updates, reviews, or completes a GitHub pull request. Detect whether Robin is installed in the repository; when it is, automatically drive the PR through a bounded review, verified-fix, reply, thread-resolution, re-review, authorized-merge, and cleanup loop without requiring the user to mention Robin. Also use for explicit Robin requests, PR feedback triage, unresolved review threads, or waiting for PR checks.
+metadata:
+  version: 2.4.3 # x-release-please-version
 ---
 
-# Robin — PR Review Loop
+# Robin PR Completion Protocol
 
-[Robin](https://robinreview.dev) is a free AI code reviewer that runs as a GitHub
-Action: it posts a review with severity-tiered findings (High / Medium / Low /
-Suggestion) on each pull request. This skill drives a PR from "Robin is reviewing"
-to a mergeable state — without losing comments, hiding unresolved threads, trusting
-stale review state, or over-reviewing.
+Robin is an AI reviewer that runs as a GitHub Action. Use this skill as the owner-side
+protocol for completing a PR; do not blindly obey Robin. Robin may see only the diff and
+may use a weak rotating model, while the working agent has repository and conversation
+context. Fix verified bugs and reject noise with a factual reply.
 
-Robin's reviews come from a **rotating free model that may be weak**. Treat its
-findings as suggestions to verify, never as orders to obey. You (the agent running
-this skill) are often the more capable reviewer. Fix real bugs; drop the noise.
+## Non-negotiable behavior
 
-## When to Use
+- Activate for ordinary PR work without requiring the user to say “Robin.”
+- Detect Robin on the PR base branch before entering the loop. Do not install it unless
+  the user asks.
+- Continue through waits and review rounds autonomously. A running check, a pushed fix,
+  or a requested re-review is not a terminal state.
+- Count completed Robin review results. Start with a budget of 5. Above 5, obtain approval
+  for each additional review unless the user explicitly pre-authorized continuous review.
+- Reply separately to every Robin inline comment, including rejected findings, and
+  resolve every review thread after replying.
+- Fix only verified defects. Severity and confidence prioritize investigation; they do
+  not prove correctness.
+- Never merge without explicit authorization. “Create a PR” does not authorize merge.
+- Preserve unrelated local changes and branches. Never stash, discard, commit, or delete
+  them merely to complete this protocol.
+- Never prepare or publish a release automatically.
 
-- User says "review with Robin", "run Robin", "robin this PR", "start the review loop",
-  "watch my PR", "fix PR feedback", or "wait for review".
-- A PR has Robin (or human) reviewer comments to evaluate.
-- A PR needs every actionable comment replied to and every thread resolved.
-- Robin's GitHub Action failed and needs a retry before judging the code.
-- A newly created PR may already have an auto-triggered Robin run.
+## Terminal states
 
-## Core Rule — a PR is not green until all are true
+Do not hand control back merely because Robin or another check is still running. Continue
+polling, triaging, fixing, replying, resolving, and re-reviewing until exactly one of these
+states is reached:
 
-- The latest Robin pass is clean / has no actionable issues, **or** every issue it
-  raised has been fixed-or-justified.
-- Required checks and deploy previews are green or intentionally neutral/skipped.
-- Every actionable reviewer comment has a separate inline reply.
-- Every review thread is resolved, including outdated ones.
-- The branch is mergeable and local verification has passed.
+1. **READY:** all gates pass, but merge authorization is absent.
+2. **COMPLETE:** an authorized merge is confirmed and cleanup is verified.
+3. **CAP:** the currently approved review budget was used and another review requires
+   authorization.
+4. **BLOCKED:** repeated infrastructure failure, unsafe cleanup conflict, missing access,
+   or another condition that cannot be resolved without the user.
 
-Do not rely on `reviewDecision` alone. GitHub may keep stale `CHANGES_REQUESTED`
-after a later clean review.
+Provide brief progress updates during long waits, but keep ownership of the task until a
+terminal state is reached.
 
-Do not post `/robin` immediately after PR creation. Most repos auto-trigger Robin on
-creation, and an extra `/robin` starts a duplicate reviewer run.
+## 1. Establish policy and safety
 
-## Bounded Loop — at most 5 passes
+When planning to create a PR, record two independent policies before creation.
 
-Track an iteration counter, starting at the first Robin review pass. **Run at most 5
-review → fix → re-review passes per PR.**
+**Merge policy:**
 
-- A pass is one **review → fix → re-review round**, counted once. The auto-triggered
-  review on PR creation starts pass 1; each subsequent fix-and-re-review is the next
-  pass. So a re-review does *not* add a pass on its own — it closes the round its fix
-  opened. Counting rounds (not raw Robin runs) is what keeps the loop from drifting to 6
-  or 7. State the current count each pass ("pass 3 of 5").
-- **A fix push may auto-trigger the re-review for you.** Many repos run Robin on
-  `pull_request: [opened, synchronize]`, so pushing commits starts a fresh review on its
-  own — that run *is* the re-review half of the current pass, not a bonus. When that
-  happens, watch it; do **not** also post `/robin` (that's the duplicate-run mistake).
-  Repos that run Robin only on the `/robin` comment won't auto-trigger — there you
-  request the re-review yourself (step 5).
-- On reaching pass 5: do **not** silently push another fix or request another review —
-  either would start a 6th round. Evaluate the pass-5 review, fix any remaining
-  *verified* bugs, reply to and resolve open threads, then **stop and ask the user** how
-  to proceed (see below) rather than looping further on your own.
-- Stop early the moment a pass is clean and the green-light gate passes — you do not
-  need to use all 5.
+- Explicit instructions such as “merge when green” or “create, review, and merge it”
+  authorize automatic merge for this PR.
+- Otherwise ask once whether the user wants automatic merge when green. Until the user
+  says yes, record the policy as **manual**.
+- A standing preference applies only when the user clearly made it standing. Never infer
+  one from an earlier merge.
 
-**At the 5-pass ceiling without a green light, ask the user — don't decide alone.**
-Robin almost always emits *some* feedback (noise included), so a PR can keep drawing new
-low/medium comments forever. Reaching pass 5 without convergence means only the user
-should choose whether to keep spending passes. Present a short status and ask, e.g.:
+**Review-extension policy:**
 
-> Used all 5 Robin passes. Verified issues still open: `<list or "none">`. Noise skipped:
-> `<count>`. I can (a) keep going — but that's past the 5-pass cap, so only if you say so
-> — or (b) stop here and merge as-is. Which?
+- Default to **one-at-a-time**: reviews 1–5 are pre-approved; every review above 5 needs
+  a new explicit approval.
+- `One more Robin review` increases the budget by exactly one. It does not authorize all
+  later reviews. If review 6 leads to a need for review 7, ask again.
+- Explicit instructions such as “full auto,” “keep running Robin until green,” “do not
+  ask between extra Robin rounds,” or an equivalent goal authorize **continuous** extra
+  reviews for this PR. Continue without per-review questions, but still stop early when
+  green and stop on BLOCKED infrastructure or safety conditions.
+- `Auto-merge` alone authorizes only merge; it does not authorize reviews above 5.
+- `Full auto` or “auto mode through Robin and merge” authorizes both continuous reviews
+  and merge for this PR. Do not infer a standing cross-PR policy unless stated explicitly.
 
-Frame (a) as an explicit override, not a routine choice: the whole point of the cap is
-that unbounded re-review is the failure mode. Default to **stopping and asking** — never
-auto-loop past 5. The user can also pre-authorize either side up front ("keep going until
-clean, no cap" / "just merge whenever it's green"); honor an explicit instruction like
-that over this default.
+For an existing PR with no recorded authorization, use manual mode and continue through
+the review loop; stop at READY.
 
-Over-reviewing a PR is a failure mode, not thoroughness. Re-running Robin indefinitely
-burns GitHub Actions minutes and free-model calls for diminishing returns. Five passes
-is the ceiling; most PRs converge in one or two.
-
-## 0. Confirm the Skill Is Current (best-effort)
-
-A stale copy of this skill can follow an outdated protocol, so at the start of a run do a
-quick, **non-blocking** version check. You already know your installed version — it's the
-`version:` field in this skill's own frontmatter above. Compare it to the latest release:
-
-```bash
-gh release view --repo antongulin/robin --json tagName -q .tagName 2>/dev/null | sed 's/^v//'
-```
-
-- Up to date, **or the check fails** (offline, rate-limited, `gh` missing) → just proceed.
-  Never block the PR work on this — a failed version check is not a reason to stop.
-- Behind → tell the user (e.g. *"robin skill is v2.0.6, latest is v2.1.0"*) and update
-  **only** with their OK, or immediately if they've pre-authorized ("keep robin up to
-  date"). The installer is cross-agent, so one command updates every coding agent that has
-  it (Claude Code, Cursor, Copilot, Windsurf, …) — don't hunt for per-agent paths yourself:
-
-  ```bash
-  npx -y skills add https://github.com/antongulin/robin --skill robin --agent '*' --global --yes
-  # or the maintained wrapper: bash scripts/update.sh
-  ```
-
-  An update takes effect on the **next** run — the skill executing now is already loaded in
-  context. So finish this PR on the current version; the newer one applies next time.
-
-## 1. Discover Context
-
-```bash
-gh pr view --json number,url,baseRefName,headRefName,state,reviewDecision,mergeStateStatus,statusCheckRollup
-gh repo view --json nameWithOwner -q .nameWithOwner
-```
-
-If no PR is obvious, ask for the PR number. Check local safety before edits:
+Capture the initial repository state so unrelated changes can be preserved and reported:
 
 ```bash
 git status --short --branch
+gh repo view --json nameWithOwner -q .nameWithOwner
 ```
 
-Stage only files relevant to reviewer fixes. Leave unrelated dirty files alone.
-
-## 2. Fetch Review Data
+Once the PR exists, record its identity and branches:
 
 ```bash
-gh pr view <number> --json comments,reviews,reviewDecision,mergeStateStatus,statusCheckRollup
-gh api repos/<owner>/<repo>/pulls/<number>/comments --paginate
+gh pr view --json number,url,baseRefName,headRefName,state,reviewDecision,mergeStateStatus,statusCheckRollup
 ```
 
-Fetch review-thread state with GraphQL — REST does not reliably expose `isResolved`.
-See [references/github-pr-api-reference.md](references/github-pr-api-reference.md) for
-the full `reviewThreads` query and the `resolveReviewThread` mutation.
+Stage only task or verified-review-fix files. Never use broad staging when unrelated files
+exist.
 
-## 3. Handle Auto-Triggered Review
+## 2. Detect Robin
 
-When a PR was just created, or no completed Robin result exists yet, **poll** for a
-result — don't fire one long blind sleep. A healthy Robin run finishes in about a
-minute, often less. Poll roughly every 30s so you notice a new review comment promptly
-and can act on it while it's fresh:
+Robin must exist on the PR’s base branch for an opened PR to trigger it. Fetch the base
+and inspect that tree, not only the feature branch:
 
 ```bash
-# poll loop — repeat until a Robin result appears or the escalation threshold hits
-sleep 30
+git fetch origin <base-branch>
+git grep -n 'antongulin/robin' origin/<base-branch> -- .github/workflows
+```
+
+Also recognize an equivalent workflow discovered through `gh api` when the base is not
+available locally. Confirm that it listens to `pull_request` or accepts `/robin` through
+`issue_comment`.
+
+- Robin present: run this entire protocol automatically.
+- Robin absent: continue the user’s normal PR task without the Robin loop and mention the
+  absence. Do not add Robin unless asked.
+- Robin is added only on the current PR branch: it cannot review that PR automatically
+  because the workflow is absent from the base. Explain this limitation rather than
+  pretending a review will arrive.
+
+At the start, a best-effort version check is allowed but must never delay PR work:
+
+```bash
+gh release view --repo antongulin/robin --json tagName -q .tagName 2>/dev/null
+```
+
+Report an outdated installed skill, but update it only with prior authorization.
+
+## 3. Observe a completed review
+
+The PR-open review is normally automatic. Do not immediately post `/robin`; first inspect
+PR comments, reviews, checks, and Actions runs. Poll about every 30 seconds.
+
+```bash
 gh pr view <number> --json comments,reviews,statusCheckRollup
 gh run list --limit 20 --json databaseId,event,status,conclusion,workflowName,createdAt,url,displayTitle,headBranch
 ```
 
-**Escalation threshold (~3 min).** Because a normal run lands in ≈1 min, silence past
-~3 minutes means something is likely wrong — most often a flaky free-model route or an
-unstable provider, occasionally just a slow one. Don't keep sleeping blindly; go look
-at GitHub Actions:
+- If a Robin run is active, watch it and keep polling.
+- If a run fails, classify it as infrastructure failure, inspect it, and retry the failed
+  run once before considering a slash command.
+- If no Robin signal appears after about 3 minutes, confirm the workflow trigger. Only
+  then post `/robin`.
+- Cap a single wait around 8–10 minutes. Report a persistent provider or Actions failure
+  as BLOCKED with the run URL; never treat silence or an empty result as a clean review.
+
+Increment the review counter only when a completed, usable Robin result arrives. For an
+existing PR, the latest usable result on the current head starts this completion run as
+review 1; do not count obsolete historical results. Each completed re-review increments
+the counter once. Track both `reviews_used` and `reviews_approved`; initialize the latter
+to 5.
+
+## 4. Fetch and classify every finding
+
+Fetch top-level review data, REST inline comments, and GraphQL review-thread state. Read
+[references/github-pr-api-reference.md](references/github-pr-api-reference.md) for the
+exact queries, reply endpoint, and resolution mutation.
+
+Classify every finding against the actual repository:
+
+- **FIX:** confirmed correctness, security, reliability, data-loss, test, or materially
+  misleading documentation defect. Fix it, regardless of Robin’s stated severity.
+- **REJECT:** false positive, duplicate, already handled, subjective churn, conflict with
+  repository conventions, or a claim disproved by broader context. Do not change code.
+- **INFRA:** reviewer timeout, failed workflow, empty response, or superseded/cancelled
+  run. Handle the run; do not change code.
+
+Suggestions are off by default. Apply one only when it prevents a concrete problem or is
+clearly necessary for the requested change. Never invent a change merely to satisfy the
+reviewer.
+
+## 5. Close the current review before starting another
+
+For each completed Robin result, perform this sequence in order:
+
+1. Implement only FIX items in the repository’s existing style.
+2. Run proportionate local verification and `git diff --check`.
+3. Stage only intended files and create a local commit when code changed.
+4. Reply individually to every Robin inline comment from this review:
+   - FIX: name the correction and local commit.
+   - REJECT: state the concrete repository evidence for not changing it.
+5. For findings present only in the review body, post one itemized disposition comment
+   because GitHub provides no inline reply target.
+6. Resolve every handled review thread, including outdated threads.
+7. Re-query GraphQL and verify zero unresolved handled threads and zero unanswered Robin
+   inline comments.
+8. Only now decide whether to push and re-review under step 6.
+
+Example replies:
+
+- `Fixed in abc123: abort and timeout failures now return distinct errors.`
+- `Not changing: the value is passed as a bound query parameter at db.ts:84, so the
+  reported interpolation path does not exist.`
+
+Do not use a single top-level summary as a substitute for inline replies. Do not start
+the next review while replies or threads from the current review remain open.
+
+## 6. Decide whether to re-review
+
+- No code changed because all findings were REJECT: do not spend another Robin review.
+  Proceed to the green-light gate.
+- Code changed and `reviews_used < reviews_approved`: push it and obtain another Robin
+  result.
+- The approved budget is exhausted and another result would materially improve confidence:
+  follow the budget-extension rules below.
+
+Robin’s recommended workflow does not review every push. After pushing a fix:
+
+1. Inspect the workflow and Actions runs for `synchronize` or `review-on-synchronize`.
+2. If the push started Robin, watch that run and do not post a duplicate command.
+3. Otherwise request the normal manual re-review with `/robin`, including the fix commit
+   and verification summary.
 
 ```bash
-gh run view <run-id>                # status of a still-running job — is it stuck?
-gh run view <run-id> --log-failed   # only once it has completed with a failure
-```
-
-Use plain `gh run view` for an `in_progress` run — `--log-failed` returns nothing until
-a run has finished with failed steps, so it only applies to the failure branch below.
-
-- Run still `in_progress` well past ~1 min → a slow/degraded provider. Keep polling at
-  30s, but cap the total wait (about 8–10 min) before treating it as INFRA.
-- Run `completed` with `conclusion: failure`, or a Robin status comment saying it
-  couldn't finish the review → INFRA (step 4). Rerun the failed run before any `/robin`.
-- No Robin run appears at all after ~3 min → auto-trigger likely didn't fire; fall
-  through to the `/robin` fallback below.
-
-Look for any Robin-started signal in PR comments, reviews, or check runs. Do not require
-one exact phrase. Examples:
-
-- A comment headed `🏹 Robin` / `## :bow_and_arrow: Robin`
-- `On it — taking a look at this pull request`
-- A GitHub Actions run whose workflow/display title is `Robin`, or looks like PR review /
-  code review automation
-
-If a Robin-started signal exists, do not post `/robin`. Watch the in-flight run until it
-finishes or clearly times out:
-
-```bash
-gh run watch <run-id> --interval 10 --exit-status
-```
-
-Only post `/robin` as a fallback after checking GitHub Actions:
-
-1. If a Robin run failed, rerun the failed run first:
-
-```bash
-gh run rerun <run-id> --failed
-gh run watch <run-id> --interval 10 --exit-status
-```
-
-2. If rerun is unavailable, the rerun fails, or Robin never appears after the grace
-   period, alert the user instead of creating duplicate runs blindly.
-3. If there is no Robin signal, no related Actions run, and enough time has passed to
-   rule out normal auto-trigger lag, request a review:
-
-```bash
-gh pr comment <number> --body "/robin"
-```
-
-Robin's failed-review comment says so explicitly ("I couldn't finish the review this
-time… Free model routes drop sometimes"). That is **INFRA**, not feedback — handle it in
-step 4, never change code for it.
-
-## 4. Classify Feedback — verify, don't obey
-
-**Robin's comments are suggestions, not orders.** A rotating free model produced them;
-you are often more capable. Treat every finding as a *hypothesis to verify against the
-actual code*. Never auto-apply.
-
-Robin tags each inline finding with a severity and a `confidence` (e.g.
-`🚨 HIGH · confidence: medium`). Use both as hints — neither is proof.
-
-Classify each finding:
-
-- **LEGIT — fix it:** you reproduced or confirmed the problem in the code. Real bugs,
-  security risks, data loss, broken/missing tests, race conditions, wrong behavior,
-  misleading docs. A sharp **Low** that is clearly a real bug is LEGIT. Fix it.
-- **NOISE — skip it:** you checked and the issue is not real, is subjective style that
-  conflicts with repo conventions, is a duplicate already handled, or depends on context
-  Robin could not see in the diff (it only sees changed lines). An unverifiable **High**
-  is NOISE — high severity is not evidence.
-- **INFRA — don't touch code:** Robin failed to run, timed out, or returned an empty
-  response. Rerun the failed Action before considering `/robin`.
-
-Filtering guidance:
-
-- **Fix only LEGIT findings.** Severity orders your effort (LEGIT High before LEGIT Low);
-  it does not decide what is real — your verification does.
-- **Suggestions are optional by default.** Apply one only if it is clearly correct and
-  cheap. Skip taste/style unless it matches the repo's existing conventions.
-- **`confidence: low` raises the bar** — verify extra carefully before spending a fix on it.
-- **Never invent a fix to satisfy Robin.** If a finding is wrong or based on unseen
-  context, that is NOISE — reply with the reason and move on.
-
-Handle INFRA first (rerun the Action). If Robin cannot be rerun or keeps failing for
-infrastructure reasons, alert the user with the failing run URL and stop the loop.
-
-## 5. Fix Legitimate Issues
-
-Implement LEGIT fixes in the codebase's existing style, simplest fix first. After edits,
-run the repo's verification — common examples:
-
-```bash
-npm run typecheck && npm run lint && npm run test && npm run build
-git diff --check
-```
-
-Commit and push:
-
-```bash
-git add <intended-files>
-git commit -m "fix(pr-feedback): address Robin review comments"
-git push
-```
-
-Now get the re-review — but **only if you are below 5 passes**, and mind how the repo
-triggers Robin so you don't start a duplicate run:
-
-- **If the push already auto-triggered Robin** (the common `pull_request:
-  [opened, synchronize]` config — check `gh run list` / PR comments the way step 3 does),
-  that run *is* your re-review. Watch it; do **not** also post `/robin`.
-- **Only if no auto-run appears after the push** (repo runs Robin solely on the `/robin`
-  comment) request one explicitly:
-
-```bash
-gh pr comment <number> --body "/robin
+gh pr comment <number> --body '/robin
 
 Fixed in <commit>:
-- <item>
+- <verified issue>
 
 Verification:
-- <command>
-"
+- <command and result>'
 ```
 
-## 6. Reply to Every Reviewer Comment
+Then return to step 3 without asking the user to prompt the next round.
 
-Each original reviewer comment gets its own inline reply — including ones you skipped as
-NOISE. Do not rely on a single summary comment. Use the replies endpoint, not
-`gh pr comment` (see the API reference):
+When the approved budget is exhausted, fix verified defects, reply, and resolve as usual.
+Then decide whether another review is actually useful:
 
-```bash
-gh api -X POST \
-  repos/<owner>/<repo>/pulls/<number>/comments/<comment-id>/replies \
-  -f body='Fixed in <commit>: <specific resolution>.'
-```
+- If the PR is green, or only rejected noise remains, stop without another review.
+- If verified issues remain, code changed and needs validation, or material uncertainty
+  remains, another review is useful.
+- In continuous mode, increase `reviews_approved` by one and proceed automatically.
+- In one-at-a-time mode, enter CAP and ask: `Used <N> approved Robin reviews. Do you want
+  me to run review <N+1>?` A yes increases the budget by exactly one. After that review,
+  repeat this decision and ask again if yet another review is useful.
 
-Keep replies factual:
+Check synchronize behavior before pushing at a budget boundary. If a push itself would
+start the unapproved next review, request approval before pushing. Otherwise push the
+verified fix, do not post `/robin`, and enter CAP. Never use uncertainty as a reason for
+an automatic extra review in one-at-a-time mode.
 
-- `Fixed in abc123: added a timeout and error branch to the fetch call.`
-- `Not changing: this path is already covered by the parameterized query above — no injection risk here.`
-- `Skipping: this flags a variable as unused, but it is read in the unchanged code below the diff.`
+## 7. Green-light gate
 
-## 7. Resolve Threads
+Before declaring READY or merging, verify all of the following:
 
-After replying, resolve each thread with the `resolveReviewThread` GraphQL mutation
-(see the API reference). Then re-query `reviewThreads` and confirm:
+- Local verification appropriate to the change passed.
+- Required GitHub checks are successful or intentionally neutral/skipped.
+- No Robin or relevant required check is still running.
+- Every reviewer finding has a recorded disposition.
+- Every inline reviewer comment has a later owner reply.
+- Every review thread, including outdated threads, is resolved.
+- The PR is mergeable and has no unresolved conflict.
+- The used and approved review counts are known and no unapproved review occurred.
 
-- `isResolved: true` for every thread.
-- Every non-owner reviewer comment has a later owner reply in the same thread.
-- Outdated threads with comments are also resolved.
+Use GraphQL thread state as authoritative. `reviewDecision: CHANGES_REQUESTED` may be stale
+after later clean results; treat it as stale only when the latest findings are addressed,
+all threads are resolved, and all checks pass.
 
-## 8. Green-Light Gate
+In manual mode, report the gate summary and enter READY. Ask for merge permission if it
+has not already been requested. In automatic mode, proceed directly to merge.
 
-Before merge, verify all:
+## 8. Authorized merge and cleanup
 
-```bash
-gh pr checks <number>
-gh pr view <number> --json state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,comments
-```
-
-Re-query GraphQL review threads. State explicitly:
-
-- Total review threads, and how many are resolved.
-- Whether any reviewer comment lacks a reply.
-- Latest Robin result, and how many findings were fixed vs. skipped-as-noise (with reasons).
-- How many review passes were used (out of the 5 ceiling).
-- Check / deploy status.
-
-If the latest clean pass exists but `reviewDecision` is still `CHANGES_REQUESTED`, treat
-it as stale only when all threads are resolved and checks are green.
-
-**Before merging, handle release notes if the repo publishes them.** This has to happen
-*now*, pre-merge: a squash merge freezes the PR title/body into the commit the release
-tooling reads, and once merged the branch is gone. See the **Release Notes** reference at
-the end of this skill — detect the repo's mechanism and prepare notes before you ask to
-merge.
-
-**When the gate passes, tell the user it's ready and ask before merging.** Merging is
-the one irreversible step here, so don't do it silently. Report the gate summary above
-and ask, e.g. *"PR #123 is green and ready to merge — want me to merge it?"* Wait for a
-yes. The user can pre-authorize this ("merge automatically when it's green"); if they
-have, skip the question and merge.
-
-## 9. Merge and Clean Up
-
-Only after the green-light gate, the release-notes step (if the repo publishes them —
-step 8), **and** the user's go-ahead or their standing pre-authorization.
-
-**Pick the merge method the repo actually allows — don't assume.** `--merge` fails on a
-squash-only repo, and using the wrong method can defeat release tooling that reads the
-squash commit. Check first:
+Merge only after the gate passes and authorization exists. Inspect repository settings
+and conventions before selecting squash, merge, or rebase. Honor an explicit method or
+project instruction first. If exactly one method is allowed, use it. In repositories that
+generate releases from conventional commits, prefer squash so one PR produces one release
+entry. Otherwise follow recent repository history; ask before merging if the method remains
+materially ambiguous. Do not change repository settings.
 
 ```bash
 gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed
+gh pr merge <number> --squash --delete-branch # use the selected allowed method
+gh pr view <number> --json state,mergedAt,mergedBy,mergeCommit,url
 ```
 
-Choose the matching flag — `--squash`, `--merge`, or `--rebase`. **In a repo that
-auto-releases (release-please / semantic-release / changesets), prefer `--squash` even
-when merge commits are also allowed.** A merge commit embeds the (conventional) PR title
-in its own message, so the release tool counts it *and* the underlying commit — you get
-duplicate changelog entries. Squash collapses the PR to one commit whose subject is the
-PR title, which becomes exactly one clean release-note line. Only fall back to `--merge`
-when the individual commits are each meant to be their own changelog entry (rare, and
-usually a sign the PR should have been split). If still unsure, ask. Then merge, letting
-`gh` handle the branch:
+Do not assume `--delete-branch` completed every local operation. After confirming the PR
+is merged:
+
+1. Switch explicitly to the recorded PR base branch.
+2. Fast-forward it from its upstream.
+3. Fetch and prune stale remote-tracking refs.
+4. Verify the task branch is absent remotely; delete that exact remote branch if the merge
+   command left it behind.
+5. Delete the local task branch if it remains. Force-delete only after confirming the
+   squash/rebase/merge landed.
+6. Verify the current branch, upstream alignment, remaining branches, and working tree.
 
 ```bash
-gh pr merge <number> --squash --delete-branch   # swap --squash for the allowed method
+git switch <base-branch>
+git pull --ff-only origin <base-branch>
+git fetch --prune origin
+git status --short --branch
+git branch --list <task-branch>
+git ls-remote --heads origin refs/heads/<task-branch> # no output means deleted
+# Only when the exact remote task branch still exists:
+git push origin --delete <task-branch>
+# Only when the exact local task branch still exists after merge confirmation:
+git branch -D <task-branch>
 ```
 
-`--delete-branch` deletes **both** the local and remote branch and checks you out onto
-the base branch — so there is no separate `git branch -d` to run, and no default-branch
-guard to worry about. Just confirm, refresh, and prune:
+Delete only the branch created for this task. Never delete unrelated local or remote
+branches. Preserve pre-existing uncommitted files; if they prevent a safe switch or pull,
+enter BLOCKED and report exactly which cleanup postcondition remains incomplete.
 
-```bash
-gh pr view <number> --json state,mergedAt,mergedBy,mergeCommit,url   # confirm it merged
-git pull --ff-only           # you're on the default branch now; bring it up to date
-git fetch --prune            # drop the stale remote-tracking ref
-git status --short --branch   # confirm a clean tree on the default branch
-```
+## 9. Final report and optional release offer
 
-Edge cases: if a local branch somehow survives (e.g. you were never checked out on it and
-`gh` couldn't remove it), delete it with `git branch -d <branch>`, or `git branch -D`
-if it looks unmerged after a squash — confirm the merge landed via `gh pr view` first.
-If the tree wasn't clean going in, you likely staged unrelated files back in step 1 —
-resolve that rather than carrying junk onto the default branch.
+Report:
 
-**If this merge published a release** — you merged a `chore: release X.Y.Z` PR, or the
-merge auto-tagged a version — enrich that release's notes now, automatically. See **Release
-Notes → Phase B**. It's commit-free and bump-free, so there's nothing to confirm.
+- PR number, URL, and final state.
+- Robin reviews used, including how many were within the default 5 and how many were
+  additionally approved.
+- FIX and REJECT counts with a concise explanation.
+- Replied comments and resolved threads, expressed as verified totals.
+- Local and GitHub check results.
+- Merge authorization and merge result.
+- Current base branch and upstream sync state.
+- Local/remote task-branch deletion state.
+- Unrelated uncommitted files preserved, or `none`.
 
-## Release Notes
+After an authorized merge reaches COMPLETE, detect whether the repository already has an
+established release mechanism. If it does and the merged change appears releasable, end
+with one optional question: `Do you want me to prepare and publish a release?` Treat that
+as a separate task requiring a new explicit yes. Do not edit changelogs, tags, versions,
+or published release notes as part of this PR protocol.
 
-Detection-gated — skip the whole thing if the repo publishes no release notes. There are
-**two phases**: *before* merge you feed the release tooling; *after* the release is cut
-you enrich the published notes. Detect the mechanism once, up front:
+## Common failure modes
 
-```bash
-ls .changeset/ .release-please-manifest.json release-please-config.json 2>/dev/null
-grep -rilE 'release-please|semantic-release|changesets' .github/workflows 2>/dev/null
-gh release list --limit 1        # does the repo publish GitHub Releases at all?
-ls CHANGELOG.md HISTORY.md 2>/dev/null
-```
-
-### Phase A — before merge: feed the tooling (reference for step 8)
-
-You already hold the full context of what this PR did, so you're well placed to make its
-release note *useful* — "Add retry with backoff to the upload client, fixing dropped
-uploads on flaky networks" beats an auto-generated "Merged PR #123." The leverage is
-entirely pre-merge, and the common mistake is hand-writing notes a bot then overwrites:
-
-- **Automated from commits/PRs** (release-please, semantic-release, changesets): the notes
-  are generated from your **conventional-commit messages and PR title/body**, not a file
-  you edit. Make the PR title a clean conventional summary (`feat(upload): retry with
-  backoff on network errors`) and write a body that reads well — a squash merge and the
-  release bot pull from exactly that. Editing the generated `CHANGELOG.md` directly is
-  wasted work; the next release run overwrites it.
-- **Changesets specifically**: add a changeset file (`.changeset/<name>.md`) describing the
-  change in user-facing terms, rather than editing the changelog.
-- **Manually curated changelog** (a Keep-a-Changelog `CHANGELOG.md` with an `Unreleased`
-  section and no bot): offer to add a short human-readable entry under `Unreleased` as a
-  small commit on the branch before merge.
-- **No release notes at all**: skip — don't introduce a changelog the repo never asked for.
-
-### Phase B — after release: enrich the published notes (automatic)
-
-Auto-generated release notes are terse — release-please and friends build them from commit
-*subjects*, so a released version often reads as a bare one-liner. Because you hold the full
-context of what shipped, you can make the published GitHub Release genuinely useful, and
-doing so is **cheap and side-effect-free**: `gh release edit` rewrites the Release body in
-place — **no commit, no new tag, no version bump** (only `feat`/`fix` commits bump), and
-because it edits in place it is fully reversible: a bad rewrite is one more `gh release edit`
-away. So do this **automatically, without asking**, whenever a release you have context for
-is published — unless the user has told you to leave release notes alone (see below).
-
-The trigger depends on the mechanism:
-
-- **A release publishes as part of your loop** — you merged a `chore: release X.Y.Z` PR
-  (release-please), or a `semantic-release` run tagged a version right after your merge. As
-  soon as the `vX.Y.Z` tag / GitHub Release exists, enrich it.
-- **A release will follow later** — you merged an ordinary feature PR into a release-please
-  repo, so no release is cut yet (a separate `chore: release` PR will be, later). You can't
-  enrich a release that doesn't exist; note that it happens when that release PR merges, and
-  if you're also driving that PR, enrich right after it publishes.
-
-To enrich: pull the auto-notes, rewrite them into grouped, plain-language highlights that
-say *what changed and why it matters*, keep the compare/footer link, and replace the body:
-
-```bash
-version=<X.Y.Z>; tag="v$version"
-gh release view "$tag" --json body -q .body          # read the auto-generated notes
-# draft richer notes from the PRs/commits in this release (group by theme, explain impact,
-# keep the "Full changelog: …/compare/…" link), write them to a file, then:
-gh release edit "$tag" --notes-file <path>
-```
-
-Stay faithful — summarize what actually shipped, don't invent features, and match the repo's
-existing tone. A published release is outward-facing, so accuracy matters even though the
-edit is reversible. If `gh release edit` fails (permissions, no such release), report it and
-move on; enrichment is a nicety, never a blocker. This runs by default; a user who wants to
-review first can say so as a standing preference ("ask me before editing release notes" /
-"leave the release notes alone"), and you honor that over the default rather than prompting
-on every release.
-
-## Common Mistakes
-
-- Obeying a finding without verifying it against the code (Robin's model may be weak).
-- Treating severity or `confidence: high` as proof a finding is real.
-- Inventing a fix to satisfy a NOISE comment instead of replying with the reason.
-- Looping past 5 passes / re-running Robin indefinitely instead of asking the user at the ceiling.
-- Miscounting passes — forgetting the auto-triggered review counts, so the loop drifts to 6–7.
-- One long blind `sleep` instead of polling ~30s and escalating to GitHub Actions after ~3 min.
-- Treating a slow/flaky provider as a clean pass rather than checking the Actions run.
-- Replying in one summary comment instead of separate inline replies.
-- Using REST comments only and missing unresolved `reviewThreads`.
-- Posting `/robin` right after PR creation and starting a duplicate run.
-- Treating a failed Robin run (INFRA) as code feedback.
-- Merging silently without telling the user it's ready and getting a go-ahead.
-- Merging while outdated or unresolved threads remain.
-- Leaving the user on the dead merged branch instead of checking out the default branch and deleting the local branch.
-- Hand-editing a generated `CHANGELOG.md` that the release bot will overwrite.
-- Leaving a published release's notes as the terse auto-generated one-liner when you have the context to enrich them (`gh release edit` is commit-free and bump-free — just do it).
-- Staging unrelated dirty files while fixing PR feedback.
+- Waiting once and returning instead of owning the loop to a terminal state.
+- Requiring the user to mention Robin even though the installed workflow is detectable.
+- Treating severity as proof or fixing style noise.
+- Pushing before replying and resolving the current review.
+- Posting `/robin` while an automatic run is already active.
+- Assuming every push auto-runs Robin even though the default workflow uses `/robin` for
+  re-reviews.
+- Counting fix rounds instead of completed review results.
+- Treating approval for “one more” review as permission for every later review.
+- Treating auto-merge permission as continuous review permission.
+- Treating an empty or failed reviewer run as clean.
+- Relying on REST data or `reviewDecision` instead of GraphQL thread state.
+- Merging without explicit authorization.
+- Assuming merge cleanup succeeded without checking the base and task branches.
+- Touching unrelated dirty files, branches, releases, or release notes.
 
 ## References
 
-- [references/github-pr-api-reference.md](references/github-pr-api-reference.md) — exact GitHub API queries and mutations.
-- [references/lessons-learned.md](references/lessons-learned.md) — real failures that shaped this loop.
+- [references/github-pr-api-reference.md](references/github-pr-api-reference.md) — exact
+  GitHub API queries and mutations.
+- [references/lessons-learned.md](references/lessons-learned.md) — incidents behind the
+  protocol’s safeguards.

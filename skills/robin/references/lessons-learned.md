@@ -91,12 +91,41 @@ thread is on a stale diff line, not that it can be ignored.
 fixing and re-requesting, burning GitHub Actions minutes and free-model calls for hours
 without converging.
 
-**Fix in the skill:** Cap the loop at 5 review passes. On the ceiling, fix remaining verified
-bugs, reply/resolve open threads, run the green-light gate, and then **stop and ask the user**
-whether to keep going or merge as-is — do not auto-merge or auto-loop past 5 on your own.
-(Note: pushing that last fix auto-triggers Robin again; that re-review is the current pass
-completing, not a licence to start a 6th round.) Most PRs converge in one or two passes; five
-is the hard stop.
+**Fix in the skill:** Count completed Robin results rather than loosely defined fix rounds,
+and cap them at 5. On the ceiling, fix remaining verified bugs and reply/resolve open
+threads, but do not request review 6 without an explicit override. A “one more” approval
+extends the budget by exactly one, so review 7 requires another approval. Explicit full-auto
+review can pre-authorize later rounds for that PR. Check synchronize behavior before
+pushing because some repositories make the push itself consume the next review. Most PRs
+converge in one or two reviews; five remains the default budget.
+
+## Re-review started before old threads were closed
+
+**What happened:** Agent pushed a fix first, which started another Robin run. It then
+replied to and resolved the previous review while the next reviewer was already reading
+the PR. Some agents returned after the push and never closed the old threads at all.
+
+**Fix in the skill:** Make the order mandatory: fix, verify, commit locally, reply to every
+finding, resolve and re-query every thread, then push and re-review. A pushed commit or
+active review is explicitly non-terminal.
+
+## Assuming every fix push triggers Robin
+
+**What happened:** Agent pushed fixes and waited for a re-review that never started. The
+recommended Robin workflow intentionally omits `synchronize`; re-reviews normally use the
+`/robin` command.
+
+**Fix in the skill:** Inspect the installed workflow and Actions runs after a push. Watch an
+actual synchronize-triggered run when present; otherwise request `/robin`. Never do both.
+
+## Cleanup hid unrelated local work
+
+**What happened:** Agent treated a dirty tree as review debris, stashed or deleted files,
+then reported cleanup as successful.
+
+**Fix in the skill:** Snapshot the initial worktree, stage only task files, delete only the
+task branch, and verify cleanup postconditions. Preserve and report unrelated changes; if
+they prevent switching or pulling safely, stop with an exact cleanup blocker.
 
 ## Merge commits duplicated a release-please changelog entry
 
