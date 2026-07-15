@@ -50,7 +50,11 @@ if [ -z "${ROBIN_REF+x}" ]; then
   elif [ -d "$WORKFLOW_DIR" ]; then
     while IFS= read -r candidate; do
       if is_robin_workflow "$candidate"; then
-        if [ -n "$ref_source" ]; then ref_source=""; break; fi
+        if [ -n "$ref_source" ]; then
+          ref_source=""
+          warn "Multiple Robin workflows found; using default ref ($REF)."
+          break
+        fi
         ref_source="$candidate"
       fi
     done < <(find "$WORKFLOW_DIR" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print)

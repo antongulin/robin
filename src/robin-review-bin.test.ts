@@ -66,6 +66,7 @@ describe("robin-review CLI", () => {
     const archive = path.join(dir, ".github", "robin-workflow-archive");
     const canonical = fs.readFileSync(path.join(workflows, "robin.yml"), "utf8");
 
+    expect(output).toContain("Multiple Robin workflows found; using default ref (main)");
     expect(output).toContain("Archived .github/workflows/code-review.yml");
     expect(output).toContain("Archived .github/workflows/ai-review.yaml");
     expect(output).toContain("Archived .github/workflows/legacy-action.yml");

@@ -67,6 +67,9 @@ const robinWorkflows = workflowFiles.filter((candidate) =>
 
 let selectedRef = ref;
 if (!process.env.ROBIN_REF) {
+  if (!fs.existsSync(workflowPath) && robinWorkflows.length > 1) {
+    warn(`Multiple Robin workflows found; using default ref (${ref}).`);
+  }
   const canonicalSource = fs.existsSync(workflowPath)
     ? fs.readFileSync(workflowPath, "utf8")
     : robinWorkflows.length === 1
