@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.0](https://github.com/antongulin/robin/compare/v2.5.1...v2.6.0) (2026-07-15)
+
+
+### Features
+
+* **install:** migrate historical workflows safely ([#78](https://github.com/antongulin/robin/issues/78)) ([fc97bba](https://github.com/antongulin/robin/commit/fc97bbaa58e7a0430d7cdb0c8e2c9098dc4d3d69))
+
 ## [2.5.1](https://github.com/antongulin/robin/compare/v2.5.0...v2.5.1) (2026-07-15)
 
 
