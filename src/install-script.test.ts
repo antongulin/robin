@@ -57,13 +57,33 @@ describe("curl installer", () => {
   it("is idempotent after migration", () => {
     run({ ROBIN_REF: "v1" });
 
+    const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
+    const lfWorkflow = fs.readFileSync(workflowPath, "utf8");
+    fs.writeFileSync(workflowPath, lfWorkflow.replace(/\n/g, "\r\n"));
+
     const output = run();
-    const canonical = fs.readFileSync(
-      path.join(dir, ".github", "workflows", "robin.yml"),
-      "utf8",
-    );
+    const canonical = fs.readFileSync(workflowPath, "utf8");
 
     expect(output).toContain("is already current");
     expect(canonical).toContain("review.yml@v1");
+    expect(canonical).toContain("\r\n");
+    expect(fs.existsSync(path.join(dir, ".github", "robin-workflow-archive"))).toBe(false);
+  });
+
+  it("uses a numbered archive when the first destination has different content", () => {
+    const workflows = path.join(dir, ".github", "workflows");
+    const archive = path.join(dir, ".github", "robin-workflow-archive");
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.mkdirSync(archive, { recursive: true });
+    const legacy =
+      "name: Universal Code Reviewer\r\njobs:\r\n  review:\r\n    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0\r\n";
+    fs.writeFileSync(path.join(workflows, "code-review.yml"), legacy);
+    fs.writeFileSync(path.join(archive, "code-review.yml.disabled"), "different archive\n");
+
+    run();
+
+    expect(fs.readFileSync(path.join(archive, "code-review.yml.1.disabled"), "utf8")).toBe(
+      legacy,
+    );
   });
 });

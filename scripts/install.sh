@@ -37,6 +37,11 @@ is_robin_source_repository() {
     && [ -f .github/workflows/self-test.yml ]
 }
 
+# Treat CRLF and LF workflow copies as equivalent across Git configurations.
+files_equal() {
+  cmp -s <(tr -d '\r' < "$1") <(tr -d '\r' < "$2")
+}
+
 # Preserve an existing modern Robin ref unless ROBIN_REF explicitly overrides it.
 if [ -z "${ROBIN_REF+x}" ]; then
   ref_source=""
@@ -96,7 +101,7 @@ archive_workflow() {
   mkdir -p "$ARCHIVE_DIR"
   base_name="$(basename "$source_path")"
   destination="$ARCHIVE_DIR/${base_name}.disabled"
-  while [ -f "$destination" ] && ! cmp -s "$source_path" "$destination"; do
+  while [ -f "$destination" ] && ! files_equal "$source_path" "$destination"; do
     destination="$ARCHIVE_DIR/${base_name}.${suffix}.disabled"
     suffix=$((suffix + 1))
   done
@@ -125,7 +130,7 @@ else
   fi
 
   canonical_current=0
-  if [ -f "$WORKFLOW_PATH" ] && cmp -s "$WORKFLOW_PATH" "$tmp_rendered"; then canonical_current=1; fi
+  if [ -f "$WORKFLOW_PATH" ] && files_equal "$WORKFLOW_PATH" "$tmp_rendered"; then canonical_current=1; fi
 
   if [ -d "$WORKFLOW_DIR" ]; then
     while IFS= read -r candidate; do

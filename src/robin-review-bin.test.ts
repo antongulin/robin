@@ -103,6 +103,23 @@ describe("robin-review CLI", () => {
     ).toBe(true);
   });
 
+  it("uses a numbered archive when the first destination has different content", () => {
+    const workflows = path.join(dir, ".github", "workflows");
+    const archive = path.join(dir, ".github", "robin-workflow-archive");
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.mkdirSync(archive, { recursive: true });
+    const legacy =
+      "name: Universal Code Reviewer\njobs:\n  review:\n    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0\n";
+    fs.writeFileSync(path.join(workflows, "code-review.yml"), legacy);
+    fs.writeFileSync(path.join(archive, "code-review.yml.disabled"), "different archive\n");
+
+    run();
+
+    expect(fs.readFileSync(path.join(archive, "code-review.yml.1.disabled"), "utf8")).toBe(
+      legacy,
+    );
+  });
+
   it("refuses to overwrite an unrelated canonical workflow", () => {
     const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
     fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
