@@ -39,7 +39,7 @@ is_robin_source_repository() {
 
 # Treat CRLF and LF workflow copies as equivalent across Git configurations.
 files_equal() {
-  cmp -s <(tr -d '\r' < "$1") <(tr -d '\r' < "$2")
+  cmp -s <(sed $'s/\r$//' "$1") <(sed $'s/\r$//' "$2")
 }
 
 # Preserve an existing modern Robin ref unless ROBIN_REF explicitly overrides it.

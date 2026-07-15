@@ -76,9 +76,12 @@ describe("curl installer", () => {
     fs.mkdirSync(workflows, { recursive: true });
     fs.mkdirSync(archive, { recursive: true });
     const legacy =
-      "name: Universal Code Reviewer\r\njobs:\r\n  review:\r\n    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0\r\n";
+      "name: Universal\r Code Reviewer\r\njobs:\r\n  review:\r\n    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0\r\n";
     fs.writeFileSync(path.join(workflows, "code-review.yml"), legacy);
-    fs.writeFileSync(path.join(archive, "code-review.yml.disabled"), "different archive\n");
+    fs.writeFileSync(
+      path.join(archive, "code-review.yml.disabled"),
+      legacy.replace("Universal\r Code", "Universal Code"),
+    );
 
     run();
 
