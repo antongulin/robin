@@ -226,14 +226,20 @@ The one-line installer also installs a small **companion skill** into every codi
 on your machine (Claude Code, Cursor, Copilot, Windsurf, …) via the cross-platform
 [skills CLI](https://skills.sh) — `npx skills add https://github.com/antongulin/robin --all --global`. It
 ships with Robin; there's nothing separate to sign up for. (Skip it with `ROBIN_SKILL=0`,
-or install it by hand with that command.) Once it's there, you can say things like:
+or install it by hand with that command.) Once installed, the skill activates for ordinary
+pull-request work: the agent detects Robin on the base branch, so you do not need to ask
+for Robin explicitly. Explicit requests still work too:
 
-> "review this PR with Robin" · "robin this PR" · "fix the Robin feedback and merge"
+> "create a pull request" · "review this PR with Robin" · "fix the Robin feedback"
 
-…and the agent drives a bounded review → fix → re-review → merge loop: it waits for
-Robin's review, fixes only the findings it can verify (skipping noise from weaker free
-models), replies to each comment, resolves threads, and merges when green — capped at
-five passes. Source: [skills/robin/SKILL.md](skills/robin/SKILL.md).
+The agent drives a bounded review → verify → fix → reply → resolve → re-review loop. It
+fixes only findings confirmed against the full repository and skips noise with a factual
+reply. Five completed Robin reviews are approved by default; above five, the agent asks
+for one additional review at a time unless you explicitly enabled full-auto review for
+that PR. Merge is a separate permission and remains manual by default. After an authorized
+merge, the agent verifies base-branch sync and task-branch cleanup. Release preparation is
+never automatic; when the repository already publishes releases, the final report may
+offer it as a separate next step. Source: [skills/robin/SKILL.md](skills/robin/SKILL.md).
 
 ## Supported providers
 

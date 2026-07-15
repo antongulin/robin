@@ -1,0 +1,7 @@
+interface:
+  display_name: "Robin PR Completion"
+  short_description: "Autonomous Robin review and PR completion loop"
+  default_prompt: "Use $robin to drive this pull request through review, verified fixes, replies, resolution, and authorized completion."
+
+policy:
+  allow_implicit_invocation: true

@@ -68,7 +68,7 @@ if (process.env.ROBIN_SKILL !== "0") {
       'npx -y skills add https://github.com/antongulin/robin --skill robin --agent "*" --global --yes',
       { stdio: "ignore", timeout: 180000 }
     );
-    info('Robin chat skill installed (all agents). Say "review with Robin".');
+    info("Robin chat skill installed (all agents). It activates automatically for PR work.");
   } catch {
     warn(
       "Couldn't auto-install the skill. Run: npx -y skills add https://github.com/antongulin/robin --skill robin --agent \"*\" --global --yes"
