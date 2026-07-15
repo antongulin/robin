@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.0](https://github.com/antongulin/robin/compare/v2.4.3...v2.5.0) (2026-07-15)
+
+
+### Features
+
+* **skill:** automate Robin PR completion loop ([#74](https://github.com/antongulin/robin/issues/74)) ([9831fdb](https://github.com/antongulin/robin/commit/9831fdb6e5044b514df443cb6b2ae379a5f4b59c))
+
 ## [2.4.3](https://github.com/antongulin/robin/compare/v2.4.2...v2.4.3) (2026-07-09)
 
 
