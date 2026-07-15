@@ -128,6 +128,7 @@ on:
     types: [created]
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
