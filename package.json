@@ -1,6 +1,6 @@
 {
   "name": "robin-review",
-  "version": "2.4.3",
+  "version": "2.5.0",
   "description": "Free AI code reviews for every PR. BYOK, works with OpenRouter free tier.",
   "bin": {
     "robin-review": "bin/robin-review.js"
