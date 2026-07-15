@@ -2,7 +2,7 @@
 name: robin
 description: Use whenever an agent creates, updates, reviews, or completes a GitHub pull request. Detect whether Robin is installed in the repository; when it is, automatically drive the PR through a bounded review, verified-fix, reply, thread-resolution, re-review, authorized-merge, and cleanup loop without requiring the user to mention Robin. Also use for explicit Robin requests, PR feedback triage, unresolved review threads, or waiting for PR checks.
 metadata:
-  version: 2.5.0 # x-release-please-version
+  version: 2.5.1 # x-release-please-version
 ---
 
 # Robin PR Completion Protocol
