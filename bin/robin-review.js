@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * npx robin-review — adds the Robin code-review workflow to the current repo.
+ * From a Git repository root, npx robin-review adds Robin to that repository.
  * Node port of scripts/install.sh, so it works anywhere npx does (incl. Windows).
  *
  * Writes one file (.github/workflows/robin.yml), never overwrites an existing

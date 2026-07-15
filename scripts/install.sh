@@ -2,6 +2,7 @@
 #
 # Robin installer — adds the Robin code-review workflow to the current repo.
 #
+# From the root of the Git repository you want Robin to review:
 #   curl -fsSL https://robinreview.dev/install.sh | bash
 #
 # It only writes one file (.github/workflows/robin.yml) in your repo and prints
