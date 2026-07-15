@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.1](https://github.com/antongulin/robin/compare/v2.5.0...v2.5.1) (2026-07-15)
+
+
+### Documentation
+
+* **install:** clarify repository-scoped setup ([#76](https://github.com/antongulin/robin/issues/76)) ([46e7b23](https://github.com/antongulin/robin/commit/46e7b23a9eb628f7b43b1c21c665c55097a47503))
+
 ## [2.5.0](https://github.com/antongulin/robin/compare/v2.4.3...v2.5.0) (2026-07-15)
 
 
