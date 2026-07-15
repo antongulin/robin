@@ -97,4 +97,43 @@ describe("curl installer", () => {
       legacy,
     );
   });
+
+  it("refuses to overwrite an unrelated canonical workflow", () => {
+    const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(workflowPath, "name: Unrelated automation\n");
+
+    expect(() => run()).toThrow();
+    expect(fs.readFileSync(workflowPath, "utf8")).toBe("name: Unrelated automation\n");
+  });
+
+  it("does not add a consumer workflow to Robin's source repository", () => {
+    fs.writeFileSync(path.join(dir, "package.json"), '{"name":"robin-review"}\n');
+    fs.writeFileSync(path.join(dir, "action.yml"), "name: Robin\n");
+    fs.mkdirSync(path.join(dir, "skills", "robin"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "skills", "robin", "SKILL.md"), "# Robin\n");
+    fs.mkdirSync(path.join(dir, ".github", "workflows"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".github", "workflows", "self-test.yml"), "name: Self-Test\n");
+
+    const output = run();
+
+    expect(output).toContain("Robin source repository detected");
+    expect(fs.existsSync(path.join(dir, ".github", "workflows", "robin.yml"))).toBe(false);
+  });
+
+  it("preserves a modern ref while migrating an older canonical workflow", () => {
+    const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(
+      workflowPath,
+      "name: Robin\njobs:\n  review:\n    uses: antongulin/robin/.github/workflows/review.yml@v1\n",
+    );
+
+    run();
+
+    expect(fs.readFileSync(workflowPath, "utf8")).toContain("review.yml@v1");
+    expect(
+      fs.existsSync(path.join(dir, ".github", "robin-workflow-archive", "robin.yml.disabled")),
+    ).toBe(true);
+  });
 });
