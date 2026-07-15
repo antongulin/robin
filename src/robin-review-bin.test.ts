@@ -76,6 +76,15 @@ describe("robin-review CLI", () => {
     expect(fs.existsSync(path.join(archive, "ai-review.yaml.disabled"))).toBe(true);
     expect(fs.existsSync(path.join(archive, "legacy-action.yml.disabled"))).toBe(true);
     expect(canonical).toContain("antongulin/robin/.github/workflows/review.yml@main");
+
+    fs.copyFileSync(
+      path.join(archive, "code-review.yml.disabled"),
+      path.join(workflows, "code-review.yml"),
+    );
+    const duplicateOutput = run();
+    expect(duplicateOutput).toContain(
+      "Removed .github/workflows/code-review.yml (identical copy already at .github/robin-workflow-archive/code-review.yml.disabled)",
+    );
   });
 
   it("archives an older canonical workflow while preserving its modern ref", () => {

@@ -109,10 +109,14 @@ const archiveWorkflow = (source) => {
     destination = path.join(archiveDir, `${base}.${suffix}.disabled`);
     suffix += 1;
   }
-  if (fs.existsSync(destination)) fs.unlinkSync(source);
-  else fs.renameSync(source, destination);
+  if (fs.existsSync(destination)) {
+    fs.unlinkSync(source);
+    info(`Removed ${relative(source)} (identical copy already at ${relative(destination)}).`);
+  } else {
+    fs.renameSync(source, destination);
+    info(`Archived ${relative(source)} → ${relative(destination)} (cannot trigger in this location).`);
+  }
   archivedWorkflowCount += 1;
-  info(`Archived ${relative(source)} → ${relative(destination)} (cannot trigger in this location).`);
 };
 
 let workflowChanged = false;

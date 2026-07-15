@@ -51,6 +51,8 @@ if [ -z "${ROBIN_REF+x}" ]; then
     done < <(find "$WORKFLOW_DIR" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print)
   fi
   if [ -n "$ref_source" ]; then
+    # Preserve refs only from modern Robin workflows. Legacy Universal Code Reviewer
+    # refs (including obsolete v0 tags) intentionally migrate to the current default.
     existing_ref="$(sed -nE 's|^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/robin/\.github/workflows/review\.ya?ml@([A-Za-z0-9._/-]+).*|\2|p' "$ref_source" | head -n 1)"
     if [ -n "$existing_ref" ] && [ "$existing_ref" != "v0" ]; then REF="$existing_ref"; fi
   fi
@@ -90,18 +92,22 @@ trap 'rm -f "$tmp_workflow" "$tmp_rendered"' EXIT
 sed "s|@__REF__|@${REF}|" "$tmp_workflow" > "$tmp_rendered"
 
 archive_workflow() {
-  source_path="$1"
+  local source_path="$1" base_name destination suffix=1
   mkdir -p "$ARCHIVE_DIR"
   base_name="$(basename "$source_path")"
   destination="$ARCHIVE_DIR/${base_name}.disabled"
-  suffix=1
   while [ -f "$destination" ] && ! cmp -s "$source_path" "$destination"; do
     destination="$ARCHIVE_DIR/${base_name}.${suffix}.disabled"
     suffix=$((suffix + 1))
   done
-  if [ -f "$destination" ]; then rm -f "$source_path"; else mv "$source_path" "$destination"; fi
+  if [ -f "$destination" ]; then
+    rm -f "$source_path"
+    info "Removed $source_path (identical copy already at $destination)."
+  else
+    mv "$source_path" "$destination"
+    info "Archived $source_path → $destination (cannot trigger in this location)."
+  fi
   ARCHIVED_WORKFLOW_COUNT=$((ARCHIVED_WORKFLOW_COUNT + 1))
-  info "Archived $source_path → $destination (cannot trigger in this location)."
 }
 
 WORKFLOW_CHANGED=0

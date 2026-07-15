@@ -43,6 +43,15 @@ describe("curl installer", () => {
         path.join(dir, ".github", "robin-workflow-archive", "code-review.yml.disabled"),
       ),
     ).toBe(true);
+
+    fs.copyFileSync(
+      path.join(dir, ".github", "robin-workflow-archive", "code-review.yml.disabled"),
+      path.join(workflows, "code-review.yml"),
+    );
+    const duplicateOutput = run();
+    expect(duplicateOutput).toContain(
+      "Removed .github/workflows/code-review.yml (identical copy already at .github/robin-workflow-archive/code-review.yml.disabled)",
+    );
   });
 
   it("is idempotent after migration", () => {
