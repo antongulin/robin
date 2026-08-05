@@ -27,6 +27,7 @@ jobs:
       max-comments: "10"
       max-output-tokens: ""
       llm-timeout-ms: "600000"
+      llm-temperature: "0.1"
       min-command-permission: write
       review-instructions-file: .github/code-reviewer.md
       review-instructions: ""

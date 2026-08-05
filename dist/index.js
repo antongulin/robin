@@ -52,8 +52,9 @@ function hasRequiredPermission(permission, minimumPermission) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
+exports.MAX_LLM_TEMPERATURE = exports.DEFAULT_LLM_TEMPERATURE = exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
 exports.parseLLMTimeout = parseLLMTimeout;
+exports.parseLLMTemperature = parseLLMTemperature;
 exports.DEFAULT_LLM_TIMEOUT_MS = 600000; // 10 minutes
 exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = 120000; // 2 minutes — openrouter/free happy path is ~60-90s
 exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = 45000; // no SSE = stacked router; fail fast and retry
@@ -61,6 +62,9 @@ exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = 3;
 exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = 5;
 exports.DEFAULT_LLM_RETRY_DELAY_MS = 2000;
 exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = 3000;
+exports.DEFAULT_LLM_TEMPERATURE = 0.1; // near-deterministic reviews
+/** OpenAI-compatible upper bound; some models (e.g. Kimi) only accept 1. */
+exports.MAX_LLM_TEMPERATURE = 2;
 function parseLLMTimeout(input) {
     if (!input)
         return { value: exports.DEFAULT_LLM_TIMEOUT_MS, valid: true };
@@ -69,6 +73,17 @@ function parseLLMTimeout(input) {
         return { value: parsed, valid: true };
     }
     return { value: exports.DEFAULT_LLM_TIMEOUT_MS, valid: false };
+}
+function parseLLMTemperature(input) {
+    const trimmed = input.trim();
+    if (!trimmed)
+        return { value: exports.DEFAULT_LLM_TEMPERATURE, valid: true };
+    const parsed = Number(trimmed);
+    // 0 is a legitimate value, so range-check instead of truthiness.
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= exports.MAX_LLM_TEMPERATURE) {
+        return { value: parsed, valid: true };
+    }
+    return { value: exports.DEFAULT_LLM_TEMPERATURE, valid: false };
 }
 //# sourceMappingURL=config.js.map
 
@@ -665,9 +680,11 @@ class LLMClient {
     maxOutputTokens;
     maxAttempts;
     routerModel;
+    temperature;
     onProgress;
-    constructor(baseUrl, apiKey, model, maxOutputTokens, timeoutMs = config_1.DEFAULT_LLM_TIMEOUT_MS, maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS, onProgress) {
+    constructor(baseUrl, apiKey, model, maxOutputTokens, timeoutMs = config_1.DEFAULT_LLM_TIMEOUT_MS, maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS, temperature = config_1.DEFAULT_LLM_TEMPERATURE, onProgress) {
         this.model = model;
+        this.temperature = temperature;
         this.routerModel = (0, llm_retry_1.isOpenRouterRouterModel)(model);
         this.onProgress = onProgress;
         this.maxOutputTokens =
@@ -676,7 +693,7 @@ class LLMClient {
                 : undefined;
         this.maxAttempts = (0, llm_retry_1.getLlmCompletionAttemptCount)(maxAttempts, model);
         const effectiveTimeoutMs = (0, llm_retry_1.resolveLlmTimeoutMs)(model, timeoutMs);
-        core.info(`Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}`);
+        core.info(`Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}, temperature=${this.temperature}`);
         // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
         this.client = new openai_1.OpenAI({
             baseURL: baseUrl,
@@ -812,7 +829,7 @@ class LLMClient {
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userContent },
             ],
-            temperature: 0.1,
+            temperature: this.temperature,
         };
         if (this.maxOutputTokens) {
             request.max_tokens = this.maxOutputTokens;
@@ -1076,6 +1093,11 @@ async function run() {
         if (!llmTimeoutValid) {
             core.warning(`Invalid llm-timeout-ms value "${llmTimeoutMsInput}", using default ${config_1.DEFAULT_LLM_TIMEOUT_MS}`);
         }
+        const llmTemperatureInput = core.getInput("llm-temperature") || "";
+        const { value: llmTemperature, valid: llmTemperatureValid } = (0, config_1.parseLLMTemperature)(llmTemperatureInput);
+        if (!llmTemperatureValid) {
+            core.warning(`Invalid llm-temperature value "${llmTemperatureInput}", using default ${config_1.DEFAULT_LLM_TEMPERATURE}`);
+        }
         const inlineReviewInstructions = core.getInput("review-instructions") || "";
         const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
         const configFile = core.getInput("config-file") || repo_config_1.DEFAULT_CONFIG_FILE;
@@ -1147,7 +1169,7 @@ async function run() {
         const reviewInstructions = command === "review"
             ? await loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineReviewInstructions, reviewInstructionsFile, baseRef)
             : "";
-        const llm = new llm_client_1.LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs, undefined, async (detail) => {
+        const llm = new llm_client_1.LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs, undefined, llmTemperature, async (detail) => {
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildProgressStatusBody(detail, statusCommand, statusModel));
         });
         const useJsonMode = command === "review" && jsonResponseMode;

@@ -114,6 +114,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `max-diff-size` | `50000` | Max diff characters sent to the model |
 | `max-output-tokens` | empty | Cap response tokens (optional) |
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
+| `llm-temperature` | `0.1` | Sampling temperature (0–2). Raise only if your model rejects the default — some models accept a single fixed value (Kimi requires `1`) |
 | `max-comments` | `15` | Max inline comments |
 | `review-on-synchronize` | `false` | Review every new commit on the PR |
 | `runner` | `'"ubuntu-latest"'` | Reusable workflow only: runner as a JSON string or JSON array |
@@ -230,6 +231,28 @@ jobs:
 
 If you raise `llm-timeout-ms` above 10 minutes, also raise the job `timeout-minutes`.
 
+### Models that require a fixed temperature
+
+Robin samples at `0.1` so reviews stay near-deterministic. Some providers reject that and
+accept only one value — Kimi models require `1`, and the request fails without it. Set
+`llm-temperature` to whatever the provider demands:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    with:
+      llm-temperature: "1"
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+Accepted range is 0–2. Out-of-range or non-numeric values log a warning and fall back to
+`0.1`. Raising temperature makes findings less repeatable, so change it only when the
+provider requires it.
+
 ## Review flow
 
 1. PR opened, reopened, or marked ready for review → automatic review.
@@ -305,6 +328,7 @@ No daily quota from this action. Real limits:
 | Job cancelled / 15 min with no review | Hung LLM or concurrency cancel while waiting | Status comment should say interrupted — comment `/robin` again; pin `@v2.0.4`+ for stall detect |
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |
 | `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
+| `temperature` rejected / must be 1 | Model accepts only one temperature | Set `llm-temperature` to the value the provider requires (Kimi: `1`) |
 | `Resource not accessible by integration` | Missing permissions | Add `pull-requests: write` |
 | Slash command ignored | Wrong format or permission | `/robin` or `/review` as first line; need write access |
 | `/robin` does nothing on `@v1` | Stale `v1` tag before v1.4.0 | Use `/review`, pin `@v1.4.0`+, or `@v2`; floating `v1` tracks latest `1.x` on release |

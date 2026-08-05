@@ -34,6 +34,11 @@ on:
         required: false
         type: string
         default: "600000"
+      llm-temperature:
+        description: "Sampling temperature for LLM requests, between 0 and 2. Some models only accept a fixed value (for example Kimi requires 1)."
+        required: false
+        type: string
+        default: "0.1"
       min-command-permission:
         description: "Minimum repository permission required to run slash commands."
         required: false
@@ -117,6 +122,7 @@ jobs:
           max-comments: ${{ inputs.max-comments }}
           max-output-tokens: ${{ inputs.max-output-tokens }}
           llm-timeout-ms: ${{ inputs.llm-timeout-ms }}
+          llm-temperature: ${{ inputs.llm-temperature }}
           min-command-permission: ${{ inputs.min-command-permission }}
           review-instructions: ${{ inputs.review-instructions }}
           review-instructions-file: ${{ inputs.review-instructions-file }}
