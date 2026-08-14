@@ -80,6 +80,8 @@ fi
 # to the canonical template's 4-space job level. Only a `with:` that is a sibling of the
 # `uses: antongulin/robin/.github/workflows/review.yml@...` job key qualifies — a legacy
 # step-level `with:` targets the direct action's inputs and must not be carried over.
+# Blank lines inside the block are kept (trailing ones dropped); the `with:` key line is
+# normalized, so a comment on it is not carried — comments on entry lines are.
 extract_with_overrides() {
   local uses_indent
   uses_indent="$(sed $'s/\r$//' "$1" | awk '
@@ -97,9 +99,10 @@ extract_with_overrides() {
       next
     }
     {
-      if ($0 ~ /^[[:space:]]*$/) exit
+      if ($0 ~ /^[[:space:]]*$/) { blanks++; next }
       ind = match($0, /[^ ]/) - 1
       if (ind <= base) exit
+      while (blanks > 0) { print ""; blanks-- }
       printf "%" (4 + ind - base) "s%s\n", "", substr($0, ind + 1)
     }'
 }

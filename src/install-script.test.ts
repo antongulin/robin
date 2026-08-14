@@ -180,6 +180,36 @@ describe("curl installer", () => {
     expect(regenerated).toContain('llm-temperature: "1"');
   });
 
+  it("keeps every input when a with: block contains blank lines between entries", () => {
+    const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(
+      workflowPath,
+      [
+        "name: Robin",
+        "jobs:",
+        "  review:",
+        "    uses: antongulin/robin/.github/workflows/review.yml@main",
+        "    with:",
+        '      llm-temperature: "1"',
+        "",
+        '      max-comments: "10"',
+        "    secrets:",
+        "      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}",
+        "",
+      ].join("\n"),
+    );
+
+    run();
+    const canonical = fs.readFileSync(workflowPath, "utf8");
+    const secondOutput = run();
+
+    expect(canonical).toContain('llm-temperature: "1"');
+    expect(canonical).toContain('max-comments: "10"');
+    expect(canonical).toMatch(/llm-temperature: "1"\n\n      max-comments: "10"/);
+    expect(secondOutput).toContain("is already current");
+  });
+
   it("does not carry a step-level with: block from a legacy direct-action workflow", () => {
     const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
     fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
