@@ -144,7 +144,7 @@ jobs:
 Commit and push. Open a pull request — you should see a review within a few minutes.
 
 > [!IMPORTANT]
-> Use **`@main`** for the latest fixes, or pin a release tag (for example `@v1` or `@v1.0.0`) after [releases](https://github.com/antongulin/robin/releases) exist. Do **not** use `@v0`. See [Version pins](#version-pins) below.
+> Use **`@main`** for the latest fixes, or pin a release tag (for example `@v2` or `@v2.7.0`) from [releases](https://github.com/antongulin/robin/releases). Do **not** use `@v0`. See [Version pins](#version-pins) below.
 
 ## Running on a self-hosted runner
 
@@ -300,12 +300,12 @@ More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)
 | Pin | When to use |
 | --- | --- |
 | `@main` | Latest changes on the default branch |
-| `@v1` | Latest `1.x` release (updated on each release) |
-| `@v1.0.0` | Exact version (most predictable) |
+| `@v2` | Latest `2.x` release (updated on each release) |
+| `@v2.7.0` | Exact version (most predictable) |
 | Full commit SHA | Maximum supply-chain safety |
 
 ```yaml
-uses: antongulin/robin/.github/workflows/review.yml@v1
+uses: antongulin/robin/.github/workflows/review.yml@v2
 ```
 
 Releases and notes are published automatically from [CHANGELOG.md](CHANGELOG.md) when changes land on `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for commit message format.

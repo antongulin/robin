@@ -15,7 +15,7 @@
 ## Setup
 
 - From the target Git repository root, run `npx robin-review` or `curl -fsSL https://robinreview.dev/install.sh | bash`. The installer keeps one canonical `.github/workflows/robin.yml`, archives recognized historical Robin or Universal Code Reviewer workflows outside `.github/workflows`, and installs or updates the companion agent skill globally. Running either command from `~` fails because there is no target Git repository.
-- Or add `.github/workflows/robin.yml` calling `antongulin/robin/.github/workflows/review.yml@v1`.
+- Or add `.github/workflows/robin.yml` calling `antongulin/robin/.github/workflows/review.yml@main` (or pin a release tag such as `@v2`).
 - Three secrets: `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`. Free OpenRouter: base `https://openrouter.ai/api/v1`, model `openrouter/free`.
 - Optional `llm-temperature` input (default `0.1`, range 0–2): set it in the caller workflow's `with:` block only when the provider accepts a single fixed sampling temperature — Kimi models require `1` and reject requests otherwise. Invalid values log a warning and fall back to the default.
 
