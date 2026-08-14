@@ -5,7 +5,12 @@ import { GitUtils } from "./git-utils";
 import { ReviewParser, StructuredReview } from "./review-parser";
 import { shouldRetryStructuredReview } from "./review-retry";
 import { GitHubReviewer, ROBIN_SIGNATURE } from "./github-reviewer";
-import { DEFAULT_LLM_TIMEOUT_MS, parseLLMTimeout } from "./config";
+import {
+  DEFAULT_LLM_TEMPERATURE,
+  DEFAULT_LLM_TIMEOUT_MS,
+  parseLLMTemperature,
+  parseLLMTimeout,
+} from "./config";
 import { filterDiff, splitDiffIntoFiles } from "./diff-filter";
 import { annotateDiffWithLineNumbers } from "./diff-annotate";
 import {
@@ -126,6 +131,14 @@ async function run(): Promise<void> {
     const { value: llmTimeoutMs, valid: llmTimeoutValid } = parseLLMTimeout(llmTimeoutMsInput);
     if (!llmTimeoutValid) {
       core.warning(`Invalid llm-timeout-ms value "${llmTimeoutMsInput}", using default ${DEFAULT_LLM_TIMEOUT_MS}`);
+    }
+    const llmTemperatureInput = core.getInput("llm-temperature") || "";
+    const { value: llmTemperature, valid: llmTemperatureValid } =
+      parseLLMTemperature(llmTemperatureInput);
+    if (!llmTemperatureValid) {
+      core.warning(
+        `Invalid llm-temperature value "${llmTemperatureInput}", using default ${DEFAULT_LLM_TEMPERATURE}`
+      );
     }
     const inlineReviewInstructions = core.getInput("review-instructions") || "";
     const reviewInstructionsFile = core.getInput("review-instructions-file") || "";
@@ -260,6 +273,7 @@ async function run(): Promise<void> {
       maxOutputTokens,
       llmTimeoutMs,
       undefined,
+      llmTemperature,
       async (detail) => {
         await updateStatusComment(
           octokit!,

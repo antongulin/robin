@@ -40,6 +40,10 @@ inputs:
     description: "Timeout in milliseconds for LLM requests. Default is 10 minutes (600000 ms). Increase if you frequently see 'Request timed out' with large diffs."
     required: false
     default: "600000"
+  llm-temperature:
+    description: "Sampling temperature for LLM requests, between 0 and 2. Default is 0.1 for near-deterministic reviews. Some models only accept a fixed value (for example Kimi requires 1)."
+    required: false
+    default: "0.1"
   max-comments:
     description: "Maximum number of inline review comments to post. Extra findings stay in the review body."
     required: false

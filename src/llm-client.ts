@@ -2,6 +2,7 @@ import { OpenAI } from "openai";
 import {
   DEFAULT_LLM_COMPLETION_ATTEMPTS,
   DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS,
+  DEFAULT_LLM_TEMPERATURE,
   DEFAULT_LLM_TIMEOUT_MS,
 } from "./config";
 import {
@@ -29,6 +30,7 @@ export class LLMClient {
   private maxOutputTokens?: number;
   private maxAttempts: number;
   private routerModel: boolean;
+  private temperature: number;
   private onProgress?: LlmProgressHandler;
 
   constructor(
@@ -38,9 +40,11 @@ export class LLMClient {
     maxOutputTokens?: number,
     timeoutMs = DEFAULT_LLM_TIMEOUT_MS,
     maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS,
+    temperature = DEFAULT_LLM_TEMPERATURE,
     onProgress?: LlmProgressHandler
   ) {
     this.model = model;
+    this.temperature = temperature;
     this.routerModel = isOpenRouterRouterModel(model);
     this.onProgress = onProgress;
     this.maxOutputTokens =
@@ -51,7 +55,7 @@ export class LLMClient {
     const effectiveTimeoutMs = resolveLlmTimeoutMs(model, timeoutMs);
 
     core.info(
-      `Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}`
+      `Initializing LLM client: baseUrl=${baseUrl}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}, temperature=${this.temperature}`
     );
 
     // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
@@ -232,7 +236,7 @@ export class LLMClient {
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
-      temperature: 0.1,
+      temperature: this.temperature,
     };
 
     if (this.maxOutputTokens) {
