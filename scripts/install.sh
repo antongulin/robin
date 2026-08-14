@@ -104,10 +104,11 @@ extract_with_overrides() {
       for (i = start + 1; i < end; i++)
         if (lines[i] ~ /^[[:space:]]*with:[[:space:]]*(#.*)?$/ && ind(lines[i]) == base) { w = i; break }
       if (!w) exit
-      print "    with:"
+      # The header is emitted lazily so an entry-less with: yields no output.
       # Blank lines and comments at or above the base indent are held back and
       # emitted only when another entry follows, so trailing ones are not captured
       # and a comment between entries cannot terminate the block.
+      hp = 0
       np = 0
       for (i = w + 1; i < end; i++) {
         if (lines[i] ~ /^[[:space:]]*$/) { pend[++np] = ""; continue }
@@ -119,6 +120,7 @@ extract_with_overrides() {
           continue
         }
         if (d <= base) break
+        if (!hp) { print "    with:"; hp = 1 }
         for (j = 1; j <= np; j++) print pend[j]
         np = 0
         printf "%" (4 + d - base) "s%s\n", "", substr(lines[i], d + 1)

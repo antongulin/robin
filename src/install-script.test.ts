@@ -269,6 +269,56 @@ describe("curl installer", () => {
     expect(canonical).not.toContain("config: prod");
   });
 
+  it("does not splice a bare with: when the existing block has no entries", () => {
+    const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(
+      workflowPath,
+      [
+        "name: Robin",
+        "jobs:",
+        "  review:",
+        "    uses: antongulin/robin/.github/workflows/review.yml@main",
+        "    with:",
+        "    secrets:",
+        "      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}",
+        "",
+      ].join("\n"),
+    );
+
+    run();
+
+    expect(fs.readFileSync(workflowPath, "utf8")).toBe(fs.readFileSync(TEMPLATE, "utf8"));
+  });
+
+  it("preserves nothing when multiple Robin workflows make the source ambiguous", () => {
+    const workflows = path.join(dir, ".github", "workflows");
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflows, "code-review.yml"),
+      [
+        "name: Robin",
+        "jobs:",
+        "  review:",
+        "    uses: antongulin/robin/.github/workflows/review.yml@v2",
+        "    with:",
+        '      llm-temperature: "1"',
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(workflows, "old-robin.yaml"),
+      "name: Robin\njobs:\n  review:\n    uses: antongulin/robin/.github/workflows/review.yml@main\n",
+    );
+
+    const output = run();
+    const canonical = fs.readFileSync(path.join(workflows, "robin.yml"), "utf8");
+
+    expect(output).toContain("Multiple Robin workflows found");
+    expect(canonical).toBe(fs.readFileSync(TEMPLATE, "utf8"));
+    expect(canonical).not.toContain("llm-temperature");
+  });
+
   it("does not carry a step-level with: block from a legacy direct-action workflow", () => {
     const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
     fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
