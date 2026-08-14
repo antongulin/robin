@@ -210,6 +210,35 @@ describe("curl installer", () => {
     expect(secondOutput).toContain("is already current");
   });
 
+  it("ignores a sibling job's with: block when preserving the Robin job's overrides", () => {
+    const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(
+      workflowPath,
+      [
+        "name: Robin",
+        "jobs:",
+        "  build:",
+        "    uses: acme/pipelines/.github/workflows/build.yml@v1",
+        "    with:",
+        "      config: prod",
+        "  review:",
+        "    uses: antongulin/robin/.github/workflows/review.yml@main",
+        "    with:",
+        '      llm-temperature: "1"',
+        "    secrets:",
+        "      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}",
+        "",
+      ].join("\n"),
+    );
+
+    run();
+    const canonical = fs.readFileSync(workflowPath, "utf8");
+
+    expect(canonical).toContain('llm-temperature: "1"');
+    expect(canonical).not.toContain("config: prod");
+  });
+
   it("does not carry a step-level with: block from a legacy direct-action workflow", () => {
     const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
     fs.mkdirSync(path.dirname(workflowPath), { recursive: true });

@@ -83,27 +83,36 @@ fi
 # Blank lines inside the block are kept (trailing ones dropped); the `with:` key line is
 # normalized, so a comment on it is not carried — comments on entry lines are.
 extract_with_overrides() {
-  local uses_indent
-  uses_indent="$(sed $'s/\r$//' "$1" | awk '
-    /^[[:space:]]*uses:[[:space:]]*antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/ {
-      print match($0, /[^ ]/) - 1
-      exit
-    }')"
-  [ -n "$uses_indent" ] || return 0
-  sed $'s/\r$//' "$1" | awk -v base="$uses_indent" '
-    !found {
-      if ($0 ~ /^[[:space:]]*with:[[:space:]]*(#.*)?$/ && match($0, /[^ ]/) - 1 == base) {
-        found = 1
-        print "    with:"
-      }
-      next
+  sed $'s/\r$//' "$1" | awk '
+    function ind(s) { return match(s, /[^ ]/) - 1 }
+    function boundary(s, base) {
+      return s !~ /^[[:space:]]*$/ && s !~ /^[[:space:]]*#/ && ind(s) < base
     }
-    {
-      if ($0 ~ /^[[:space:]]*$/) { blanks++; next }
-      ind = match($0, /[^ ]/) - 1
-      if (ind <= base) exit
-      while (blanks > 0) { print ""; blanks-- }
-      printf "%" (4 + ind - base) "s%s\n", "", substr($0, ind + 1)
+    { lines[NR] = $0 }
+    END {
+      u = 0
+      for (i = 1; i <= NR; i++)
+        if (lines[i] ~ /^[[:space:]]*uses:[[:space:]]*antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/) { u = i; base = ind(lines[i]); break }
+      if (!u) exit
+      # Bound the job block holding the Robin uses: key, so a sibling job listed
+      # earlier in the file cannot donate its own with: block.
+      start = 0
+      for (i = u - 1; i >= 1; i--) if (boundary(lines[i], base)) { start = i; break }
+      end = NR + 1
+      for (i = u + 1; i <= NR; i++) if (boundary(lines[i], base)) { end = i; break }
+      w = 0
+      for (i = start + 1; i < end; i++)
+        if (lines[i] ~ /^[[:space:]]*with:[[:space:]]*(#.*)?$/ && ind(lines[i]) == base) { w = i; break }
+      if (!w) exit
+      print "    with:"
+      blanks = 0
+      for (i = w + 1; i < end; i++) {
+        if (lines[i] ~ /^[[:space:]]*$/) { blanks++; continue }
+        d = ind(lines[i])
+        if (d <= base) break
+        while (blanks > 0) { print ""; blanks-- }
+        printf "%" (4 + d - base) "s%s\n", "", substr(lines[i], d + 1)
+      }
     }'
 }
 
