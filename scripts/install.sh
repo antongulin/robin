@@ -42,30 +42,67 @@ files_equal() {
   cmp -s <(sed $'s/\r$//' "$1") <(sed $'s/\r$//' "$2")
 }
 
+# Locate the single Robin workflow customizations can be preserved from. The canonical
+# path wins; otherwise exactly one recognized candidate qualifies (ambiguity preserves
+# nothing). Sets ROBIN_WF_SOURCE (path or empty) and ROBIN_WF_COUNT.
+scan_robin_workflows() {
+  ROBIN_WF_SOURCE=""
+  ROBIN_WF_COUNT=0
+  if [ -f "$WORKFLOW_PATH" ] && is_robin_workflow "$WORKFLOW_PATH"; then
+    ROBIN_WF_SOURCE="$WORKFLOW_PATH"
+    ROBIN_WF_COUNT=1
+    return 0
+  fi
+  [ -d "$WORKFLOW_DIR" ] || return 0
+  while IFS= read -r candidate; do
+    if is_robin_workflow "$candidate"; then
+      ROBIN_WF_COUNT=$((ROBIN_WF_COUNT + 1))
+      ROBIN_WF_SOURCE="$candidate"
+    fi
+  done < <(find "$WORKFLOW_DIR" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print)
+  if [ "$ROBIN_WF_COUNT" -gt 1 ]; then ROBIN_WF_SOURCE=""; fi
+}
+scan_robin_workflows
+
 # Preserve an existing modern Robin ref unless ROBIN_REF explicitly overrides it.
 if [ -z "${ROBIN_REF+x}" ]; then
-  ref_source=""
-  if [ -f "$WORKFLOW_PATH" ] && is_robin_workflow "$WORKFLOW_PATH"; then
-    ref_source="$WORKFLOW_PATH"
-  elif [ -d "$WORKFLOW_DIR" ]; then
-    while IFS= read -r candidate; do
-      if is_robin_workflow "$candidate"; then
-        if [ -n "$ref_source" ]; then
-          ref_source=""
-          warn "Multiple Robin workflows found; using default ref ($REF)."
-          break
-        fi
-        ref_source="$candidate"
-      fi
-    done < <(find "$WORKFLOW_DIR" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print)
-  fi
-  if [ -n "$ref_source" ]; then
+  if [ "$ROBIN_WF_COUNT" -gt 1 ]; then
+    warn "Multiple Robin workflows found; using default ref ($REF)."
+  elif [ -n "$ROBIN_WF_SOURCE" ]; then
     # Preserve refs only from modern Robin workflows. Legacy Universal Code Reviewer
     # refs (including obsolete v0 tags) intentionally migrate to the current default.
-    existing_ref="$(sed -nE 's|^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/robin/\.github/workflows/review\.ya?ml@([A-Za-z0-9._/-]+).*|\2|p' "$ref_source" | head -n 1)"
+    existing_ref="$(sed -nE 's|^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/robin/\.github/workflows/review\.ya?ml@([A-Za-z0-9._/-]+).*|\2|p' "$ROBIN_WF_SOURCE" | head -n 1)"
     if [ -n "$existing_ref" ] && [ "$existing_ref" != "v0" ]; then REF="$existing_ref"; fi
   fi
 fi
+
+# Print the job-level `with:` block of a modern reusable-workflow consumer, re-indented
+# to the canonical template's 4-space job level. Only a `with:` that is a sibling of the
+# `uses: antongulin/robin/.github/workflows/review.yml@...` job key qualifies — a legacy
+# step-level `with:` targets the direct action's inputs and must not be carried over.
+extract_with_overrides() {
+  local uses_indent
+  uses_indent="$(sed $'s/\r$//' "$1" | awk '
+    /^[[:space:]]*uses:[[:space:]]*antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/ {
+      print match($0, /[^ ]/) - 1
+      exit
+    }')"
+  [ -n "$uses_indent" ] || return 0
+  sed $'s/\r$//' "$1" | awk -v base="$uses_indent" '
+    !found {
+      if ($0 ~ /^[[:space:]]*with:[[:space:]]*(#.*)?$/ && match($0, /[^ ]/) - 1 == base) {
+        found = 1
+        print "    with:"
+      }
+      next
+    }
+    {
+      if ($0 ~ /^[[:space:]]*$/) exit
+      ind = match($0, /[^ ]/) - 1
+      if (ind <= base) exit
+      printf "%" (4 + ind - base) "s%s\n", "", substr($0, ind + 1)
+    }'
+}
 
 case "$REF" in
   *[!A-Za-z0-9._/-]*|'') die "Invalid ROBIN_REF: $REF" ;;
@@ -98,8 +135,29 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 YAML
 tmp_rendered="$(mktemp)"
-trap 'rm -f "$tmp_workflow" "$tmp_rendered"' EXIT
+tmp_with="$(mktemp)"
+tmp_spliced=""
+trap 'rm -f "$tmp_workflow" "$tmp_rendered" "$tmp_with" ${tmp_spliced:+"$tmp_spliced"}' EXIT
 sed "s|@__REF__|@${REF}|" "$tmp_workflow" > "$tmp_rendered"
+
+# Carry over the consumer's `with:` overrides (e.g. llm-temperature) so re-running the
+# installer never silently reverts documented settings.
+if [ -n "$ROBIN_WF_SOURCE" ]; then
+  extract_with_overrides "$ROBIN_WF_SOURCE" > "$tmp_with"
+  if [ -s "$tmp_with" ]; then
+    tmp_spliced="$(mktemp)"
+    awk -v wf="$tmp_with" '
+      { print }
+      /^    uses: antongulin\/robin\// && !done {
+        while ((getline line < wf) > 0) print line
+        done = 1
+      }' "$tmp_rendered" > "$tmp_spliced"
+    mv "$tmp_spliced" "$tmp_rendered"
+    if ! files_equal "$ROBIN_WF_SOURCE" "$tmp_rendered"; then
+      info "Preserved existing \`with:\` overrides from $ROBIN_WF_SOURCE."
+    fi
+  fi
+fi
 
 archive_workflow() {
   local source_path="$1" base_name destination suffix=1
