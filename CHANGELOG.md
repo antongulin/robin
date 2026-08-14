@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.1](https://github.com/antongulin/robin/compare/v2.7.0...v2.7.1) (2026-08-14)
+
+
+### Documentation
+
+* refresh version pins from v1 to v2 ([707fc1a](https://github.com/antongulin/robin/commit/707fc1a1aa9adfa49346d49dedb38bf8ebc23f20))
+
 ## [2.7.0](https://github.com/antongulin/robin/compare/v2.6.0...v2.7.0) (2026-08-14)
 
 
