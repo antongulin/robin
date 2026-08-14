@@ -166,7 +166,9 @@ trap 'rm -f "$tmp_workflow" "$tmp_rendered" "$tmp_with" ${tmp_spliced:+"$tmp_spl
 sed "s|@__REF__|@${REF}|" "$tmp_workflow" > "$tmp_rendered"
 
 # Carry over the consumer's `with:` overrides (e.g. llm-temperature) so re-running the
-# installer never silently reverts documented settings.
+# installer never silently reverts documented settings. The splice assumes the heredoc
+# template above has no `with:` key of its own — keep it that way, or teach the splice
+# to merge, before ever adding template defaults.
 if [ -n "$ROBIN_WF_SOURCE" ]; then
   extract_with_overrides "$ROBIN_WF_SOURCE" > "$tmp_with"
   if [ -s "$tmp_with" ]; then
