@@ -210,6 +210,36 @@ describe("curl installer", () => {
     expect(secondOutput).toContain("is already current");
   });
 
+  it("keeps entries after a comment at the with: indentation level", () => {
+    const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(
+      workflowPath,
+      [
+        "name: Robin",
+        "jobs:",
+        "  review:",
+        "    uses: antongulin/robin/.github/workflows/review.yml@main",
+        "    with:",
+        '      llm-temperature: "1"',
+        "    # tuned for Kimi",
+        '      max-comments: "10"',
+        "    secrets:",
+        "      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}",
+        "",
+      ].join("\n"),
+    );
+
+    run();
+    const canonical = fs.readFileSync(workflowPath, "utf8");
+    const secondOutput = run();
+
+    expect(canonical).toContain('llm-temperature: "1"');
+    expect(canonical).toContain('max-comments: "10"');
+    expect(canonical).toContain("# tuned for Kimi");
+    expect(secondOutput).toContain("is already current");
+  });
+
   it("ignores a sibling job's with: block when preserving the Robin job's overrides", () => {
     const workflowPath = path.join(dir, ".github", "workflows", "robin.yml");
     fs.mkdirSync(path.dirname(workflowPath), { recursive: true });

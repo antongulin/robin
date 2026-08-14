@@ -105,15 +105,26 @@ extract_with_overrides() {
         if (lines[i] ~ /^[[:space:]]*with:[[:space:]]*(#.*)?$/ && ind(lines[i]) == base) { w = i; break }
       if (!w) exit
       print "    with:"
-      blanks = 0
+      # Blank lines and comments at or above the base indent are held back and
+      # emitted only when another entry follows, so trailing ones are not captured
+      # and a comment between entries cannot terminate the block.
+      np = 0
       for (i = w + 1; i < end; i++) {
-        if (lines[i] ~ /^[[:space:]]*$/) { blanks++; continue }
+        if (lines[i] ~ /^[[:space:]]*$/) { pend[++np] = ""; continue }
         d = ind(lines[i])
+        if (lines[i] ~ /^[[:space:]]*#/ && d <= base) {
+          p = 4 + d - base
+          if (p < 0) p = 0
+          pend[++np] = pads(p) substr(lines[i], d + 1)
+          continue
+        }
         if (d <= base) break
-        while (blanks > 0) { print ""; blanks-- }
+        for (j = 1; j <= np; j++) print pend[j]
+        np = 0
         printf "%" (4 + d - base) "s%s\n", "", substr(lines[i], d + 1)
       }
-    }'
+    }
+    function pads(n, s) { s = ""; while (n-- > 0) s = s " "; return s }'
 }
 
 case "$REF" in
