@@ -13,10 +13,10 @@ uses: antongulin/robin/.github/workflows/review.yml@main
 Pinned release (preferred for stability):
 
 ```yaml
-uses: antongulin/robin/.github/workflows/review.yml@v1
+uses: antongulin/robin/.github/workflows/review.yml@v2
 ```
 
-For a direct action step: `antongulin/robin@main` or `@v1`.
+For a direct action step: `antongulin/robin@main` or `@v2`.
 
 ## Do not use
 
