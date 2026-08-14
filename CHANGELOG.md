@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.2](https://github.com/antongulin/robin/compare/v2.7.1...v2.7.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **install:** preserve with: overrides when regenerating the workflow ([#84](https://github.com/antongulin/robin/issues/84)) ([67d44fa](https://github.com/antongulin/robin/commit/67d44faa3ecc0d48dfe86f0d90810150a0bae026))
+
 ## [2.7.1](https://github.com/antongulin/robin/compare/v2.7.0...v2.7.1) (2026-08-14)
 
 
