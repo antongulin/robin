@@ -251,7 +251,8 @@ jobs:
 
 Accepted range is 0–2. Out-of-range or non-numeric values log a warning and fall back to
 `0.1`. Raising temperature makes findings less repeatable, so change it only when the
-provider requires it.
+provider requires it. Re-running the installer preserves this and any other `with:`
+overrides in your workflow.
 
 ## Review flow
 

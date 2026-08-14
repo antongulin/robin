@@ -61,7 +61,8 @@ older Robin or Universal Code Reviewer workflow under another name, it moves tha
 canonical workflow. Inspect the archived copy, then remove it after confirming the
 migration. An unrelated file already using the canonical path is never overwritten.
 Run an installer separately in every repository that should use Robin. Re-running it is
-safe and idempotent.
+safe and idempotent — your pinned version and any `with:` overrides (for example
+`llm-temperature`) are preserved.
 You still need to add the three secrets — do **Steps 1 and 2** below, then commit and push.
 You can **skip Step 3**: the installer already did it.
 
