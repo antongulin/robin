@@ -77,6 +77,26 @@ permissions:
 
 `actions/checkout` is optional for review-only workflows.
 
+## Maintainers: release-notes upkeep (automatic)
+
+Everything above is for adding Robin to a consumer repo. This section is for agents
+working **in this repository**: whenever a release lands (release-please auto-merges
+`chore: release X.Y.Z` and publishes the GitHub release), clean up its notes as part of
+the same task — do it automatically, without asking.
+
+1. Inspect every release cut during the session: `gh release view <tag> --json body`.
+2. Enrich each `feat`/`fix` entry with a one-line plain-language user impact, and credit
+   external contributors (`— thanks [@login](https://github.com/login)!`).
+3. Catch orphaned commits: a commit that lands on `main` between the release PR's
+   snapshot and its merge appears in **no** changelog. Compare
+   `git log <prev-tag>..<tag> --oneline` against the notes and add missing entries under
+   the matching section.
+4. Edit **only** the GitHub release (`gh release edit <tag> --notes '…'`). Never rewrite
+   `CHANGELOG.md` retroactively — a changelog commit itself triggers another release.
+5. Keep the generated format (version heading with compare link, `### Features` /
+   `### Bug Fixes` / `### Documentation` sections). Never create tags or releases by
+   hand, and never delete a published release.
+
 ## Further reading
 
 - [README.md](README.md) — human-friendly setup
