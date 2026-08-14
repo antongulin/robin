@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.0](https://github.com/antongulin/robin/compare/v2.6.0...v2.7.0) (2026-08-14)
+
+
+### Features
+
+* make LLM temperature configurable ([#80](https://github.com/antongulin/robin/issues/80)) ([849812b](https://github.com/antongulin/robin/commit/849812bb384c29946e91975cc8dcd391a6a8c31d))
+
 ## [2.6.0](https://github.com/antongulin/robin/compare/v2.5.1...v2.6.0) (2026-07-15)
 
 
