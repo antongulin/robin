@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.0](https://github.com/antongulin/robin/compare/v2.7.2...v2.8.0) (2026-09-18)
+
+
+### Features
+
+* add optional reasoning effort controls ([#88](https://github.com/antongulin/robin/issues/88)) ([505ddd7](https://github.com/antongulin/robin/commit/505ddd7171f46d59d76d77d5a5e4e6d441b7efc5))
+
 ## [2.7.2](https://github.com/antongulin/robin/compare/v2.7.1...v2.7.2) (2026-08-14)
 
 
