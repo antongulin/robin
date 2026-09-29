@@ -107,10 +107,6 @@ permissions:
   contents: read
   pull-requests: write
 
-concurrency:
-  group: robin-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}
-  cancel-in-progress: true
-
 jobs:
   review:
     if: |
@@ -126,6 +122,11 @@ jobs:
           startsWith(github.event.comment.body, '/help')
         )
       )
+    # Job-level so it applies only after `if` passes: at workflow level, every PR comment
+    # (e.g. a Vercel bot) would start a skipped run that still cancels an in-flight review.
+    concurrency:
+      group: robin-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}
+      cancel-in-progress: true
     runs-on: ${{ fromJSON(inputs.runner) }}
     timeout-minutes: 45
     steps:
