@@ -131,9 +131,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Robin
-        # Must name this repository explicitly: `uses:` cannot take an expression, and
-        # pointing at upstream would silently run upstream's dist/ instead of this fork's.
-        uses: yoeven/robin@main
+        uses: antongulin/robin@main
         with:
           github-token: ${{ github.token }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}

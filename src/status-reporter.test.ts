@@ -12,7 +12,7 @@ describe("StatusReporter", () => {
       {
         model: "gpt-6-astra",
         mode: "code review",
-        version: () => "v2.8.0 · yoeven/robin@main (9e6bb3d)",
+        version: () => "v2.8.0 · antongulin/robin@main (9e6bb3d)",
         minIntervalMs: overrides.minIntervalMs ?? 3000,
         heartbeatMs: overrides.heartbeatMs ?? 30000,
         now: () => clock,
@@ -51,7 +51,7 @@ describe("StatusReporter", () => {
     expect(body).toContain("**Provider:** Waiting for provider (attempt 1/3)… (1m 29s)");
     expect(body).toContain("Mode: code review (agent)");
     expect(body).toContain("Model: gpt-6-astra");
-    expect(body).toContain("Robin: v2.8.0 · yoeven/robin@main (9e6bb3d)");
+    expect(body).toContain("Robin: v2.8.0 · antongulin/robin@main (9e6bb3d)");
     void reporter.close();
   });
 

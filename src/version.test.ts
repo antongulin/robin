@@ -20,11 +20,11 @@ describe("describeRobinVersion", () => {
     const octokit = octokitReturning(async () => ({ data: { sha: "9e6bb3d1234567890abcdef1234567890abcdef0" } }));
     const label = await describeRobinVersion(
       octokit,
-      { GITHUB_ACTION_REPOSITORY: "yoeven/robin", GITHUB_ACTION_REF: "main" },
+      { GITHUB_ACTION_REPOSITORY: "antongulin/robin", GITHUB_ACTION_REF: "main" },
       "2.8.0"
     );
-    expect(label).toBe("v2.8.0 · yoeven/robin@main (9e6bb3d)");
-    expect(octokit.rest.repos.getCommit).toHaveBeenCalledWith({ owner: "yoeven", repo: "robin", ref: "main" });
+    expect(label).toBe("v2.8.0 · antongulin/robin@main (9e6bb3d)");
+    expect(octokit.rest.repos.getCommit).toHaveBeenCalledWith({ owner: "antongulin", repo: "robin", ref: "main" });
   });
 
   it("uses a pinned SHA ref without an API call", async () => {
@@ -32,10 +32,10 @@ describe("describeRobinVersion", () => {
     const sha = "abcdef1234567890abcdef1234567890abcdef12";
     const label = await describeRobinVersion(
       octokit,
-      { GITHUB_ACTION_REPOSITORY: "yoeven/robin", GITHUB_ACTION_REF: sha },
+      { GITHUB_ACTION_REPOSITORY: "antongulin/robin", GITHUB_ACTION_REF: sha },
       "2.8.0"
     );
-    expect(label).toBe(`v2.8.0 · yoeven/robin@${sha} (abcdef1)`);
+    expect(label).toBe(`v2.8.0 · antongulin/robin@${sha} (abcdef1)`);
     expect(octokit.rest.repos.getCommit).not.toHaveBeenCalled();
   });
 
@@ -45,21 +45,21 @@ describe("describeRobinVersion", () => {
     });
     const label = await describeRobinVersion(
       octokit,
-      { GITHUB_ACTION_REPOSITORY: "yoeven/robin", GITHUB_ACTION_REF: "v2" },
+      { GITHUB_ACTION_REPOSITORY: "antongulin/robin", GITHUB_ACTION_REF: "v2" },
       "2.8.0"
     );
-    expect(label).toBe("v2.8.0 · yoeven/robin@v2");
+    expect(label).toBe("v2.8.0 · antongulin/robin@v2");
   });
 
   it("gives up on a slow commit lookup", async () => {
     const octokit = octokitReturning(() => new Promise(() => undefined));
     const label = await describeRobinVersion(
       octokit,
-      { GITHUB_ACTION_REPOSITORY: "yoeven/robin", GITHUB_ACTION_REF: "main" },
+      { GITHUB_ACTION_REPOSITORY: "antongulin/robin", GITHUB_ACTION_REF: "main" },
       "2.8.0",
       10
     );
-    expect(label).toBe("v2.8.0 · yoeven/robin@main");
+    expect(label).toBe("v2.8.0 · antongulin/robin@main");
   });
 
   it("labels local runs and unknown versions", async () => {

@@ -3980,7 +3980,7 @@ function readPackageVersion(dir = __dirname) {
     }
 }
 /**
- * Human-readable identity of the running action, e.g. "v2.8.0 · yoeven/robin@main (9e6bb3d)".
+ * Human-readable identity of the running action, e.g. "v2.8.0 · antongulin/robin@main (9e6bb3d)".
  * The commit is looked up best-effort because a branch ref like `main` doesn't say which
  * commit the runner downloaded.
  */

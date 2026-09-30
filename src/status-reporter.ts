@@ -13,7 +13,7 @@ export interface AgentProgress {
 export interface StatusReporterOptions {
   model: string;
   mode: string;
-  /** Shown in every status comment, e.g. "v2.8.0 · yoeven/robin@main (9e6bb3d)". */
+  /** Shown in every status comment, e.g. "v2.8.0 · antongulin/robin@main (9e6bb3d)". */
   version: () => string;
   minIntervalMs?: number;
   heartbeatMs?: number;
