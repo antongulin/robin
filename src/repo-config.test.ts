@@ -1,9 +1,14 @@
 import {
+  DEFAULT_AGENT_MAX_DIFF_SIZE,
+  DEFAULT_AGENT_MAX_TURNS,
   DEFAULT_MAX_COMMENTS,
   DEFAULT_ACTION_MAX_DIFF_SIZE,
   DEFAULT_REASONING_EFFORT,
   isReasoningEffortConfigured,
   parseRepoConfigYaml,
+  resolveAgentMaxDiffSize,
+  resolveAgentMaxTurns,
+  resolveAgentMode,
   resolveJsonResponseMode,
   resolveMaxComments,
   resolveMaxDiffSize,
@@ -158,5 +163,38 @@ describe("isReasoningEffortConfigured", () => {
     expect(isReasoningEffortConfigured("", undefined)).toBe(false);
     expect(isReasoningEffortConfigured("  ", {})).toBe(false);
     expect(isReasoningEffortConfigured("", { reasoningEffort: "  " })).toBe(false);
+  });
+});
+
+describe("agent mode config", () => {
+  it("parses agent-mode and agent-max-turns", () => {
+    const config = parseRepoConfigYaml("agent-mode: off   # diff only\nagent-max-turns: 6\n");
+    expect(config.agentMode).toBe("off");
+    expect(config.agentMaxTurns).toBe(6);
+    expect(parseRepoConfigYaml("agent-mode: sometimes").agentMode).toBeUndefined();
+  });
+
+  it("prefers the action input, then repo config, then auto", () => {
+    expect(resolveAgentMode("", {})).toBe("auto");
+    expect(resolveAgentMode("", { agentMode: "off" })).toBe("off");
+    expect(resolveAgentMode("auto", { agentMode: "off" })).toBe("auto");
+    expect(resolveAgentMode("OFF", {})).toBe("off");
+    expect(resolveAgentMode("bogus", { agentMode: "off" })).toBe("off");
+  });
+
+  it("resolves max turns with a default and an upper cap", () => {
+    expect(resolveAgentMaxTurns("", {})).toBe(DEFAULT_AGENT_MAX_TURNS);
+    expect(resolveAgentMaxTurns("", { agentMaxTurns: 4 })).toBe(4);
+    expect(resolveAgentMaxTurns("7", { agentMaxTurns: 4 })).toBe(7);
+    expect(resolveAgentMaxTurns("0", {})).toBe(DEFAULT_AGENT_MAX_TURNS);
+    expect(resolveAgentMaxTurns("500", {})).toBe(100);
+  });
+
+  it("resolves the agent diff size separately from max-diff-size", () => {
+    expect(parseRepoConfigYaml("agent-max-diff-size: 120000").agentMaxDiffSize).toBe(120000);
+    expect(resolveAgentMaxDiffSize("", {})).toBe(DEFAULT_AGENT_MAX_DIFF_SIZE);
+    expect(resolveAgentMaxDiffSize("", { agentMaxDiffSize: 90000, maxDiffSize: 25000 })).toBe(90000);
+    expect(resolveAgentMaxDiffSize("300000", { agentMaxDiffSize: 90000 })).toBe(300000);
+    expect(resolveAgentMaxDiffSize("0", {})).toBe(DEFAULT_AGENT_MAX_DIFF_SIZE);
   });
 });

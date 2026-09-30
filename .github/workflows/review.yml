@@ -60,7 +60,7 @@ on:
         type: string
         default: ""
       review-on-synchronize:
-        description: "Run automatic reviews after each new commit pushed to a PR."
+        description: "Deprecated and ignored; kept so existing callers keep working. Pushes are reviewed whenever the caller triggers on synchronize."
         required: false
         type: boolean
         default: false
@@ -71,6 +71,21 @@ on:
         default: ".github/robin.yml"
       use-json-response-mode:
         description: "Request JSON object responses when the provider supports response_format. Leave empty to use repo config or default true."
+        required: false
+        type: string
+        default: ""
+      agent-mode:
+        description: "auto (default) runs a multi-turn review with repository tools and falls back to single-shot when the model lacks tool support; off always runs single-shot. Leave empty to use repo config."
+        required: false
+        type: string
+        default: ""
+      agent-max-turns:
+        description: "Maximum tool-calling turns in agent mode. Leave empty to use repo config (default 40)."
+        required: false
+        type: string
+        default: ""
+      agent-max-diff-size:
+        description: "Diff characters sent up front in agent mode; the single-shot fallback keeps max-diff-size. Leave empty to use repo config (default 200000)."
         required: false
         type: string
         default: ""
@@ -92,10 +107,6 @@ permissions:
   contents: read
   pull-requests: write
 
-concurrency:
-  group: robin-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}
-  cancel-in-progress: true
-
 jobs:
   review:
     if: |
@@ -111,11 +122,18 @@ jobs:
           startsWith(github.event.comment.body, '/help')
         )
       )
+    # Job-level so it applies only after `if` passes: at workflow level, every PR comment
+    # (e.g. a Vercel bot) would start a skipped run that still cancels an in-flight review.
+    concurrency:
+      group: robin-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}
+      cancel-in-progress: true
     runs-on: ${{ fromJSON(inputs.runner) }}
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Robin
-        uses: antongulin/robin@main
+        # Must name this repository explicitly: `uses:` cannot take an expression, and
+        # pointing at upstream would silently run upstream's dist/ instead of this fork's.
+        uses: yoeven/robin@main
         with:
           github-token: ${{ github.token }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}
@@ -135,3 +153,6 @@ jobs:
           review-on-synchronize: ${{ inputs.review-on-synchronize }}
           config-file: ${{ inputs.config-file }}
           use-json-response-mode: ${{ inputs.use-json-response-mode }}
+          agent-mode: ${{ inputs.agent-mode }}
+          agent-max-turns: ${{ inputs.agent-max-turns }}
+          agent-max-diff-size: ${{ inputs.agent-max-diff-size }}

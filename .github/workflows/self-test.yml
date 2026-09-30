@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       HAS_LLM: ${{ secrets.LLM_API_KEY != '' && secrets.LLM_BASE_URL != '' && secrets.LLM_MODEL != '' }}
     steps:
@@ -83,7 +83,7 @@ jobs:
         startsWith(github.event.comment.body, '/help')
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       HAS_LLM: ${{ secrets.LLM_API_KEY != '' && secrets.LLM_BASE_URL != '' && secrets.LLM_MODEL != '' }}
     steps:

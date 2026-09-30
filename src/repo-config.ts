@@ -10,7 +10,17 @@ export interface RepoConfig {
   jsonResponseMode?: boolean;
   requestChanges?: boolean;
   reasoningEffort?: string;
+  agentMode?: AgentMode;
+  agentMaxTurns?: number;
+  agentMaxDiffSize?: number;
 }
+
+export type AgentMode = "auto" | "off";
+export const DEFAULT_AGENT_MODE: AgentMode = "auto";
+export const DEFAULT_AGENT_MAX_TURNS = 40;
+const MAX_AGENT_MAX_TURNS = 100;
+/** Diff characters sent up front in agent mode (~50-65k tokens); the single-shot fallback keeps max-diff-size. */
+export const DEFAULT_AGENT_MAX_DIFF_SIZE = 200_000;
 
 /** Strips a trailing ` # comment` only outside quotes, so quoted values keep `#` intact. */
 function stripTrailingComment(line: string): string {
@@ -85,6 +95,24 @@ export function parseRepoConfigYaml(text: string): RepoConfig {
       continue;
     }
 
+    const agentModeMatch = setting.match(/^agent-mode:\s*['"]?(auto|off)['"]?\s*$/i);
+    if (agentModeMatch) {
+      config.agentMode = agentModeMatch[1].toLowerCase() as AgentMode;
+      continue;
+    }
+
+    const agentMaxTurnsMatch = setting.match(/^agent-max-turns:\s*(\d+)\s*$/i);
+    if (agentMaxTurnsMatch) {
+      config.agentMaxTurns = parseInt(agentMaxTurnsMatch[1], 10);
+      continue;
+    }
+
+    const agentMaxDiffMatch = setting.match(/^agent-max-diff-size:\s*(\d+)\s*$/i);
+    if (agentMaxDiffMatch) {
+      config.agentMaxDiffSize = parseInt(agentMaxDiffMatch[1], 10);
+      continue;
+    }
+
     const reasoningEffortMatch = setting.match(
       /^reasoning-effort:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|(.+))\s*$/i
     );
@@ -138,6 +166,31 @@ export function resolveRequestChanges(actionInput: string, repoConfig?: RepoConf
   if (actionInput === "true") return true;
   if (actionInput === "false") return false;
   return repoConfig?.requestChanges ?? true;
+}
+
+/** Multi-turn tool review: explicit input first, then `.github/robin.yml`, else `auto`. */
+export function resolveAgentMode(actionInput: string, repoConfig?: RepoConfig): AgentMode {
+  const input = actionInput.trim().toLowerCase();
+  if (input === "auto" || input === "off") return input;
+  return repoConfig?.agentMode ?? DEFAULT_AGENT_MODE;
+}
+
+export function resolveAgentMaxTurns(actionInput: string, repoConfig?: RepoConfig): number {
+  const parsed = parseInt(actionInput, 10);
+  const value =
+    Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : repoConfig?.agentMaxTurns && repoConfig.agentMaxTurns > 0
+        ? repoConfig.agentMaxTurns
+        : DEFAULT_AGENT_MAX_TURNS;
+  return Math.min(value, MAX_AGENT_MAX_TURNS);
+}
+
+export function resolveAgentMaxDiffSize(actionInput: string, repoConfig?: RepoConfig): number {
+  const parsed = parseInt(actionInput, 10);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  if (repoConfig?.agentMaxDiffSize && repoConfig.agentMaxDiffSize > 0) return repoConfig.agentMaxDiffSize;
+  return DEFAULT_AGENT_MAX_DIFF_SIZE;
 }
 
 /** Sent when neither the action input nor `.github/robin.yml` sets `reasoning-effort`. */

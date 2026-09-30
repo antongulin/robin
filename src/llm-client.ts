@@ -1,4 +1,5 @@
 import { OpenAI } from "openai";
+import { REVIEW_JSON_SCHEMA } from "./prompts/review-schema";
 import {
   DEFAULT_LLM_COMPLETION_ATTEMPTS,
   DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS,
@@ -14,7 +15,9 @@ import {
   getLlmCompletionAttemptCount,
   isInvalidReasoningEffortError,
   isOpenRouterRouterModel,
+  isContextLengthError,
   isRetriableLlmError,
+  isToolsUnsupportedError,
   isUnsupportedReasoningEffortError,
   openRouterStallError,
   resolveLlmTimeoutMs,
@@ -29,9 +32,38 @@ import {
 import { ReasoningFallbackReason } from "./reasoning-fallback";
 import * as core from "@actions/core";
 
+export type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+export type ToolDefinition = OpenAI.Chat.Completions.ChatCompletionTool;
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export interface ChatCompletionResult {
   content: string;
   model?: string;
+  toolCalls?: ToolCall[];
+}
+
+export interface ToolChatOptions {
+  /** "none" asks for a final text answer while keeping the tool definitions the history needs. */
+  toolChoice?: "auto" | "none";
+}
+
+/** The provider or model cannot take `tools`; callers should fall back to a plain completion. */
+export class ToolsUnsupportedError extends Error {
+  constructor(cause: unknown) {
+    super(`Model does not support tool calling: ${errorMessage(cause)}`);
+    this.name = "ToolsUnsupportedError";
+  }
+}
+
+interface CompletionOptions {
+  jsonResponseMode: boolean;
+  tools?: ToolDefinition[];
+  toolChoice?: "auto" | "none";
 }
 
 export type LlmProgressHandler = (detail: string) => void | Promise<void>;
@@ -62,7 +94,8 @@ export class LLMClient {
   private reasoningFallbackReason?: ReasoningFallbackReason;
   /** Request-shape compatibility state; adjusted once per rejected parameter and kept for the run. */
   private sendTemperature = true;
-  private sendResponseFormat = true;
+  /** JSON-mode shape: strict schema first, then plain JSON-object mode, then nothing. */
+  private responseFormat: "json_schema" | "json_object" | "none" = "json_schema";
   private tokenLimitParam: TokenLimitParam | undefined = "max_tokens";
   private droppedParams: DroppableRequestParam[] = [];
 
@@ -128,9 +161,6 @@ export class LLMClient {
           "Anthropic's OpenAI-compatible endpoint ignores reasoning-effort controls; reasoning-effort is not sent. Claude decides its own thinking depth."
         );
       }
-      core.info(
-        "Anthropic endpoint: response_format is ignored by the provider, so JSON mode relies on the prompt and the markdown fallback parser."
-      );
     }
   }
 
@@ -151,7 +181,16 @@ export class LLMClient {
    */
   private applyParameterFallback(error: unknown, request: ChatRequest): boolean {
     const param = findUnsupportedRequestParam(error, this.sentDroppableParams(request));
-    if (!param || this.droppedParams.includes(param)) return false;
+    if (!param) return false;
+    // Anthropic accepts only schema-constrained JSON, so there is no plain JSON mode to step down to.
+    if (param === "response_format" && this.responseFormat === "json_schema" && this.provider !== "anthropic") {
+      this.responseFormat = "json_object";
+      core.warning(
+        `Provider rejected the JSON schema response_format (${errorMessage(error)}). Retrying once with plain JSON-object mode and keeping that shape for the rest of this run.`
+      );
+      return true;
+    }
+    if (this.droppedParams.includes(param)) return false;
     this.droppedParams.push(param);
 
     let action: string;
@@ -169,7 +208,7 @@ export class LLMClient {
         action = "omitting the output token cap";
         break;
       case "response_format":
-        this.sendResponseFormat = false;
+        this.responseFormat = "none";
         action = "omitting response_format (the review parser falls back to markdown)";
         break;
     }
@@ -202,28 +241,53 @@ export class LLMClient {
     userContent: string,
     jsonResponseMode = false
   ): Promise<ChatCompletionResult> {
+    return this.complete(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      { jsonResponseMode }
+    );
+  }
+
+  /**
+   * One turn of a tool-calling conversation. Returns the assistant text and any tool calls.
+   * Throws ToolsUnsupportedError (without retrying) when the provider rejects `tools`.
+   */
+  async chatWithTools(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    options: ToolChatOptions = {}
+  ): Promise<ChatCompletionResult> {
+    return this.complete(messages, {
+      jsonResponseMode: false,
+      tools,
+      toolChoice: options.toolChoice,
+    });
+  }
+
+  private async complete(
+    messages: ChatMessage[],
+    options: CompletionOptions
+  ): Promise<ChatCompletionResult> {
     let lastFinishReason = "unknown";
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
-      const useJson = shouldUseJsonResponseMode(attempt, jsonResponseMode);
+      const useJson = shouldUseJsonResponseMode(attempt, options.jsonResponseMode);
 
       try {
         core.info(`LLM attempt ${attempt}/${this.maxAttempts}: waiting for provider...`);
         await this.progress(
           `Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`
         );
-        const { content, model: resolvedModel } = await this.performRequest(
-          systemPrompt,
-          userContent,
-          useJson
-        );
+        const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson });
 
-        if (content) {
+        if (result.content || result.toolCalls?.length) {
           if (!this.routerModel) {
-            this.logResolvedModel(resolvedModel || this.model);
+            this.logResolvedModel(result.model || this.model);
           }
-          return { content, model: resolvedModel };
+          return result;
         }
 
         lastFinishReason = "empty";
@@ -232,6 +296,9 @@ export class LLMClient {
         );
       } catch (error) {
         lastError = error;
+        if (options.tools && isToolsUnsupportedError(error)) {
+          throw new ToolsUnsupportedError(error);
+        }
         core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${error}`);
 
         if (!isRetriableLlmError(error, this.retryContext()) || attempt === this.maxAttempts) {
@@ -271,12 +338,11 @@ export class LLMClient {
    * the run, so the loop is bounded and normal retry attempts are not multiplied.
    */
   private async performRequest(
-    systemPrompt: string,
-    userContent: string,
-    jsonResponseMode: boolean
+    messages: ChatMessage[],
+    options: CompletionOptions
   ): Promise<ChatCompletionResult> {
     for (;;) {
-      const request = this.buildRequest(systemPrompt, userContent, jsonResponseMode);
+      const request = this.buildMessagesRequest(messages, options);
       try {
         return await this.dispatch(request);
       } catch (error) {
@@ -324,9 +390,11 @@ export class LLMClient {
       ...(request as OpenAI.Chat.Completions.ChatCompletionCreateParams),
       stream: false,
     });
+    const toolCalls = this.extractToolCalls(response);
     return {
-      content: this.extractMessageContent(response),
+      content: this.extractMessageContent(response, toolCalls.length > 0),
       model: response.model || this.model,
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   }
 
@@ -354,6 +422,7 @@ export class LLMClient {
       );
 
       const parts: string[] = [];
+      const toolCallParts = new Map<number, ToolCall>();
       let resolvedModel = this.model;
 
       for await (const chunk of stream) {
@@ -370,19 +439,38 @@ export class LLMClient {
           }
         }
 
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (typeof delta === "string" && delta) {
-          parts.push(delta);
+        const delta = chunk.choices?.[0]?.delta;
+        if (typeof delta?.content === "string" && delta.content) {
+          parts.push(delta.content);
+        }
+        for (const toolDelta of delta?.tool_calls ?? []) {
+          const index = toolDelta.index ?? 0;
+          const current = toolCallParts.get(index) ?? { id: "", name: "", arguments: "" };
+          if (toolDelta.id) current.id = toolDelta.id;
+          if (toolDelta.function?.name) current.name += toolDelta.function.name;
+          if (toolDelta.function?.arguments) current.arguments += toolDelta.function.arguments;
+          toolCallParts.set(index, current);
         }
         if (chunk.model) {
           resolvedModel = chunk.model;
         }
       }
 
-      return { content: parts.join(""), model: resolvedModel };
+      const toolCalls = [...toolCallParts.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([index, call]) => ({ ...call, id: call.id || `call_${index}` }))
+        .filter((call) => call.name);
+      return {
+        content: parts.join(""),
+        model: resolvedModel,
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      };
     } catch (error) {
       clearStallTimer();
       if (!gotFirstChunk) {
+        if ((request.tools && isToolsUnsupportedError(error)) || isContextLengthError(error)) {
+          throw error;
+        }
         // A 400/422 mentioning a reasoning request key or rejecting a parameter we sent is a
         // definitive client response, not a stalled router. Surface it even when the stricter
         // fallback classifiers reject it, so the provider's real validation error is not
@@ -414,12 +502,19 @@ export class LLMClient {
     userContent: string,
     jsonResponseMode: boolean
   ): ChatRequest {
-    const request: ChatRequest = {
-      model: this.model,
-      messages: [
+    return this.buildMessagesRequest(
+      [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
+      { jsonResponseMode }
+    );
+  }
+
+  private buildMessagesRequest(messages: ChatMessage[], options: CompletionOptions): ChatRequest {
+    const request: ChatRequest = {
+      model: this.model,
+      messages,
     };
 
     if (this.sendTemperature) {
@@ -430,8 +525,20 @@ export class LLMClient {
       request[this.tokenLimitParam] = this.maxOutputTokens;
     }
 
-    if (jsonResponseMode && this.sendResponseFormat) {
-      request.response_format = { type: "json_object" };
+    if (options.tools?.length) {
+      request.tools = options.tools;
+      if (options.toolChoice) {
+        request.tool_choice = options.toolChoice;
+      }
+    } else if (options.jsonResponseMode && this.responseFormat !== "none") {
+      // Many providers reject response_format combined with tools, so JSON mode is single-shot only.
+      request.response_format =
+        this.responseFormat === "json_schema"
+          ? {
+              type: "json_schema",
+              json_schema: { name: "robin_review", strict: true, schema: REVIEW_JSON_SCHEMA },
+            }
+          : { type: "json_object" };
     }
 
     if (this.reasoningEffort && !this.reasoningFallbackActive) {
@@ -466,7 +573,21 @@ export class LLMClient {
     }
   }
 
-  private extractMessageContent(response: OpenAI.Chat.Completions.ChatCompletion): string {
+  private extractToolCalls(response: OpenAI.Chat.Completions.ChatCompletion): ToolCall[] {
+    const calls = response.choices?.[0]?.message?.tool_calls ?? [];
+    return calls
+      .filter((call) => call?.function?.name)
+      .map((call, index) => ({
+        id: call.id || `call_${index}`,
+        name: call.function.name,
+        arguments: call.function.arguments || "",
+      }));
+  }
+
+  private extractMessageContent(
+    response: OpenAI.Chat.Completions.ChatCompletion,
+    hasToolCalls = false
+  ): string {
     const choice = response.choices?.[0];
     if (!choice) {
       core.warning("LLM response has no choices array.");
@@ -476,6 +597,9 @@ export class LLMClient {
     const content = choice.message?.content;
     if (typeof content === "string" && content.trim()) {
       return content;
+    }
+    if (hasToolCalls) {
+      return "";
     }
 
     core.warning(

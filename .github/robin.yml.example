@@ -6,6 +6,9 @@ max-comments: 10
 json-response-mode: true
 # request-changes: true   # default; set false for advisor mode (never block the PR, even on high findings)
 # reasoning-effort: high   # default; provider-dependent (low, medium, high, …). Set "off" to send no reasoning configuration
+# agent-mode: auto   # default; multi-turn review that reads the repo with tools. Set off for single-shot diff review only
+# agent-max-turns: 40   # default; tool-calling turns before the final review is requested
+# agent-max-diff-size: 200000   # default; diff characters sent up front in agent mode (max-diff-size above applies to the single-shot fallback)
 
 skip-paths:
   - "**/generated/**"

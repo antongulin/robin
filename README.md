@@ -11,7 +11,8 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 ## What you get
 
 - A review when you open a pull request (or when someone comments `/robin`)
-- A short summary plus inline comments on changed lines
+- A short summary plus inline comments on changed lines, with one-click suggested fixes when the model can pin one down
+- Reviews that check the rest of your repo (callers, definitions) when your model supports tool calling
 - Your choice of AI provider — including **free** options
 
 When there's nothing worth flagging, Robin says so instead of inventing nitpicks:
@@ -31,7 +32,7 @@ Add Robin to this repository.
 - Action ref if needed: antongulin/robin@main
 - Secrets: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 - Do NOT use @v0 or any v0 tag
-- Do NOT use pull_request_target or synchronize on pull_request
+- Do NOT use pull_request_target
 Read AGENTS.md in the robin repo for full rules.
 ```
 
@@ -124,7 +125,7 @@ name: Robin
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]
 
@@ -234,6 +235,20 @@ Focused change. Main risk: timeout errors are not handled clearly.
 **1 (`src/example.ts:24`)** — Retries exist but timeout failures lack context.
 ```
 
+## Agent mode: reviews with repository context
+
+Robin doesn't only look at the diff. When your model supports tool calling, the review is a
+short multi-turn investigation: the model can read full files, grep for callers of a changed
+function, and list directories at the PR's head commit before it decides what's a bug. Findings
+can come with a one-click GitHub **suggested change** containing the exact fix.
+
+- Nothing to set up: Robin downloads a read-only snapshot of the PR through the GitHub API (no checkout, and PR code is never run).
+- If the model doesn't support tools (some free OpenRouter routes, many small Ollama models), Robin quietly falls back to the classic diff-only review.
+- Turn it off with `agent-mode: off` in `.github/robin.yml`, or cap the investigation with `agent-max-turns` (default 40).
+- Long investigations don't hit a wall: when the context fills up, Robin has the model summarize what it has found so far and keeps going, like Cursor's context compaction.
+
+Details: [Agent mode](docs/ADVANCED.md#agent-mode-multi-turn-review-with-repository-context).
+
 ## Robin in your editor
 
 The one-line installer also installs a small **companion skill** into every coding agent
@@ -293,7 +308,7 @@ Add `.github/code-reviewer.md` in your repo:
 | `/robin` does nothing | Put `/robin` on the **first** line; you need write access on the repo. On `@v1`, pin `@v1.4.0`+ or use `/review` if the tag predates v1.4.0 |
 | Review is very short | PR may be huge — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`) |
 | `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/robin` again |
-| `OpenRouter stall` / job runs 15 min with no review | Auto-router hung — action now aborts after 45s with no stream and retries | Watch Actions log for `LLM resolved model` (routing OK); pin `@v2` or `@main` for the fix |
+| `OpenRouter stall` / job runs 45 min with no review | Auto-router hung — action now aborts after 45s with no stream and retries | Watch Actions log for `LLM resolved model` (routing OK); pin `@v2` or `@main` for the fix |
 | `404 Provider returned error` | Normal for `openrouter/free` when one provider is down — the action retries up to 5 times; keep `LLM_MODEL=openrouter/free` |
 | `temperature` / `max_tokens` rejected by the model | The action warns, retries once without that parameter (or with `max_completion_tokens`), and keeps that shape for the run. To pin a value some models insist on (Kimi requires `1`), set `llm-temperature` in your workflow's `with:` block, see [docs/ADVANCED.md](docs/ADVANCED.md#models-that-require-a-fixed-temperature) |
 | `reasoning-effort` rejected as unsupported or invalid | The action warns, retries once with no reasoning override, and completes the review when that retry succeeds. If you set the value yourself, the final status comment tells you to update `reasoning-effort` in `.github/robin.yml` or the workflow `with:` block; a rejected `high` default only shows in the Actions log. Set `reasoning-effort: off` to stop sending it |

@@ -175,17 +175,22 @@ export class GitHubReviewer {
         continue;
       }
 
-      if (!this.isLineInNewDiff(diffFile.patch || "", finding.line)) {
+      const patch = diffFile.patch || "";
+      if (!this.isLineInNewDiff(patch, finding.line)) {
         core.warning(
           "Could not find line " + finding.line + " in diff for file: " + finding.file
         );
         continue;
       }
 
-      const commentBody = this.formatCommentBody(finding);
+      const suggestionStart = this.resolveSuggestionStart(finding, patch);
+      const commentBody = this.formatCommentBody(finding, suggestionStart !== undefined);
 
       comments.push({
         path: finding.file,
+        ...(suggestionStart !== undefined && suggestionStart < finding.line
+          ? { start_line: suggestionStart, start_side: "RIGHT" }
+          : {}),
         line: finding.line,
         side: "RIGHT",
         body: commentBody,
@@ -196,7 +201,24 @@ export class GitHubReviewer {
     return { comments, postedFindings };
   }
 
-  private formatCommentBody(finding: ReviewFinding): string {
+  /**
+   * First line of a postable suggestion, or undefined when the finding has none or its range
+   * cannot be commented on as one block (GitHub needs every line in the same diff hunk).
+   */
+  private resolveSuggestionStart(finding: ReviewFinding, patch: string): number | undefined {
+    if (finding.suggestion === undefined || !finding.line) return undefined;
+    const start = finding.startLine && finding.startLine < finding.line ? finding.startLine : finding.line;
+    const endHunk = this.hunkIndexForNewLine(patch, finding.line);
+    if (endHunk === undefined || this.hunkIndexForNewLine(patch, start) !== endHunk) {
+      core.info(
+        `Suggestion for ${finding.file}:${start}-${finding.line} spans lines outside one diff hunk; posting it as a code block instead.`
+      );
+      return undefined;
+    }
+    return start;
+  }
+
+  private formatCommentBody(finding: ReviewFinding, withSuggestion = false): string {
     const severityEmoji =
       finding.severity === "high"
         ? ":rotating_light: HIGH"
@@ -213,8 +235,12 @@ export class GitHubReviewer {
       body += "\n\n**Recommendation:** " + finding.recommendation;
     }
 
-    if (finding.codeSnippet) {
+    if (withSuggestion && finding.suggestion !== undefined) {
+      body += "\n\n" + fenced(finding.suggestion, "suggestion");
+    } else if (finding.codeSnippet) {
       body += "\n\n```\n" + finding.codeSnippet + "\n```";
+    } else if (finding.suggestion) {
+      body += "\n\n" + fenced(finding.suggestion);
     }
 
     return body;
@@ -339,10 +365,16 @@ export class GitHubReviewer {
    * GitHub only accepts review comments on lines included in the PR diff.
    */
   private isLineInNewDiff(patch: string, targetLine: number): boolean {
-    if (!patch) return false;
+    return this.hunkIndexForNewLine(patch, targetLine) !== undefined;
+  }
+
+  /** Index of the diff hunk containing the given new-file line, or undefined if it is not in the diff. */
+  private hunkIndexForNewLine(patch: string, targetLine: number): number | undefined {
+    if (!patch) return undefined;
 
     let currentLine = 0;
     let inHunk = false;
+    let hunkIndex = -1;
 
     for (const line of patch.split("\n")) {
       // Hunk header: parse the starting line number in the NEW file
@@ -353,6 +385,7 @@ export class GitHubReviewer {
           currentLine = parseInt(match[1], 10);
         }
         inHunk = true;
+        hunkIndex++;
         continue;
       }
 
@@ -368,7 +401,7 @@ export class GitHubReviewer {
       if (line.startsWith("+")) {
         // Added line exists in the new file
         if (currentLine === targetLine) {
-          return true;
+          return hunkIndex;
         }
         currentLine++;
       } else if (line.startsWith("-")) {
@@ -376,12 +409,19 @@ export class GitHubReviewer {
       } else {
         // Context line — exists in both old and new file
         if (currentLine === targetLine) {
-          return true;
+          return hunkIndex;
         }
         currentLine++;
       }
     }
 
-    return false;
+    return undefined;
   }
+}
+
+/** Fences text with more backticks than it contains, so embedded code fences survive. */
+function fenced(text: string, info = ""): string {
+  const longestRun = Math.max(2, ...(text.match(/`+/g) || []).map((run) => run.length));
+  const fence = "`".repeat(longestRun + 1);
+  return fence + info + "\n" + text + "\n" + fence;
 }

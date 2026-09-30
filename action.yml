@@ -53,7 +53,7 @@ inputs:
     required: false
     default: "15"
   review-on-synchronize:
-    description: "Run automatic reviews for pull_request synchronize events, which happen after each new commit pushed to a PR. Set to true only if you want review on every push."
+    description: "Deprecated and ignored. Robin reviews every pull_request event the workflow triggers on, including synchronize (new commits pushed to a PR); remove synchronize from the workflow trigger to review only on open."
     required: false
     default: "false"
   min-command-permission:
@@ -72,8 +72,20 @@ inputs:
     description: "Optional repository config file on the PR base branch (.github/robin.yml)."
     required: false
     default: ".github/robin.yml"
+  agent-mode:
+    description: "Multi-turn review where the model reads files, greps, and lists the repository at the PR head before answering. auto uses it and falls back to the single-shot diff review when the model does not support tool calling; off always uses the single-shot review. Leave empty to use the repo config, which defaults to auto."
+    required: false
+    default: ""
+  agent-max-turns:
+    description: "Maximum tool-calling turns in agent mode before Robin asks for the final review (capped at 100). Leave empty to use the repo config, which defaults to 40."
+    required: false
+    default: ""
+  agent-max-diff-size:
+    description: "Maximum diff size in characters sent up front in agent mode. The model can read truncated files with its tools. The single-shot fallback keeps max-diff-size. Leave empty to use the repo config, which defaults to 200000."
+    required: false
+    default: ""
   use-json-response-mode:
-    description: "Request JSON object responses when the provider supports response_format. Leave empty to use repo config or default true."
+    description: "Request strict JSON-schema review responses (falls back to JSON-object mode, then none, if the provider rejects it). Leave empty to use repo config or default true."
     required: false
     default: ""
 

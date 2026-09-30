@@ -5,7 +5,7 @@ jest.mock("@actions/core", () => ({
 }));
 
 import * as core from "@actions/core";
-import { LLMClient } from "./llm-client";
+import { LLMClient, ToolsUnsupportedError } from "./llm-client";
 
 const warningMock = core.warning as unknown as jest.Mock;
 
@@ -222,21 +222,42 @@ describe("LLMClient unsupported parameter fallback", () => {
     expect(create.mock.calls[1][0]).not.toHaveProperty("max_completion_tokens");
   });
 
-  it("drops response_format when the provider does not support it", async () => {
+  it("steps down from the review JSON schema to JSON-object mode, then drops response_format", async () => {
     const client = makeClient("https://example.test/v1", "model");
+    const create = stubOpenAI(client);
+    const rejection = () =>
+      Object.assign(new Error("response_format is not supported by this model"), { status: 400 });
+    create
+      .mockRejectedValueOnce(rejection())
+      .mockRejectedValueOnce(rejection())
+      .mockResolvedValueOnce(completionResponse("review text"));
+
+    await client.chatCompletion("system", "user", true);
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(create.mock.calls[0][0].response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: { name: "robin_review", strict: true },
+    });
+    expect(create.mock.calls[1][0].response_format).toEqual({ type: "json_object" });
+    expect(create.mock.calls[2][0]).not.toHaveProperty("response_format");
+  });
+
+  it("drops a rejected schema straight away on Anthropic, which has no plain JSON mode", async () => {
+    const client = makeClient("https://api.anthropic.com/v1", "claude-opus-5-5");
     const create = stubOpenAI(client);
     create
       .mockRejectedValueOnce(
-        Object.assign(new Error("response_format is not supported by this model"), {
+        Object.assign(new Error("response_format.json_schema: structured outputs are not supported for this model"), {
           status: 400,
-        }),
+        })
       )
       .mockResolvedValueOnce(completionResponse("review text"));
 
     await client.chatCompletion("system", "user", true);
 
     expect(create).toHaveBeenCalledTimes(2);
-    expect(create.mock.calls[0][0]).toHaveProperty("response_format");
+    expect(create.mock.calls[0][0].response_format).toMatchObject({ type: "json_schema" });
     expect(create.mock.calls[1][0]).not.toHaveProperty("response_format");
   });
 
@@ -344,7 +365,7 @@ describe("LLMClient reasoning request shape", () => {
     expect(request).toMatchObject({
       model: "model",
       temperature: 0.1,
-      response_format: { type: "json_object" },
+      response_format: { type: "json_schema", json_schema: { name: "robin_review", strict: true } },
     });
     expect(request).not.toHaveProperty("max_tokens");
   });
@@ -861,5 +882,145 @@ describe("LLMClient reasoning fallback", () => {
     expect(create).toHaveBeenCalledTimes(3);
     expect(create.mock.calls[2][0]).not.toHaveProperty("reasoning");
     expect(fallbackWarnings()).toHaveLength(1);
+  });
+});
+
+describe("LLMClient tool calling", () => {
+  const tools = [
+    {
+      type: "function" as const,
+      function: { name: "read_file", parameters: { type: "object", properties: {} } },
+    },
+  ];
+  const messages = [
+    { role: "system" as const, content: "system" },
+    { role: "user" as const, content: "user" },
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("sends tools and tool_choice without response_format", async () => {
+    const client = makeClient("https://api.openai.com/v1", "gpt-4o");
+    const create = stubOpenAI(client);
+    create.mockResolvedValueOnce(completionResponse("done"));
+
+    await client.chatWithTools(messages, tools, { toolChoice: "none" });
+
+    const request = create.mock.calls[0][0];
+    expect(request.tools).toEqual(tools);
+    expect(request.tool_choice).toBe("none");
+    expect(request).not.toHaveProperty("response_format");
+    expect(request.messages).toEqual(messages);
+  });
+
+  it("returns tool calls from a blocking response with empty content", async () => {
+    const client = makeClient("https://api.openai.com/v1", "gpt-4o");
+    const create = stubOpenAI(client);
+    create.mockResolvedValueOnce({
+      model: "gpt-4o",
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              { id: "call_1", type: "function", function: { name: "read_file", arguments: '{"path":"a.ts"}' } },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    });
+
+    const result = await client.chatWithTools(messages, tools);
+
+    expect(result.content).toBe("");
+    expect(result.toolCalls).toEqual([{ id: "call_1", name: "read_file", arguments: '{"path":"a.ts"}' }]);
+    expect(warningMock).not.toHaveBeenCalledWith(expect.stringContaining("no text content"));
+  });
+
+  it("assembles streamed tool-call deltas for router models", async () => {
+    const client = makeClient("https://openrouter.ai/api/v1", "openrouter/free");
+    const create = stubOpenAI(client);
+    create.mockResolvedValueOnce(
+      streamOf([
+        {
+          model: "vendor/model",
+          choices: [{ delta: { tool_calls: [{ index: 0, id: "call_a", function: { name: "grep", arguments: '{"pat' } }] } }],
+        },
+        {
+          model: "vendor/model",
+          choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'tern":"x"}' } }] } }],
+        },
+        {
+          model: "vendor/model",
+          choices: [{ delta: { tool_calls: [{ index: 1, function: { name: "list_files", arguments: "{}" } }] } }],
+        },
+      ]),
+    );
+
+    const result = await client.chatWithTools(messages, tools);
+
+    expect(result.toolCalls).toEqual([
+      { id: "call_a", name: "grep", arguments: '{"pattern":"x"}' },
+      { id: "call_1", name: "list_files", arguments: "{}" },
+    ]);
+  });
+
+  it("throws ToolsUnsupportedError without retrying when a router has no tool-capable endpoint", async () => {
+    const client = new LLMClient("https://openrouter.ai/api/v1", "k", "openrouter/free");
+    const create = stubOpenAI(client);
+    create.mockRejectedValue(
+      Object.assign(new Error("404 No endpoints found that support tool use. Try disabling \"read_file\"."), {
+        status: 404,
+      }),
+    );
+
+    await expect(client.chatWithTools(messages, tools)).rejects.toBeInstanceOf(ToolsUnsupportedError);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps normal router 404 retries for plain completions", async () => {
+    const client = makeClient("https://openrouter.ai/api/v1", "openrouter/free");
+    const create = stubOpenAI(client);
+    create.mockRejectedValue(
+      Object.assign(new Error("404 No endpoints found that support tool use."), { status: 404 }),
+    );
+
+    await expect(client.chatCompletion("system", "user")).rejects.not.toBeInstanceOf(ToolsUnsupportedError);
+  });
+});
+
+describe("LLMClient context-length errors on router streams", () => {
+  it("surfaces a context-length rejection instead of treating it as a router stall", async () => {
+    const client = makeClient("https://openrouter.ai/api/v1", "openrouter/free");
+    const create = stubOpenAI(client);
+    create.mockRejectedValue(
+      Object.assign(new Error("400 This endpoint's maximum context length is 131072 tokens."), { status: 400 }),
+    );
+
+    await expect(client.chatCompletion("system", "user")).rejects.toThrow(/maximum context length/);
+  });
+});
+
+describe("REVIEW_JSON_SCHEMA", () => {
+  const { REVIEW_JSON_SCHEMA } = jest.requireActual("./prompts/review-schema");
+
+  const objects = (schema: any): any[] =>
+    schema && typeof schema === "object"
+      ? [
+          ...(schema.type === "object" ? [schema] : []),
+          ...Object.values(schema).flatMap((value) => (Array.isArray(value) ? value.flatMap(objects) : objects(value))),
+        ]
+      : [];
+
+  it("satisfies OpenAI and Anthropic strict mode: closed objects with every property required", () => {
+    const all = objects(REVIEW_JSON_SCHEMA);
+    expect(all.length).toBeGreaterThan(1);
+    for (const object of all) {
+      expect(object.additionalProperties).toBe(false);
+      expect([...object.required].sort()).toEqual(Object.keys(object.properties).sort());
+    }
   });
 });

@@ -36,6 +36,9 @@ jobs:
       config-file: .github/robin.yml
       # String-typed defer-to-config knob: expression avoids actionlint bool/string clash.
       use-json-response-mode: ${{ 'true' }}
+      agent-mode: auto
+      agent-max-turns: "40"
+      agent-max-diff-size: "200000"
       runner: '"ubuntu-latest"'
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}

@@ -4,7 +4,9 @@ import {
   getLlmCompletionAttemptCount,
   isInvalidReasoningEffortError,
   isOpenRouterRouterModel,
+  isContextLengthError,
   isRetriableLlmError,
+  isToolsUnsupportedError,
   isUnsupportedReasoningEffortError,
   openRouterStallError,
   resolveLlmTimeoutMs,
@@ -463,6 +465,12 @@ describe("findUnsupportedRequestParam", () => {
     ).toBe("max_tokens");
   });
 
+  it("matches Anthropic's deprecated-temperature rejection for newer Claude models", () => {
+    expect(
+      findUnsupportedRequestParam({ status: 400, message: "400 `temperature` is deprecated for this model." }, sent)
+    ).toBe("temperature");
+  });
+
   it("matches the live OpenAI messages without a structured param", () => {
     expect(
       findUnsupportedRequestParam(
@@ -591,5 +599,53 @@ describe("getLlmCompletionAttemptCount", () => {
     expect(getLlmCompletionAttemptCount(DEFAULT_LLM_COMPLETION_ATTEMPTS, "gpt-4o")).toBe(
       DEFAULT_LLM_COMPLETION_ATTEMPTS
     );
+  });
+});
+
+describe("isToolsUnsupportedError", () => {
+  const withStatus = (status: number, message: string, extra: Record<string, unknown> = {}) =>
+    Object.assign(new Error(message), { status, ...extra });
+
+  it.each([
+    withStatus(404, "404 No endpoints found that support tool use. Try disabling \"read_file\"."),
+    withStatus(400, "registry.ollama.ai/library/llama2:latest does not support tools"),
+    withStatus(400, "\"auto\" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"),
+    withStatus(400, "Function calling is not supported by this model"),
+    withStatus(422, "Extra inputs are not permitted: tools"),
+    withStatus(400, "Invalid request", { param: "tool_choice" }),
+  ])("detects %s", (error) => {
+    expect(isToolsUnsupportedError(error)).toBe(true);
+  });
+
+  it.each([
+    withStatus(429, "Rate limit exceeded while using tools"),
+    withStatus(500, "tools not available right now"),
+    withStatus(400, "temperature must be 1"),
+    withStatus(404, "Provider returned error"),
+    withStatus(401, "Invalid API key"),
+  ])("ignores unrelated error %s", (error) => {
+    expect(isToolsUnsupportedError(error)).toBe(false);
+  });
+});
+
+describe("isContextLengthError", () => {
+  const withStatus = (status: number, message: string) => Object.assign(new Error(message), { status });
+
+  it.each([
+    withStatus(400, "This model's maximum context length is 128000 tokens. However, your messages resulted in 130000 tokens."),
+    withStatus(400, "prompt is too long: 210000 tokens > 200000 maximum"),
+    withStatus(400, "context_length_exceeded"),
+    withStatus(413, "Request Entity Too Large"),
+    new Error("Failed to get response from LLM: Error: 400 Input is too long for requested model."),
+  ])("detects %s", (error) => {
+    expect(isContextLengthError(error)).toBe(true);
+  });
+
+  it.each([
+    withStatus(429, "Too many requests"),
+    withStatus(400, "temperature must be 1"),
+    withStatus(500, "maximum context length exceeded"),
+  ])("ignores %s", (error) => {
+    expect(isContextLengthError(error)).toBe(false);
   });
 });
