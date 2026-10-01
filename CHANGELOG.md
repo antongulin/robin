@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.9.0](https://github.com/antongulin/robin/compare/v2.8.0...v2.9.0) (2026-10-01)
+
+
+### Features
+
+* agentic multi-turn review, Claude/Anthropic support, and OpenAI reasoning-model fixes ([#90](https://github.com/antongulin/robin/issues/90)) ([b0b1496](https://github.com/antongulin/robin/commit/b0b149613d54be439e803e99b270caba9987ebaa))
+
 ## [2.8.0](https://github.com/antongulin/robin/compare/v2.7.2...v2.8.0) (2026-09-18)
 
 
