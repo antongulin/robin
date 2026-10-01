@@ -135,3 +135,43 @@ The change is focused and easy to follow.
     expect(review.suggestions[0].file).toBe("README.md");
   });
 });
+
+describe("ReviewParser suggestions", () => {
+  it("parses startLine and suggestion, stripping code fences", () => {
+    const review = ReviewParser.parse(
+      JSON.stringify({
+        summary: "s",
+        high: [
+          {
+            file: "src/a.ts",
+            line: 12,
+            startLine: 10,
+            description: "bug",
+            recommendation: "fix",
+            suggestion: "```ts\n  const x = 1;\n  const y = 2;\n```",
+          },
+        ],
+        medium: [],
+        low: [],
+        suggestions: [],
+      })
+    );
+
+    expect(review.high[0]).toMatchObject({ line: 12, startLine: 10, suggestion: "  const x = 1;\n  const y = 2;" });
+  });
+
+  it("drops empty suggestions and start lines that are not before line", () => {
+    const review = ReviewParser.parse(
+      JSON.stringify({
+        summary: "s",
+        high: [],
+        medium: [{ file: "a.ts", line: 5, startLine: 5, description: "d", recommendation: "", suggestion: "  " }],
+        low: [],
+        suggestions: [],
+      })
+    );
+
+    expect(review.medium[0]).not.toHaveProperty("startLine");
+    expect(review.medium[0]).not.toHaveProperty("suggestion");
+  });
+});

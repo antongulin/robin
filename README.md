@@ -11,7 +11,8 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 ## What you get
 
 - A review when you open a pull request (or when someone comments `/robin`)
-- A short summary plus inline comments on changed lines
+- A short summary plus inline comments on changed lines, with one-click suggested fixes when the model can pin one down
+- Optional reviews that check the rest of your repo (callers, definitions) when you enable agent mode and your model supports tool calling
 - Your choice of AI provider — including **free** options
 
 When there's nothing worth flagging, Robin says so instead of inventing nitpicks:
@@ -31,7 +32,7 @@ Add Robin to this repository.
 - Action ref if needed: antongulin/robin@main
 - Secrets: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 - Do NOT use @v0 or any v0 tag
-- Do NOT use pull_request_target or synchronize on pull_request
+- Do NOT use pull_request_target
 Read AGENTS.md in the robin repo for full rules.
 ```
 
@@ -144,6 +145,8 @@ jobs:
 
 Commit and push. Open a pull request — you should see a review within a few minutes.
 
+By default Robin reviews when the PR opens (and on `/review`), not on every push. To also review each push, add `synchronize` to the `pull_request` `types:` and set `review-on-synchronize: true` in the job's `with:` block.
+
 > [!IMPORTANT]
 > Use **`@main`** for the latest fixes, or pin a release tag (for example `@v2` or `@v2.7.0`) from [releases](https://github.com/antongulin/robin/releases). Do **not** use `@v0`. See [Version pins](#version-pins) below.
 
@@ -234,6 +237,21 @@ Focused change. Main risk: timeout errors are not handled clearly.
 **1 (`src/example.ts:24`)** — Retries exist but timeout failures lack context.
 ```
 
+## Agent mode: reviews with repository context
+
+Robin doesn't only look at the diff. When you enable agent mode (`agent-mode: auto`) and your
+model supports tool calling, the review is a short multi-turn investigation: the model can
+read full files, grep for callers of a changed function, and list directories at the PR's
+head commit before it decides what's a bug. Findings can come with a one-click GitHub
+**suggested change** containing the exact fix.
+
+- Nothing to set up: Robin downloads a read-only snapshot of the PR through the GitHub API (no checkout, and PR code is never run).
+- If the model doesn't support tools (some free OpenRouter routes, many small Ollama models), Robin quietly falls back to the classic diff-only review.
+- Agent mode is opt-in: set `agent-mode: auto` in `.github/robin.yml`, and cap the investigation with `agent-max-turns` (default 40). Unset keeps the single-shot diff review.
+- Long investigations don't hit a wall: when the context fills up, Robin has the model summarize what it has found so far and keeps going, like Cursor's context compaction.
+
+Details: [Agent mode](docs/ADVANCED.md#agent-mode-multi-turn-review-with-repository-context).
+
 ## Robin in your editor
 
 The one-line installer also installs a small **companion skill** into every coding agent
@@ -261,15 +279,18 @@ offer it as a separate next step. Source: [skills/robin/SKILL.md](skills/robin/S
 | Provider | `LLM_BASE_URL` | `LLM_MODEL` example |
 | --- | --- | --- |
 | **OpenRouter (free)** | `https://openrouter.ai/api/v1` | `openrouter/free` |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o`, `gpt-5-mini`, `o4-mini` |
+| Anthropic (Claude) | `https://api.anthropic.com/v1` | `claude-sonnet-4-5` |
 | Groq | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
 | Ollama (your server) | `http://YOUR_SERVER:11434/v1` | `llama3.2` |
+
+Anthropic works through its OpenAI-compatible endpoint with your regular Anthropic API key; pasting `https://api.anthropic.com` without `/v1` is fine too. OpenAI reasoning models (`o1`/`o3`/`o4-mini`, `gpt-5*`, `codex-*`) are sent without `temperature` and with `max_completion_tokens` automatically. See [Provider notes](docs/ADVANCED.md#provider-notes).
 
 GitHub’s servers cannot reach `localhost` on your laptop. For Ollama at home, use a public server, a tunnel, or a [self-hosted runner](docs/ADVANCED.md#save-github-actions-minutes).
 
 ## Optional: config and custom rules
 
-Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to set `max-diff-size`, skip extra paths, and more. The same file is the normal place to set `reasoning-effort` for providers that expose reasoning controls; leave it unset to send no reasoning configuration. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
+Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to set `max-diff-size`, skip extra paths, and more. The same file is the normal place to change `reasoning-effort` for providers that expose reasoning controls; when it is unset Robin sends no reasoning control and the provider/model decides, and `off` is an explicit way to send nothing. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
 
 Add `.github/code-reviewer.md` in your repo:
 
@@ -290,10 +311,10 @@ Add `.github/code-reviewer.md` in your repo:
 | `/robin` does nothing | Put `/robin` on the **first** line; you need write access on the repo. On `@v1`, pin `@v1.4.0`+ or use `/review` if the tag predates v1.4.0 |
 | Review is very short | PR may be huge — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`) |
 | `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/robin` again |
-| `OpenRouter stall` / job runs 15 min with no review | Auto-router hung — action now aborts after 45s with no stream and retries | Watch Actions log for `LLM resolved model` (routing OK); pin `@v2` or `@main` for the fix |
+| `OpenRouter stall` / job runs 45 min with no review | Auto-router hung — action now aborts after 45s with no stream and retries | Watch Actions log for `LLM resolved model` (routing OK); pin `@v2` or `@main` for the fix |
 | `404 Provider returned error` | Normal for `openrouter/free` when one provider is down — the action retries up to 5 times; keep `LLM_MODEL=openrouter/free` |
-| `temperature` rejected / must be a fixed value | Some models accept only one temperature (Kimi requires `1`) — set `llm-temperature` in your workflow's `with:` block, see [docs/ADVANCED.md](docs/ADVANCED.md#models-that-require-a-fixed-temperature) |
-| `reasoning-effort` rejected as unsupported or invalid | The action warns, retries once with no reasoning override, and completes the review when that retry succeeds. Its final status comment tells you to update `reasoning-effort` in `.github/robin.yml` or the workflow `with:` block |
+| `temperature` / `max_tokens` rejected by the model | The action warns, retries once with the parameter renamed or dropped (or with `max_completion_tokens`), and keeps that shape for the run. If the endpoint rejects both token-cap spellings, the provider error surfaces rather than running uncapped. To pin a value some models insist on (Kimi requires `1`), set `llm-temperature` in your workflow's `with:` block, see [docs/ADVANCED.md](docs/ADVANCED.md#models-that-require-a-fixed-temperature) |
+| `reasoning-effort` rejected as unsupported or invalid | The action warns, retries once with no reasoning override, and completes the review when that retry succeeds. If you set the value yourself, the final status comment tells you to update `reasoning-effort` in `.github/robin.yml` or the workflow `with:` block. With no value configured Robin sends no reasoning control at all, so nothing is rejected. Set `reasoning-effort: off` to be explicit |
 
 More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)
 

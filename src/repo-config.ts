@@ -10,7 +10,18 @@ export interface RepoConfig {
   jsonResponseMode?: boolean;
   requestChanges?: boolean;
   reasoningEffort?: string;
+  agentMode?: AgentMode;
+  agentMaxTurns?: number;
+  agentMaxDiffSize?: number;
 }
+
+export type AgentMode = "auto" | "off";
+/** Single-shot diff review unless the caller explicitly opts into the multi-turn agent review. */
+export const DEFAULT_AGENT_MODE: AgentMode = "off";
+export const DEFAULT_AGENT_MAX_TURNS = 40;
+const MAX_AGENT_MAX_TURNS = 100;
+/** Diff characters sent up front in agent mode (~50-65k tokens); the single-shot fallback keeps max-diff-size. */
+export const DEFAULT_AGENT_MAX_DIFF_SIZE = 200_000;
 
 /** Strips a trailing ` # comment` only outside quotes, so quoted values keep `#` intact. */
 function stripTrailingComment(line: string): string {
@@ -85,6 +96,24 @@ export function parseRepoConfigYaml(text: string): RepoConfig {
       continue;
     }
 
+    const agentModeMatch = setting.match(/^agent-mode:\s*['"]?(auto|off)['"]?\s*$/i);
+    if (agentModeMatch) {
+      config.agentMode = agentModeMatch[1].toLowerCase() as AgentMode;
+      continue;
+    }
+
+    const agentMaxTurnsMatch = setting.match(/^agent-max-turns:\s*(\d+)\s*$/i);
+    if (agentMaxTurnsMatch) {
+      config.agentMaxTurns = parseInt(agentMaxTurnsMatch[1], 10);
+      continue;
+    }
+
+    const agentMaxDiffMatch = setting.match(/^agent-max-diff-size:\s*(\d+)\s*$/i);
+    if (agentMaxDiffMatch) {
+      config.agentMaxDiffSize = parseInt(agentMaxDiffMatch[1], 10);
+      continue;
+    }
+
     const reasoningEffortMatch = setting.match(
       /^reasoning-effort:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|(.+))\s*$/i
     );
@@ -140,12 +169,62 @@ export function resolveRequestChanges(actionInput: string, repoConfig?: RepoConf
   return repoConfig?.requestChanges ?? true;
 }
 
-/** Reasoning effort is provider configuration: explicit input first, then `.github/robin.yml`, else unset. */
+/** Multi-turn tool review: explicit input first, then `.github/robin.yml`, else single-shot (`off`). */
+export function resolveAgentMode(actionInput: string, repoConfig?: RepoConfig): AgentMode {
+  const input = actionInput.trim().toLowerCase();
+  if (input === "auto" || input === "off") return input;
+  return repoConfig?.agentMode ?? DEFAULT_AGENT_MODE;
+}
+
+export function resolveAgentMaxTurns(actionInput: string, repoConfig?: RepoConfig): number {
+  const parsed = parseInt(actionInput, 10);
+  const value =
+    Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : repoConfig?.agentMaxTurns && repoConfig.agentMaxTurns > 0
+        ? repoConfig.agentMaxTurns
+        : DEFAULT_AGENT_MAX_TURNS;
+  return Math.min(value, MAX_AGENT_MAX_TURNS);
+}
+
+export function resolveAgentMaxDiffSize(actionInput: string, repoConfig?: RepoConfig): number {
+  const parsed = parseInt(actionInput, 10);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  if (repoConfig?.agentMaxDiffSize && repoConfig.agentMaxDiffSize > 0) return repoConfig.agentMaxDiffSize;
+  return DEFAULT_AGENT_MAX_DIFF_SIZE;
+}
+
+/**
+ * Sentinel value that sends no reasoning configuration at all.
+ *
+ * There is deliberately no applied default: when neither the action input nor
+ * `.github/robin.yml` sets `reasoning-effort`, Robin sends no reasoning control and
+ * lets the provider/model choose. An explicit value (including `high`) is still sent.
+ */
+export const REASONING_EFFORT_OFF = "off";
+
+/**
+ * Reasoning effort is provider configuration: explicit input first, then `.github/robin.yml`,
+ * else unset so the provider default applies. `off` (any case) also disables reasoning
+ * configuration entirely.
+ */
 export function resolveReasoningEffort(
   actionInput: string,
   repoConfig?: RepoConfig
 ): string | undefined {
+  const configured = configuredReasoningEffort(actionInput, repoConfig);
+  if (configured === undefined) return undefined;
+  return configured.toLowerCase() === REASONING_EFFORT_OFF ? undefined : configured;
+}
+
+/** True when the user set `reasoning-effort` themselves (input or repo config), not the default. */
+export function isReasoningEffortConfigured(actionInput: string, repoConfig?: RepoConfig): boolean {
+  return configuredReasoningEffort(actionInput, repoConfig) !== undefined;
+}
+
+function configuredReasoningEffort(actionInput: string, repoConfig?: RepoConfig): string | undefined {
   const trimmed = actionInput.trim();
   if (trimmed) return trimmed;
-  return repoConfig?.reasoningEffort;
+  const fromRepo = repoConfig?.reasoningEffort?.trim();
+  return fromRepo || undefined;
 }

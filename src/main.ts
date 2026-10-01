@@ -1,6 +1,11 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
-import { LLMClient } from "./llm-client";
+import { LLMClient, ToolsUnsupportedError } from "./llm-client";
+import { runAgentReview } from "./agent-review";
+import { createRepoSnapshot } from "./repo-snapshot";
+import { ReviewToolbox } from "./review-tools";
+import { StatusReporter } from "./status-reporter";
+import { describeRobinVersion } from "./version";
 import {
   buildReasoningFallbackNotice,
   ReasoningFallbackReason,
@@ -18,9 +23,14 @@ import {
 import { filterDiff, splitDiffIntoFiles } from "./diff-filter";
 import { annotateDiffWithLineNumbers } from "./diff-annotate";
 import {
+  AgentMode,
   DEFAULT_CONFIG_FILE,
   RepoConfig,
+  isReasoningEffortConfigured,
   parseRepoConfigYaml,
+  resolveAgentMaxDiffSize,
+  resolveAgentMaxTurns,
+  resolveAgentMode,
   resolveJsonResponseMode,
   resolveMaxComments,
   resolveMaxDiffSize,
@@ -29,6 +39,7 @@ import {
 } from "./repo-config";
 import { getReviewPrompt, getSummaryPrompt, getHelpMessage } from "./prompts/review-prompts";
 import { ReviewerCommand, hasRequiredPermission, parseSlashCommand } from "./commands";
+import { shouldSkipSynchronizeEvent } from "./trigger";
 
 async function run(): Promise<void> {
   let octokit: ReturnType<typeof github.getOctokit> | undefined;
@@ -37,6 +48,7 @@ async function run(): Promise<void> {
   let statusCommentId: number | undefined;
   let statusCommand: "review" | "summary" = "review";
   let statusModel = "not configured";
+  let reporter: StatusReporter | undefined;
   let onJobCancelled: (() => Promise<void>) | undefined;
 
   try {
@@ -64,8 +76,10 @@ async function run(): Promise<void> {
     }
 
     if (eventName === "pull_request") {
-      if (payload.action === "synchronize" && !reviewOnSynchronize) {
-        core.info("Skipping pull_request synchronize event. Pushes to an existing PR are reviewed manually with /review unless review-on-synchronize is true.");
+      if (shouldSkipSynchronizeEvent(payload.action, reviewOnSynchronize)) {
+        core.info(
+          "Skipping pull_request synchronize event. Pushes to an existing PR are reviewed manually with /review unless review-on-synchronize is true."
+        );
         return;
       }
 
@@ -151,14 +165,29 @@ async function run(): Promise<void> {
     const configFile = core.getInput("config-file") || DEFAULT_CONFIG_FILE;
     const jsonResponseModeInput = core.getInput("use-json-response-mode") || "";
     const requestChangesInput = core.getInput("request-changes") || "";
+    const agentModeInput = core.getInput("agent-mode") || "";
+    const agentMaxTurnsInput = core.getInput("agent-max-turns") || "";
+    const agentMaxDiffSizeInput = core.getInput("agent-max-diff-size") || "";
 
     core.info(`Model: ${model || "(not configured)"}`);
 
     core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
     statusCommand = command === "summary" ? "summary" : "review";
     statusModel = model || "not configured";
+    robinVersion = await describeRobinVersion(octokit as any);
+    core.info(`Robin ${robinVersion}`);
     statusCommentId = await postStatusComment(octokit, owner, repo, prNumber, command, statusModel);
+    const commentId = statusCommentId;
+    reporter = new StatusReporter(
+      (body) => updateStatusComment(octokit!, owner, repo, commentId, body),
+      {
+        model: statusModel,
+        mode: command === "summary" ? "summary" : "code review",
+        version: () => robinVersion,
+      }
+    );
     onJobCancelled = async () => {
+      await Promise.race([reporter?.close(), new Promise((resolve) => setTimeout(resolve, 1000).unref())]);
       if (octokit && statusCommentId) {
         // The SIGTERM grace period is short — never let the superseded check
         // delay the status update past it. On timeout the check is abandoned
@@ -207,8 +236,18 @@ async function run(): Promise<void> {
     const jsonResponseMode = resolveJsonResponseMode(jsonResponseModeInput, repoConfig);
     const requestChanges = resolveRequestChanges(requestChangesInput, repoConfig);
     const reasoningEffort = resolveReasoningEffort(reasoningEffortInput, repoConfig);
+    const reasoningEffortConfigured = isReasoningEffortConfigured(reasoningEffortInput, repoConfig);
+    const agentMode = resolveAgentMode(agentModeInput, repoConfig);
+    const agentMaxTurns = resolveAgentMaxTurns(agentMaxTurnsInput, repoConfig);
+    const agentMaxDiffSize = resolveAgentMaxDiffSize(agentMaxDiffSizeInput, repoConfig);
     if (reasoningEffort) {
       core.info(`Reasoning effort: ${reasoningEffort}`);
+    } else if (reasoningEffortConfigured) {
+      core.info("Reasoning effort: off (no reasoning configuration sent)");
+    } else {
+      core.info(
+        "Reasoning effort: not set (using the provider/model default; no reasoning configuration sent)"
+      );
     }
 
     const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
@@ -256,12 +295,11 @@ async function run(): Promise<void> {
       return;
     }
 
-    const truncatedDiff = reviewDiff.length > maxDiffSize 
-      ? reviewDiff.slice(0, maxDiffSize) + "\n\n[... Diff truncated due to size limit]"
-      : reviewDiff;
+    const truncatedDiff = truncateDiff(reviewDiff, maxDiffSize);
+    const agentDiff = truncateDiff(reviewDiff, agentMaxDiffSize);
 
     core.info(
-      `Diff size: ${reviewDiff.length} chars${reviewDiff.length > maxDiffSize ? " (truncated)" : ""}${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`
+      `Diff size: ${reviewDiff.length} chars (single-shot limit ${maxDiffSize}${reviewDiff.length > maxDiffSize ? ", truncated" : ""}; agent limit ${agentMaxDiffSize}${reviewDiff.length > agentMaxDiffSize ? ", truncated" : ""})${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`
     );
     const reviewInstructions = command === "review"
       ? await loadReviewInstructions(
@@ -284,24 +322,36 @@ async function run(): Promise<void> {
       llmTimeoutMs,
       undefined,
       llmTemperature,
-      async (detail) => {
-        await updateStatusComment(
-          octokit!,
-          owner,
-          repo,
-          statusCommentId,
-          buildProgressStatusBody(detail, statusCommand, statusModel)
-        );
-      },
+      (detail) => reporter?.setProvider(detail),
       reasoningEffort
     );
     const useJsonMode = command === "review" && jsonResponseMode;
+    // Only a user-configured effort earns a PR-visible "fix your config" notice; a rejected
+    // default falls back quietly in the logs.
+    const reasoningNoticeReason = (): ReasoningFallbackReason | undefined =>
+      reasoningEffortConfigured ? llm.getReasoningFallbackReason() : undefined;
     
     let reviewText: string;
+    let reviewStats: string | undefined;
     if (command === "summary") {
       reviewText = (await runSummary(llm, truncatedDiff)).content;
     } else {
-      reviewText = (await runReview(llm, truncatedDiff, reviewInstructions, useJsonMode)).content;
+      ({ content: reviewText, stats: reviewStats } = await runAgentOrSingleShotReview({
+        octokit,
+        owner,
+        repo,
+        prNumber,
+        headSha: payload.pull_request?.head?.sha,
+        llm,
+        diff: truncatedDiff,
+        agentDiff,
+        changedFiles: splitDiffIntoFiles(reviewDiff).map((file) => file.path),
+        reviewInstructions,
+        useJsonMode,
+        agentMode,
+        agentMaxTurns,
+        reporter,
+      }));
     }
 
     if (command === "summary") {
@@ -312,12 +362,13 @@ async function run(): Promise<void> {
         issue_number: prNumber,
         body: ["## " + ROBIN_SIGNATURE + " · Summary", "", reviewText].join("\n"),
       });
+      await reporter.close();
       await updateStatusComment(
         octokit,
         owner,
         repo,
         statusCommentId,
-        buildCompletedStatusBody("summary", undefined, llm.getReasoningFallbackReason())
+        buildCompletedStatusBody("summary", undefined, reasoningNoticeReason())
       );
     } else {
       // Full review parsed and posted as a review
@@ -327,17 +378,7 @@ async function run(): Promise<void> {
 
       if (shouldRetryStructuredReview(findings, parsedReview.usedJson)) {
         core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
-        await updateStatusComment(
-          octokit,
-          owner,
-          repo,
-          statusCommentId,
-          buildProgressStatusBody(
-            "First pass returned no parseable findings — retrying with JSON-only instructions…",
-            statusCommand,
-            statusModel
-          )
-        );
+        reporter.setStep("First pass returned no parseable findings — retrying with JSON-only instructions…");
         const retryText = (
           await runReview(
             llm,
@@ -354,12 +395,13 @@ async function run(): Promise<void> {
 
       const reviewer = new GitHubReviewer(octokit as any, maxComments);
       await reviewer.postReview(owner, repo, prNumber, findings, requestChanges);
+      await reporter.close();
       await updateStatusComment(
         octokit,
         owner,
         repo,
         statusCommentId,
-        buildCompletedStatusBody("review", findings, llm.getReasoningFallbackReason())
+        buildCompletedStatusBody("review", findings, reasoningNoticeReason(), reviewStats)
       );
 
       if (findings.high.length > 0 && failOnHigh) {
@@ -372,12 +414,14 @@ async function run(): Promise<void> {
 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    await reporter?.close();
     if (octokit && statusOwner && statusRepo && statusCommentId) {
       await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(message, statusCommand));
     }
     core.setFailed(message);
   } finally {
     onJobCancelled = undefined;
+    await reporter?.close();
   }
 }
 
@@ -421,6 +465,7 @@ async function postStatusComment(
         "",
         `Mode: ${command === "summary" ? "summary" : "code review"}`,
         `Model: ${model}`,
+        `Robin: ${robinVersion}`,
       ].join("\n"),
     });
     return data.id;
@@ -454,7 +499,8 @@ async function updateStatusComment(
 function buildCompletedStatusBody(
   command: "review" | "summary",
   findings?: StructuredReview,
-  reasoningFallbackReason?: ReasoningFallbackReason
+  reasoningFallbackReason?: ReasoningFallbackReason,
+  reviewStats?: string
 ): string {
   const fallbackNotice = buildReasoningFallbackNotice(reasoningFallbackReason);
   if (command === "summary") {
@@ -465,6 +511,7 @@ function buildCompletedStatusBody(
       ...(fallbackNotice ? ["", fallbackNotice] : []),
       "",
       "Want the full review? Comment `/robin`.",
+      ...versionFooter(),
     ].join("\n");
   }
 
@@ -482,6 +529,7 @@ function buildCompletedStatusBody(
     ...(fallbackNotice ? ["", fallbackNotice] : []),
     "",
     "Push fixes whenever you like, then comment `/robin` for another pass.",
+    ...versionFooter(reviewStats),
   ].join("\n");
 }
 
@@ -497,6 +545,7 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
     `Skipped: ${preview}${suffix}`,
     "",
     "Add `skip-paths` in `.github/robin.yml` if that's not what you expected.",
+    ...versionFooter(),
   ].join("\n");
 }
 
@@ -509,24 +558,14 @@ function buildFailedStatusBody(errorMessage: string, command: "review" | "summar
     `Reason: ${errorMessage}`,
     "",
     "Free model routes drop sometimes — comment `/robin` to try again. (No secrets are included in this message.)",
+    ...versionFooter(),
   ].join("\n");
 }
 
-function buildProgressStatusBody(
-  detail: string,
-  command: "review" | "summary",
-  model: string
-): string {
-  return [
-    "## " + ROBIN_SIGNATURE,
-    "",
-    ":hourglass_flowing_sand: Still working on this pull request.",
-    "",
-    detail,
-    "",
-    `Mode: ${command === "summary" ? "summary" : "code review"}`,
-    `Model: ${model}`,
-  ].join("\n");
+let robinVersion = "version unknown";
+
+function versionFooter(stats?: string): string[] {
+  return ["", `<sub>Robin ${robinVersion}${stats ? ` · ${stats}` : ""}</sub>`];
 }
 
 /**
@@ -577,6 +616,7 @@ function buildSupersededStatusBody(command: "review" | "summary"): string {
     `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run.`,
     "",
     "No action needed — the newer run posts its own result when it finishes.",
+    ...versionFooter(),
   ].join("\n");
 }
 
@@ -589,6 +629,7 @@ function buildCancelledStatusBody(command: "review" | "summary"): string {
     "This usually means the GitHub Actions job was cancelled or hit its time limit while waiting on the model.",
     "",
     "Comment `/robin` to run again.",
+    ...versionFooter(),
   ].join("\n");
 }
 
@@ -733,6 +774,102 @@ async function runReview(
   const userContent = buildReviewInput(diff);
   core.info("Getting full code review...");
   return await llm.chatCompletion(systemPrompt, userContent, jsonResponseMode);
+}
+
+function truncateDiff(diff: string, limit: number): string {
+  return diff.length > limit ? diff.slice(0, limit) + "\n\n[... Diff truncated due to size limit]" : diff;
+}
+
+interface AgentOrSingleShotParams {
+  octokit: ReturnType<typeof github.getOctokit>;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  headSha?: string;
+  llm: LLMClient;
+  /** Diff for the single-shot review, truncated to max-diff-size. */
+  diff: string;
+  /** Diff for agent mode, truncated to agent-max-diff-size. */
+  agentDiff: string;
+  changedFiles: string[];
+  reviewInstructions: string;
+  useJsonMode: boolean;
+  agentMode: AgentMode;
+  agentMaxTurns: number;
+  reporter: StatusReporter;
+}
+
+/**
+ * Multi-turn review with repository tools when possible; any failure to set it up or run it
+ * (no tool support, snapshot download error, provider error mid-loop) falls back to the
+ * single-shot diff review so a PR always gets a review. `stats` describes how the review ran.
+ */
+async function runAgentOrSingleShotReview(
+  params: AgentOrSingleShotParams
+): Promise<{ content: string; stats: string }> {
+  const { reporter } = params;
+  const singleShot = async (why: string) => {
+    reporter.setMode("code review (diff only)");
+    const { content } = await runReview(params.llm, params.diff, params.reviewInstructions, params.useJsonMode);
+    return { content, stats: `diff-only review (${why})` };
+  };
+
+  if (params.agentMode === "off") {
+    core.info("Agent mode is off; running single-shot diff review.");
+    return singleShot("agent mode off");
+  }
+
+  let snapshot: Awaited<ReturnType<typeof createRepoSnapshot>>;
+  try {
+    const headSha = params.headSha || (await fetchHeadSha(params.octokit, params.owner, params.repo, params.prNumber));
+    reporter.setMode("code review (agent)");
+    reporter.setStep("Downloading the repository snapshot for context…");
+    snapshot = await createRepoSnapshot(params.octokit as any, params.owner, params.repo, headSha);
+  } catch (error) {
+    core.warning(`Could not prepare repository snapshot (${error}); running single-shot diff review.`);
+    reporter.setStep("Couldn't download the repository — running a diff-only review…");
+    return singleShot("repository snapshot unavailable");
+  }
+
+  try {
+    core.info(`Running agent review (max ${params.agentMaxTurns} turns)...`);
+    const result = await runAgentReview({
+      llm: params.llm,
+      toolbox: new ReviewToolbox(snapshot.root),
+      annotatedDiff: annotateDiffWithLineNumbers(params.agentDiff),
+      changedFiles: params.changedFiles,
+      instructions: params.reviewInstructions,
+      budgets: { maxTurns: params.agentMaxTurns },
+      onProgress: (progress) => reporter.setAgentProgress(progress),
+    });
+    const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+    const compactions = result.compactions ? ` · ${plural(result.compactions, "compaction")}` : "";
+    return {
+      content: result.content,
+      stats: `agent review: ${plural(result.turns, "turn")} · ${plural(result.toolCalls, "tool call")}${compactions}`,
+    };
+  } catch (error) {
+    if (error instanceof ToolsUnsupportedError) {
+      core.warning(`${error.message}. Running single-shot diff review instead.`);
+      reporter.setStep("Model doesn't support tool calling — running a diff-only review…");
+      return singleShot("model has no tool support");
+    }
+    core.warning(`Agent review failed (${error}); running single-shot diff review instead.`);
+    reporter.setStep("Agent review failed — retrying as a diff-only review…");
+    return singleShot("agent review failed");
+  } finally {
+    await snapshot.cleanup();
+  }
+}
+
+async function fetchHeadSha(
+  octokit: ReturnType<typeof github.getOctokit>,
+  owner: string,
+  repo: string,
+  prNumber: number
+): Promise<string> {
+  const { data } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+  return data.head.sha;
 }
 
 async function runSummary(llm: LLMClient, diff: string) {

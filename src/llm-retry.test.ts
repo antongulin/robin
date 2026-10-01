@@ -1,9 +1,12 @@
 import {
   computeRetryDelayMs,
+  findUnsupportedRequestParam,
   getLlmCompletionAttemptCount,
   isInvalidReasoningEffortError,
   isOpenRouterRouterModel,
+  isContextLengthError,
   isRetriableLlmError,
+  isToolsUnsupportedError,
   isUnsupportedReasoningEffortError,
   openRouterStallError,
   resolveLlmTimeoutMs,
@@ -439,6 +442,257 @@ describe("isInvalidReasoningEffortError", () => {
   });
 });
 
+describe("findUnsupportedRequestParam", () => {
+  const sent = ["temperature", "max_tokens", "response_format"] as const;
+
+  it("uses the structured param when the SDK provides one", () => {
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, param: "temperature", message: "Unsupported value" },
+        sent
+      )
+    ).toBe("temperature");
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_tokens",
+          message:
+            "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+        },
+        sent
+      )
+    ).toBe("max_tokens");
+  });
+
+  it("matches Anthropic's deprecated-temperature rejection for newer Claude models", () => {
+    expect(
+      findUnsupportedRequestParam({ status: 400, message: "400 `temperature` is deprecated for this model." }, sent)
+    ).toBe("temperature");
+  });
+
+  it("matches the live OpenAI messages without a structured param", () => {
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          message:
+            "400 Unsupported value: 'temperature' does not support 0.1 with this model. Only the default (1) value is supported.",
+        },
+        sent
+      )
+    ).toBe("temperature");
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          message:
+            "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+        },
+        sent
+      )
+    ).toBe("max_tokens");
+  });
+
+  it("matches provider phrasing that names the parameter bare", () => {
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "temperature must be 1 for reasoning models" },
+        sent
+      )
+    ).toBe("temperature");
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "Invalid temperature: only 1 is allowed" },
+        sent
+      )
+    ).toBe("temperature");
+    expect(
+      findUnsupportedRequestParam(
+        { status: 422, message: "response_format: Extra inputs are not permitted" },
+        sent
+      )
+    ).toBe("response_format");
+  });
+
+  it("only reports parameters that were actually sent", () => {
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "Unsupported parameter: 'max_tokens'" },
+        ["temperature"]
+      )
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, param: "max_completion_tokens", message: "Unknown parameter" },
+        ["max_tokens"]
+      )
+    ).toBeUndefined();
+    expect(findUnsupportedRequestParam({ status: 400, message: "Unsupported parameter: 'temperature'" }, [])).toBeUndefined();
+  });
+
+  it("does not match max_tokens inside max_completion_tokens", () => {
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "Unknown parameter: max_completion_tokens" },
+        ["max_tokens"]
+      )
+    ).toBeUndefined();
+  });
+
+  it("treats a token-limit value complaint as invalid, not as an unsupported field", () => {
+    const both = ["max_tokens", "max_completion_tokens"] as const;
+    // Structured param + invalid-value code/message must surface rather than be dropped.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_completion_tokens",
+          code: "integer_below_min_value",
+          message:
+            "Invalid value for 'max_completion_tokens': Expected a value >= 16, but got 8 instead.",
+        },
+        both
+      )
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam(
+        { status: 422, param: "max_tokens", code: "invalid_value", message: "Invalid value for 'max_tokens'" },
+        both
+      )
+    ).toBeUndefined();
+    // Message-only value complaints (no structured param) must also surface.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          message: "Invalid value for 'max_tokens': Expected a value >= 16, but got 1 instead.",
+        },
+        both
+      )
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "max_tokens must be at least 16" },
+        both
+      )
+    ).toBeUndefined();
+  });
+
+  it("lets an explicit structured value code beat unsupported-sounding message wording", () => {
+    const both = ["max_tokens", "max_completion_tokens"] as const;
+    // `unsupported_value` is a value code, not an unknown field, even though the message says
+    // "Unsupported value" / "is not supported".
+    for (const param of both) {
+      expect(
+        findUnsupportedRequestParam(
+          {
+            status: 400,
+            param,
+            code: "unsupported_value",
+            message: `Unsupported value for ${param}: must be at least 16.`,
+          },
+          both
+        )
+      ).toBeUndefined();
+      expect(
+        findUnsupportedRequestParam(
+          {
+            status: 400,
+            param,
+            code: "invalid_value",
+            message: `${param} value 1 is not supported; must be at least 16.`,
+          },
+          both
+        )
+      ).toBeUndefined();
+    }
+    // Control: a genuine unknown-field code still routes to the rename/omit path.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_tokens",
+          code: "unsupported_parameter",
+          message: "Invalid parameter: max_tokens is not supported with this model.",
+        },
+        both
+      )
+    ).toBe("max_tokens");
+  });
+
+  it("still recovers genuine unsupported token-limit fields", () => {
+    const both = ["max_tokens", "max_completion_tokens"] as const;
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_tokens",
+          code: "unsupported_parameter",
+          message:
+            "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+        },
+        both
+      )
+    ).toBe("max_tokens");
+    // A structured unsupported-field code wins over the "Invalid parameter:" wording: the cap is
+    // enforceable via the other spelling, so this must not be read as a bad value.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_tokens",
+          code: "unsupported_parameter",
+          message:
+            "Invalid parameter: max_tokens is not supported with this model. Use max_completion_tokens instead.",
+        },
+        both
+      )
+    ).toBe("max_tokens");
+    // Same wording without a structured code still resolves through the unambiguous phrase.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          message:
+            "Invalid parameter: max_tokens is not supported with this model. Use max_completion_tokens instead.",
+        },
+        both
+      )
+    ).toBe("max_tokens");
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "Unknown parameter: max_completion_tokens" },
+        both
+      )
+    ).toBe("max_completion_tokens");
+  });
+
+  it("ignores non-validation statuses and unrelated validation errors", () => {
+    expect(
+      findUnsupportedRequestParam({ status: 500, message: "temperature service failed" }, sent)
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam({ status: 401, message: "Invalid API key" }, sent)
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam({ status: 400, message: "Invalid API key" }, sent)
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          message:
+            "This model's maximum context length is 128000 tokens. However, your messages resulted in 130000 tokens.",
+        },
+        sent
+      )
+    ).toBeUndefined();
+    expect(findUnsupportedRequestParam(new Error("temperature unsupported"), sent)).toBeUndefined();
+    expect(findUnsupportedRequestParam(undefined, sent)).toBeUndefined();
+  });
+});
+
 describe("shouldUseJsonResponseMode", () => {
   it("uses JSON only on the first attempt", () => {
     expect(shouldUseJsonResponseMode(1, true)).toBe(true);
@@ -473,5 +727,53 @@ describe("getLlmCompletionAttemptCount", () => {
     expect(getLlmCompletionAttemptCount(DEFAULT_LLM_COMPLETION_ATTEMPTS, "gpt-4o")).toBe(
       DEFAULT_LLM_COMPLETION_ATTEMPTS
     );
+  });
+});
+
+describe("isToolsUnsupportedError", () => {
+  const withStatus = (status: number, message: string, extra: Record<string, unknown> = {}) =>
+    Object.assign(new Error(message), { status, ...extra });
+
+  it.each([
+    withStatus(404, "404 No endpoints found that support tool use. Try disabling \"read_file\"."),
+    withStatus(400, "registry.ollama.ai/library/llama2:latest does not support tools"),
+    withStatus(400, "\"auto\" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"),
+    withStatus(400, "Function calling is not supported by this model"),
+    withStatus(422, "Extra inputs are not permitted: tools"),
+    withStatus(400, "Invalid request", { param: "tool_choice" }),
+  ])("detects %s", (error) => {
+    expect(isToolsUnsupportedError(error)).toBe(true);
+  });
+
+  it.each([
+    withStatus(429, "Rate limit exceeded while using tools"),
+    withStatus(500, "tools not available right now"),
+    withStatus(400, "temperature must be 1"),
+    withStatus(404, "Provider returned error"),
+    withStatus(401, "Invalid API key"),
+  ])("ignores unrelated error %s", (error) => {
+    expect(isToolsUnsupportedError(error)).toBe(false);
+  });
+});
+
+describe("isContextLengthError", () => {
+  const withStatus = (status: number, message: string) => Object.assign(new Error(message), { status });
+
+  it.each([
+    withStatus(400, "This model's maximum context length is 128000 tokens. However, your messages resulted in 130000 tokens."),
+    withStatus(400, "prompt is too long: 210000 tokens > 200000 maximum"),
+    withStatus(400, "context_length_exceeded"),
+    withStatus(413, "Request Entity Too Large"),
+    new Error("Failed to get response from LLM: Error: 400 Input is too long for requested model."),
+  ])("detects %s", (error) => {
+    expect(isContextLengthError(error)).toBe(true);
+  });
+
+  it.each([
+    withStatus(429, "Too many requests"),
+    withStatus(400, "temperature must be 1"),
+    withStatus(500, "maximum context length exceeded"),
+  ])("ignores %s", (error) => {
+    expect(isContextLengthError(error)).toBe(false);
   });
 });

@@ -126,6 +126,61 @@ describe("GitHubReviewer", () => {
     expect(comments[0]).not.toHaveProperty("position");
   });
 
+  describe("suggested changes", () => {
+    const patch = [
+      "@@ -1,2 +1,4 @@",
+      " const first = true;",
+      "+const second = true;",
+      "+const third = true;",
+      " const fourth = true;",
+      "@@ -20,2 +22,3 @@",
+      " const later = 1;",
+      "+const added = 2;",
+      " const end = 3;",
+    ].join("\n");
+    const files = [{ filename: "src/example.ts", patch }];
+
+    function build(finding: Record<string, unknown>) {
+      const reviewer = new GitHubReviewer({} as any);
+      return (reviewer as any).buildReviewComments(
+        {
+          summary: "",
+          high: [{ severity: "high", file: "src/example.ts", description: "Bug", recommendation: "", ...finding }],
+          medium: [],
+          low: [],
+          suggestions: [],
+        },
+        files
+      ).comments;
+    }
+
+    it("posts a single-line suggestion block", () => {
+      const [comment] = build({ line: 2, suggestion: "const second = false;" });
+      expect(comment).toMatchObject({ path: "src/example.ts", line: 2, side: "RIGHT" });
+      expect(comment).not.toHaveProperty("start_line");
+      expect(comment.body).toContain("```suggestion\nconst second = false;\n```");
+    });
+
+    it("posts a multi-line suggestion within one hunk with start_line", () => {
+      const [comment] = build({ line: 3, startLine: 2, suggestion: "const second = 2;\nconst third = 3;" });
+      expect(comment).toMatchObject({ start_line: 2, start_side: "RIGHT", line: 3, side: "RIGHT" });
+      expect(comment.body).toContain("```suggestion\nconst second = 2;\nconst third = 3;\n```");
+    });
+
+    it("falls back to a plain code block when the range spans hunks", () => {
+      const [comment] = build({ line: 23, startLine: 3, suggestion: "replacement" });
+      expect(comment).toMatchObject({ line: 23 });
+      expect(comment).not.toHaveProperty("start_line");
+      expect(comment.body).not.toContain("```suggestion");
+      expect(comment.body).toContain("```\nreplacement\n```");
+    });
+
+    it("uses a longer fence when the suggestion contains backticks", () => {
+      const [comment] = build({ line: 2, suggestion: "const md = \"```\";" });
+      expect(comment.body).toContain("````suggestion\nconst md = \"```\";\n````");
+    });
+  });
+
   it("retries inline comment coordinate errors using response details", () => {
     const reviewer = new GitHubReviewer({} as any);
     const shouldRetryWithoutInlineComments = (

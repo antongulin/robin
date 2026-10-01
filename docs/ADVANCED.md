@@ -11,7 +11,10 @@ max-diff-size: 25000
 max-comments: 10
 json-response-mode: true
 request-changes: true
-# reasoning-effort: high   # provider-dependent; omit to send no reasoning configuration
+# reasoning-effort: high   # unset: no reasoning control is sent (provider default). Set low/medium/high/… to send it, or "off" to be explicit
+# agent-mode: auto   # unset: single-shot diff review. Set auto for the multi-turn agent review
+# agent-max-turns: 40
+# agent-max-diff-size: 200000
 skip-paths:
   - "**/generated/**"
 ```
@@ -22,7 +25,10 @@ skip-paths:
 | `max-comments` | Used when the workflow still passes the action default (`15`) |
 | `json-response-mode` | Used when `use-json-response-mode` is empty (action default defers to this file) |
 | `request-changes` | Used when `request-changes` input is empty. `true` (default) blocks on high findings; `false` posts advisor-only comments |
-| `reasoning-effort` | Used when the `reasoning-effort` action/workflow input is empty. Provider-dependent reasoning value; omit for no reasoning configuration |
+| `reasoning-effort` | Used when the `reasoning-effort` action/workflow input is empty. Provider-dependent reasoning value; when both are unset no reasoning control is sent and the provider/model decides, `off` also sends no reasoning configuration |
+| `agent-mode` | Used when the `agent-mode` input is empty. `auto` runs the [multi-turn agent review](#agent-mode-multi-turn-review-with-repository-context); when both are unset (or `off`) the single-shot diff review runs |
+| `agent-max-turns` | Used when the `agent-max-turns` input is empty. Tool-calling turns before the final review is requested (default `40`, max `100`) |
+| `agent-max-diff-size` | Used when the `agent-max-diff-size` input is empty. Diff characters sent up front in agent mode (default `200000`); `max-diff-size` still applies to the single-shot fallback |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
 
 Lockfiles (npm, yarn, pnpm, Cargo, Gemfile, poetry), `dist/`, `node_modules/`, and minified assets are always skipped automatically. If every changed file is skipped, the action posts a status comment and skips the LLM call.
@@ -80,7 +86,7 @@ jobs:
 
 ### Save GitHub Actions minutes
 
-- Keep the default flow: one review on PR open, then `/review` after fixes (do not enable `review-on-synchronize` unless you need it).
+- Leave `synchronize` out of the trigger (the shipped default) so Robin reviews once when the PR opens and you comment `/review` after fixes (see [Review every push (opt-in)](#review-every-push-opt-in)).
 - Use a smaller `max-diff-size` for huge PRs.
 - **Free tier:** GitHub Free includes about **2,000 Actions minutes/month** for public and private repos; GitHub Pro about **3,000 minutes/month** (limits can change — see [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) for your account).
 - **Heavy usage:** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
@@ -115,17 +121,75 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `request-changes` | omit → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode). Reusable workflow input is a boolean with no default — omit it to let `.github/robin.yml` win |
 | `max-diff-size` | `50000` | Max diff characters sent to the model |
 | `max-output-tokens` | empty | Cap response tokens (optional) |
-| `reasoning-effort` | empty (defer to repo config) | Optional provider reasoning effort, provider-dependent (for example `low`, `medium`, `high`). Empty defers to `.github/robin.yml`; if that is also unset, no `reasoning` property is sent |
+| `reasoning-effort` | empty (defer to repo config; unset anywhere sends nothing) | Provider reasoning effort, provider-dependent (for example `low`, `medium`, `high`). Empty defers to `.github/robin.yml`; if that is also unset, no reasoning control is sent and the provider/model default applies. `off` also sends no reasoning configuration |
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
 | `llm-temperature` | `0.1` | Sampling temperature (0–2). Raise only if your model rejects the default — some models accept a single fixed value (Kimi requires `1`) |
 | `max-comments` | `15` | Max inline comments |
-| `review-on-synchronize` | `false` | Review every new commit on the PR |
+| `review-on-synchronize` | `false` | Reusable workflow / action input. When the workflow triggers on `synchronize`, set `true` to review every push to an existing PR; default `false` skips pushes and re-reviews with `/review` |
 | `runner` | `'"ubuntu-latest"'` | Reusable workflow only: runner as a JSON string or JSON array |
 | `min-command-permission` | `write` | Who can run `/review` |
 | `review-instructions` | empty | Extra prompt text |
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch |
 | `config-file` | `.github/robin.yml` | Repo config path on the base branch |
-| `use-json-response-mode` | empty (defer to repo config, else true) | Request `response_format: json_object` when supported. Pass `"true"` / `"false"` on the reusable workflow |
+| `use-json-response-mode` | empty (defer to repo config, else true) | Request strict JSON-schema output (`response_format: json_schema`) for reviews, stepping down to `json_object` and then to no `response_format` if the provider rejects it. Pass `"true"` / `"false"` on the reusable workflow |
+| `agent-mode` | empty (defer to repo config, then single-shot) | `auto` lets the model read the repository with tools before reviewing, falling back to the single-shot diff review when the model has no tool support; unset or `off` always uses the single-shot review |
+| `agent-max-turns` | empty (defer to repo config, then `40`) | Maximum tool-calling turns in agent mode (capped at 100) |
+| `agent-max-diff-size` | empty (defer to repo config, then `200000`) | Diff characters sent up front in agent mode. The model reads any truncated files with its tools; `max-diff-size` still applies to the single-shot fallback |
+
+## Agent mode (multi-turn review with repository context)
+
+When enabled (`agent-mode: auto`), `/review` is a multi-turn conversation instead of a
+single request. Agent mode is opt-in: when neither the input nor `.github/robin.yml` sets
+`agent-mode`, Robin runs the classic single-shot diff review. Set `auto` to enable the
+investigation below; set `off` to force the single-shot review.
+
+1. Robin downloads the PR head commit as a tarball through the GitHub API and unpacks it
+   into the runner's temp directory. No `actions/checkout` step is needed, and the code is
+   only read, never executed.
+2. The model gets the line-numbered diff plus three read-only tools: `read_file`, `grep`,
+   and `list_files`. It uses them to read full files, find callers of changed functions,
+   and look up definitions before it decides something is a bug.
+3. When it has enough context it returns the usual JSON review. Findings can include an
+   exact replacement for the affected lines, which Robin posts as a one-click GitHub
+   **suggested change** when every line in the range is in the same diff hunk.
+
+The defaults favor finding bugs over saving tokens, sized for frontier models with
+200k-token or larger context windows:
+
+| Limit | Default |
+| --- | --- |
+| Tool-calling turns | 40 (`agent-max-turns`, max 100) |
+| Diff sent up front | 200k characters (`agent-max-diff-size`); the single-shot fallback keeps `max-diff-size` (50k) so small-context models still fit |
+| Tool calls per turn | 16 |
+| Investigation time | 30 minutes |
+| Output per tool call | about 50k characters (`read_file` returns up to 2000 lines and says where to continue) |
+| `grep` | 300 matches, optional `context_lines` (0-5), files up to 2 MB, up to 100k files scanned |
+| `list_files` | 2000 entries |
+| Repository snapshot | 500 MB compressed |
+
+When the turn or time limit runs out, Robin asks the model for its final review without
+tools.
+
+**Context compaction.** The diff and the tool output kept in the conversation share a
+budget of about 450k characters (roughly 115-150k tokens). Tool output always gets at least
+150k of it, so the larger the diff, the sooner compaction starts. Once tool output passes
+its share, or whenever the provider reports that the context window is full, Robin compacts the conversation the way Cursor does. The model writes
+notes about the investigation so far: suspected bugs with evidence, facts it established,
+what it already checked, and what's left. Robin then continues from those notes plus the
+latest tool turn. If the summary request itself fails, Robin falls back to dropping the
+oldest tool results. A review can compact up to six times.
+
+**Fallback.** If the model or provider rejects tool calling (for example OpenRouter's
+"No endpoints found that support tool use", or Ollama's "does not support tools"), the
+snapshot download fails, or the agent loop errors, Robin logs a warning and runs the
+single-shot diff review instead, so the PR still gets a review. `/summary` is always
+single-shot.
+
+Agent mode sends more tokens than a single-shot review (the model reads extra files) and
+takes longer. The reusable workflow's job timeout is 45 minutes to leave room for a full
+investigation plus the final answer. Lower `agent-max-turns` if you want faster or cheaper
+reviews. Leave `agent-mode` unset (or set `agent-mode: off`) in `.github/robin.yml` to keep
+diff-only reviews.
 
 ## Usage patterns
 
@@ -150,7 +214,10 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
-### Review on every commit
+### Review every push (opt-in)
+
+The shipped template reviews once when the PR opens (and on `/review`). To also review
+every push to a PR, add `synchronize` to the trigger and set `review-on-synchronize: true`:
 
 ```yaml
 on:
@@ -207,7 +274,7 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: antongulin/robin@main
         with:
@@ -234,11 +301,48 @@ jobs:
 
 If you raise `llm-timeout-ms` above 10 minutes, also raise the job `timeout-minutes`.
 
+### Provider notes
+
+Every provider is reached through the OpenAI chat-completions wire format. Robin
+normalizes the base URL (trailing slash, a pasted `/chat/completions` or `/messages`
+suffix, a missing `/v1` on the OpenAI and Anthropic hosts) and adjusts the request shape
+for the hosts below. Self-hosted and proxy URLs are passed through unchanged.
+
+| Provider | `LLM_BASE_URL` | Notes |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | `reasoning-effort` is sent as OpenAI-native `reasoning_effort`. Reasoning models (`o1`, `o3`, `o4-mini`, `gpt-5*`, `codex-*`) are sent without `temperature` and with `max_completion_tokens` instead of `max_tokens`, because they reject both |
+| Anthropic (Claude) | `https://api.anthropic.com/v1` | Uses Anthropic's [OpenAI SDK compatibility](https://docs.anthropic.com/en/api/openai-sdk) endpoint with your regular Anthropic API key (`LLM_API_KEY`). `https://api.anthropic.com` without `/v1` is accepted. JSON mode sends Robin's review schema as a best-effort `response_format: json_schema`, but Anthropic's compatibility endpoint ignores `response_format` (guaranteed structured output requires the native Claude API), so the review relies on the prompt plus the markdown fallback parser. If a model rejects the field, Robin drops it and falls back the same way. Anthropic ignores reasoning controls — Robin sends none there and Claude picks its own thinking depth. `temperature` above `1` is capped by Anthropic |
+| OpenRouter | `https://openrouter.ai/api/v1` | `reasoning-effort` uses the OpenRouter `reasoning: { effort, exclude }` object; router models get stall detection and provider fallbacks |
+| Anything else (Groq, Ollama, vLLM, gateways) | provider URL | Default request shape; unsupported parameters are recovered as described below |
+
+### Models that reject request parameters
+
+Newer models refuse parameters older ones accepted — OpenAI reasoning models return
+`Unsupported value: 'temperature' does not support 0.1 with this model` and
+`Unsupported parameter: 'max_tokens' … Use 'max_completion_tokens' instead`. When a
+400/422 response names one of the optional parameters Robin sent (`temperature`,
+`max_tokens`, `max_completion_tokens`, `response_format`), Robin logs a warning, adjusts
+that one parameter (omits `temperature`, renames the token cap between
+`max_tokens`/`max_completion_tokens`, or steps `response_format` down from `json_schema` to `json_object`
+and then drops it), re-sends once, and keeps the adjusted shape for the rest of the run.
+Each parameter is adjusted at most once per run (`response_format` gets its one extra
+step down), so a provider that keeps rejecting surfaces its real error instead of looping.
+The token cap is never silently dropped: Robin tries the other field name first, and if the
+endpoint rejects both spellings it surfaces the provider error rather than running uncapped.
+A genuine token-limit **value** error (for example below a provider's minimum) surfaces too,
+instead of being mistaken for an unsupported field.
+Known OpenAI reasoning families skip the round trip and start with the right shape.
+
+Dropping `temperature` or `response_format` is safe: the model falls back to its own default
+sampling, and the review parser already handles non-JSON output. Auth, rate-limit, server,
+and unrelated validation errors do not trigger this path.
+
 ### Models that require a fixed temperature
 
 Robin samples at `0.1` so reviews stay near-deterministic. Some providers reject that and
-accept only one value — Kimi models require `1`, and the request fails without it. Set
-`llm-temperature` to whatever the provider demands:
+accept only one value — Kimi models require `1`. Robin recovers automatically by
+retrying without `temperature` (see above); set `llm-temperature` only when you want a
+specific value sent rather than the model default:
 
 ```yaml
 jobs:
@@ -259,16 +363,19 @@ overrides in your workflow.
 
 ### Reasoning effort (provider-dependent)
 
-Some providers and models accept a reasoning-effort control. Robin disables it by default:
-when `reasoning-effort` is unset or whitespace, the API request is unchanged and contains no
-`reasoning` property.
+Some providers and models accept a reasoning-effort control. Robin sends none unless you
+ask for one: when `reasoning-effort` is unset or whitespace everywhere, the request carries
+no reasoning control and the provider/model default applies. Set a value to send it in the
+provider's shape (below); set `off` to be explicit about sending nothing. Providers that do
+not understand the control reject it and Robin falls back quietly (see the end of this
+section).
 
 Set it per repository in `.github/robin.yml` — the normal location, because reasoning is
 configuration, not a credential:
 
 ```yaml
 # .github/robin.yml
-reasoning-effort: high
+reasoning-effort: high   # or low / medium / a provider-specific name, or off
 ```
 
 The workflow input overrides the repo config when non-empty, so consumers can scope an
@@ -288,19 +395,25 @@ jobs:
 
 Common values are `low`, `medium`, and `high`; exact names are provider-dependent (some
 providers also use `minimal`, `xhigh`, or `max`). Robin forwards the trimmed value
-unchanged. When set, the request includes `reasoning: { effort: "<value>", exclude: true }`
-— hidden reasoning is excluded from the response and never parsed; only the review text is
-used. This is the OpenRouter-style request shape; providers that expect a different native
-parameter (for example OpenAI-native `reasoning_effort`) reject it, and the fallback below
-then runs the review without reasoning controls.
+unchanged. The request shape depends on the host in `LLM_BASE_URL`:
+
+- `api.openai.com`: OpenAI-native `reasoning_effort: "<value>"`.
+- `api.anthropic.com`: nothing is sent — Anthropic's compatibility endpoint ignores
+  reasoning controls and Claude decides its own thinking depth. Robin logs this once.
+- Everything else: OpenRouter-style `reasoning: { effort: "<value>", exclude: true }` —
+  hidden reasoning is excluded from the response and never parsed; only the review text is
+  used. Providers that expect a different native parameter reject it, and the fallback
+  below then runs the review without reasoning controls.
 
 If a provider rejects the parameter itself as unknown or unsupported, or clearly rejects
 the configured effort value (a 400/422 response such as `Unsupported parameter: reasoning`
 or `reasoning effort must be one of low, medium, high`), Robin logs a warning and retries
 that completion once without the `reasoning` property. It then keeps running without a
 reasoning override for the rest of the run. When the retry succeeds, the review completes
-normally and the final status comment keeps a visible warning telling the user to update
-`reasoning-effort` in `.github/robin.yml` or the workflow `with:` block.
+normally. If you set the value yourself (input or `.github/robin.yml`), the final status
+comment also keeps a visible warning telling you to update `reasoning-effort`. With no value
+configured, no reasoning control is sent in the first place, so this fallback only ever runs
+for a value you configured.
 
 Auth, rate-limit, server, timeout, and unrelated validation errors do not trigger this
 fallback. The retry omits the optional reasoning override; it does not guess a different
@@ -313,7 +426,7 @@ provider-specific effort value.
 3. Author pushes fixes → no automatic re-review (by default).
 4. Maintainer comments `/robin` or `/review` for another pass.
 
-The action fetches diffs via the GitHub API. `actions/checkout` is not required unless other steps need local files.
+The action fetches diffs and, in agent mode, a read-only tarball of the PR head through the GitHub API. `actions/checkout` is not required unless other steps need local files.
 
 ## Model robustness
 
@@ -334,9 +447,12 @@ constraints in mind — they are why reviews stay usable across models:
   from severity. The parser ignores invalid values, and the Robin skill uses confidence
   to decide how hard to verify a finding before acting on it. Severity orders effort;
   confidence gates trust.
-- **"You only see the diff" guard.** The prompt reminds the model it sees changed lines
-  only, not the whole file — so it doesn't invent bugs about code it can't see. The
-  companion skill mirrors this: it treats findings as hypotheses to verify, not orders.
+- **"You only see the diff" guard.** The single-shot prompt reminds the model it sees
+  changed lines only, not the whole file — so it doesn't invent bugs about code it can't
+  see. The agent-mode prompt replaces this with "verify with the tools before flagging".
+  The companion skill mirrors this: it treats findings as hypotheses to verify, not orders.
+- **Graceful tool fallback.** Agent mode is only used when the model accepts tool calls;
+  otherwise the same single-shot prompt runs, so weak or free models keep working.
 
 The parser (`src/review-parser.ts`) is deliberately forgiving — it normalizes severity,
 drops unparseable findings, and falls back to a markdown review if JSON mode fails — so a
@@ -344,7 +460,7 @@ malformed response from a weak model degrades instead of crashing the run.
 
 ## Security and privacy
 
-PR diffs are sent to **your** configured LLM endpoint.
+PR diffs are sent to **your** configured LLM endpoint. In agent mode, any repository file the model reads with its tools is sent there too.
 
 | Setup | Where code goes |
 | --- | --- |
@@ -359,6 +475,7 @@ Practices:
 - Do not use `pull_request_target` with this action.
 - Keep slash commands at `min-command-permission: write` unless you accept cost/abuse risk.
 - Fork PRs from outsiders may not receive secrets — use manual `/review` from a maintainer.
+- Agent-mode tools are read-only and confined to the extracted snapshot: paths and symlinks that resolve outside it are rejected, and PR code is never executed.
 
 ## Limits
 
@@ -378,11 +495,12 @@ No daily quota from this action. Real limits:
 | `Input required: llm-base-url` | Missing secret | Add `LLM_BASE_URL` |
 | `Empty response from LLM` | Free/unstable model returned no text | Action retries with backoff; comment `/review` again |
 | `OpenRouter stall: no first response` | Auto-router hung before picking a provider | Action retries every 45s (up to 5×); PR status comment updates each attempt |
-| Job cancelled / 15 min with no review | Hung LLM or concurrency cancel while waiting | Status comment should say interrupted — comment `/robin` again; pin `@v2.0.4`+ for stall detect |
+| Job cancelled / 45 min with no review | Hung LLM or concurrency cancel while waiting | Status comment should say interrupted — comment `/robin` again; pin `@v2.0.4`+ for stall detect |
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |
 | `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
-| `temperature` rejected / must be 1 | Model accepts only one temperature | Set `llm-temperature` to the value the provider requires (Kimi: `1`) |
-| `reasoning-effort` rejected as unsupported or invalid | Provider/model does not accept the reasoning control or configured value | The action warns and retries once with no reasoning override. If that succeeds, the review completes and its final status comment tells you to update `.github/robin.yml` or the workflow `with:` block |
+| `temperature` / `max_tokens` / `response_format` rejected | Newer model refuses an optional parameter (OpenAI reasoning models, Kimi) | Action warns, retries once with the parameter renamed or omitted (`max_tokens` ↔ `max_completion_tokens`, `temperature` dropped), and keeps that shape for the run. If the endpoint rejects both token-cap spellings, the provider error surfaces instead of running uncapped. Set `llm-temperature` only to pin a specific value (Kimi: `1`) |
+| `404` on `https://api.anthropic.com` | Base URL missing `/v1` on an older Robin | Use `https://api.anthropic.com/v1`; `@v2`/`@main` normalize it automatically |
+| `reasoning-effort` rejected as unsupported or invalid | Provider/model does not accept the reasoning control or configured value | The action warns and retries once with no reasoning override. If that succeeds, the review completes; a user-set value also gets a status-comment notice to update `.github/robin.yml` or the workflow `with:` block. Set `reasoning-effort: off` to stop sending it |
 | `Resource not accessible by integration` | Missing permissions | Add `pull-requests: write` |
 | Slash command ignored | Wrong format or permission | `/robin` or `/review` as first line; need write access |
 | `/robin` does nothing on `@v1` | Stale `v1` tag before v1.4.0 | Use `/review`, pin `@v1.4.0`+, or `@v2`; floating `v1` tracks latest `1.x` on release |

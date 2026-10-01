@@ -6,9 +6,13 @@ export interface ReviewFinding {
   confidence?: "high" | "medium" | "low";
   file?: string;
   line?: number;
+  /** First line of a multi-line suggestion range; `line` is the last. */
+  startLine?: number;
   description: string;
   recommendation: string;
   codeSnippet?: string;
+  /** Exact replacement text for new-file lines startLine..line, posted as a GitHub suggested change. */
+  suggestion?: string;
 }
 
 export interface StructuredReview {
@@ -66,34 +70,43 @@ export class ReviewParser {
   }
 
   private static parseJsonReview(rawText: string): StructuredReview | null {
-    const jsonText = this.extractJsonObject(rawText);
-    if (!jsonText) return null;
-
-    try {
-      const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    for (const jsonText of this.jsonCandidates(rawText)) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        continue;
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      const review = parsed as Record<string, unknown>;
 
       return {
-        summary: this.asString(parsed.summary),
-        high: this.normalizeFindings(parsed.high ?? parsed.critical, "high"),
-        medium: this.normalizeFindings(parsed.medium ?? parsed.important, "medium"),
-        low: this.normalizeFindings(parsed.low, "low"),
-        suggestions: this.normalizeFindings(parsed.suggestions, "suggestion"),
+        summary: this.asString(review.summary),
+        high: this.normalizeFindings(review.high ?? review.critical, "high"),
+        medium: this.normalizeFindings(review.medium ?? review.important, "medium"),
+        low: this.normalizeFindings(review.low, "low"),
+        suggestions: this.normalizeFindings(review.suggestions, "suggestion"),
         rawResponse: rawText,
       };
-    } catch {
-      return null;
     }
+    return null;
   }
 
-  private static extractJsonObject(rawText: string): string | null {
+  /**
+   * Plain JSON is tried before fenced blocks, because code fences inside string values
+   * (codeSnippet, suggestion) would otherwise be mistaken for a wrapping ```json block.
+   */
+  private static jsonCandidates(rawText: string): string[] {
+    const candidates = [rawText.trim()];
+
     const fencedJson = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    if (fencedJson) return fencedJson[1].trim();
+    if (fencedJson) candidates.push(fencedJson[1].trim());
 
     const start = rawText.indexOf("{");
     const end = rawText.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) return null;
+    if (start !== -1 && end > start) candidates.push(rawText.slice(start, end + 1).trim());
 
-    return rawText.slice(start, end + 1).trim();
+    return candidates.filter((candidate) => candidate.startsWith("{"));
   }
 
   private static normalizeFindings(value: unknown, severity: ReviewFinding["severity"]): ReviewFinding[] {
@@ -113,6 +126,8 @@ export class ReviewParser {
 
     const line = this.asNumber(item.line);
     const file = this.asString(item.file).trim() || undefined;
+    const startLine = this.asNumber(item.startLine ?? item.start_line);
+    const suggestion = this.normalizeSuggestion(item.suggestion);
 
     return {
       severity,
@@ -120,10 +135,22 @@ export class ReviewParser {
       confidence: this.asConfidence(item.confidence),
       file,
       line,
+      ...(startLine !== undefined && line !== undefined && startLine < line ? { startLine } : {}),
       description,
       recommendation: this.asString(item.recommendation),
       codeSnippet: this.asString(item.codeSnippet) || undefined,
+      ...(suggestion !== undefined ? { suggestion } : {}),
     };
+  }
+
+  /** Drops empty values and code fences a model may wrap around the replacement text. */
+  private static normalizeSuggestion(value: unknown): string | undefined {
+    let text = this.asString(value);
+    if (!text.trim()) return undefined;
+    const fenced = text.match(/^\s*```[\w-]*\n([\s\S]*?)\n?```\s*$/);
+    if (fenced) text = fenced[1];
+    text = text.replace(/\r\n/g, "\n").replace(/\n$/, "");
+    return text.trim() ? text : undefined;
   }
 
   private static asString(value: unknown): string {

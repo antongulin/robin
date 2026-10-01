@@ -37,7 +37,7 @@ inputs:
     required: false
     default: ""
   reasoning-effort:
-    description: "Optional reasoning effort using the OpenRouter-style reasoning object, for providers/models that accept it (for example low, medium, high, xhigh, or max). Leave empty to omit reasoning configuration entirely or to defer to .github/robin.yml; unsupported or invalid values retry once with no reasoning override and leave a status warning."
+    description: "Reasoning effort for providers/models that accept it (for example low, medium, high, xhigh, or max). Leave empty to defer to .github/robin.yml; when both are unset no reasoning control is sent and the provider/model decides. Set to off to send no reasoning configuration explicitly. Unsupported or invalid values retry once with no reasoning override; a user-configured value that is rejected also leaves a status warning."
     required: false
     default: ""
   llm-timeout-ms:
@@ -53,7 +53,7 @@ inputs:
     required: false
     default: "15"
   review-on-synchronize:
-    description: "Run automatic reviews for pull_request synchronize events, which happen after each new commit pushed to a PR. Set to true only if you want review on every push."
+    description: "Review when new commits are pushed to an existing PR (the pull_request synchronize event). Default false: pushes are skipped and reviewed manually with /review. Set true, and trigger the workflow on synchronize, to review every push."
     required: false
     default: "false"
   min-command-permission:
@@ -72,8 +72,20 @@ inputs:
     description: "Optional repository config file on the PR base branch (.github/robin.yml)."
     required: false
     default: ".github/robin.yml"
+  agent-mode:
+    description: "Multi-turn review where the model reads files, greps, and lists the repository at the PR head before answering. auto uses it and falls back to the single-shot diff review when the model does not support tool calling; off always uses the single-shot review. Leave empty to defer to .github/robin.yml; when both are unset the single-shot review runs."
+    required: false
+    default: ""
+  agent-max-turns:
+    description: "Maximum tool-calling turns in agent mode before Robin asks for the final review (capped at 100). Leave empty to use the repo config, which defaults to 40."
+    required: false
+    default: ""
+  agent-max-diff-size:
+    description: "Maximum diff size in characters sent up front in agent mode. The model can read truncated files with its tools. The single-shot fallback keeps max-diff-size. Leave empty to use the repo config, which defaults to 200000."
+    required: false
+    default: ""
   use-json-response-mode:
-    description: "Request JSON object responses when the provider supports response_format. Leave empty to use repo config or default true."
+    description: "Request strict JSON-schema review responses (falls back to JSON-object mode, then none, if the provider rejects it). Leave empty to use repo config or default true."
     required: false
     default: ""
 

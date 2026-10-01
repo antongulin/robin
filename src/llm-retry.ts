@@ -162,6 +162,159 @@ function structuredReasoningParam(error: unknown): boolean {
   return typeof param === "string" && /\b(?:reasoning|effort|exclude)/i.test(param);
 }
 
+/** Optional request parameters Robin can drop or rename without changing what is reviewed. */
+export type DroppableRequestParam =
+  | "temperature"
+  | "max_tokens"
+  | "max_completion_tokens"
+  | "response_format";
+
+/** Rejection cues seen from OpenAI-compatible servers when a request key is not accepted. */
+const PARAM_REJECTION_CUES =
+  /\b(?:unsupported|not\s+supported|no\s+longer\s+supported|deprecated|does\s+not\s+support|do\s+not\s+support|not\s+allowed|not\s+permitted|unknown|unrecognized|unrecognised|unexpected|invalid|extra\s+(?:inputs?|fields?)|only\s+(?:the\s+)?default|only\s+\S+\s+is\s+allowed|must\s+be|should\s+be|instead)\b/i;
+
+/** The two token-cap spellings whose *value* validation must not be mistaken for an unsupported field. */
+const TOKEN_LIMIT_PARAMS = new Set<DroppableRequestParam>([
+  "max_tokens",
+  "max_completion_tokens",
+]);
+
+/**
+ * Structured codes that name the token-limit *field* as unknown/unsupported. Deliberately narrow:
+ * a bare `unsupported` substring would also match the value code `unsupported_value`, which must be
+ * handled as a bad value. The token-limit field must be named as unknown/unsupported explicitly.
+ */
+const UNSUPPORTED_FIELD_CODE =
+  /(?:unsupported|unknown|unrecognized|unrecognised)[_-](?:parameter|argument|field|property|option|input|feature)/i;
+
+/**
+ * Structured codes that clearly report a bad *value* for a named field. These are explicit value
+ * validation signals and take priority over any message wording (a message can say "is not
+ * supported" while the code names a value problem like `unsupported_value` or `invalid_value`).
+ */
+const INVALID_VALUE_CODE =
+  /(?:integer_below_min_value|integer_above_max_value|invalid_value|invalid_type|unsupported_value|out_of_range|less_than_minimum|greater_than_maximum)/i;
+
+/** Message-only phrasings that name the token-limit *field* as unknown/unsupported. */
+const UNSUPPORTED_TOKEN_LIMIT_FIELD_PHRASE =
+  /\b(?:unsupported|unknown|unrecognized|unrecognised|unexpected)\s+(?:parameter|argument|field|property|option|input|feature)\b[^.;!?,]{0,40}\b(?:max_tokens|max_completion_tokens)\b|\b(?:max_tokens|max_completion_tokens)\b[^.]{0,40}\bis\s+not\s+(?:supported|allowed|permitted|recognized|recognised)\b|\b(?:does|do|did)\s+not\s+support\b[^.]{0,40}\b(?:max_tokens|max_completion_tokens)\b|\b(?:max_tokens|max_completion_tokens)\b[^.]{0,20}\b(?:is\s+|are\s+)?(?:unsupported|unknown|unrecognized|unrecognised)\b/i;
+
+/**
+ * True only when a 400/422 response names a sent token-limit parameter but the complaint is about
+ * its value (below the provider minimum, outside a range, non-integer, …), not about the field
+ * being unknown. Swapping the field or dropping the cap would hide a real configuration error and
+ * silently run the review uncapped, so these must surface. Scoped to the token-limit params so
+ * temperature/response_format value recovery (Kimi's "temperature must be 1", schema step-downs)
+ * keeps working.
+ *
+ * Priority: an explicit structured *value* code wins first, then a structured code that names the
+ * field itself as unknown/unsupported (so a provider's "Invalid parameter: max_tokens is not
+ * supported …" still routes to the rename/omit path), then the message-only field phrasings, then
+ * the generic message value heuristics.
+ */
+function isInvalidTokenLimitValueError(
+  error: unknown,
+  param: DroppableRequestParam,
+  message: string
+): boolean {
+  if (!TOKEN_LIMIT_PARAMS.has(param)) return false;
+
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && INVALID_VALUE_CODE.test(code)) return true;
+  if (typeof code === "string" && UNSUPPORTED_FIELD_CODE.test(code)) return false;
+  if (UNSUPPORTED_TOKEN_LIMIT_FIELD_PHRASE.test(message)) return false;
+
+  return new RegExp(
+    String.raw`\b(?:invalid|invalid_value)\b[^.]{0,60}${param}\b` +
+      String.raw`|${param}\b[^.]{0,60}\b(?:must|should|expected|needs?)\b[^.]{0,40}\b(?:be\s+)?(?:greater|less|at\s+most|at\s+least|between|>=|<=|positive|[0-9])` +
+      String.raw`|\b(?:expected|requires?|minimum|maximum)\b[^.]{0,30}\b(?:a\s+)?(?:value\s+)?(?:>=|<=|greater|less|at\s+least|at\s+most|between|[0-9])\b[^.]{0,40}${param}\b`,
+    "i"
+  ).test(message);
+}
+
+/**
+ * Returns the first sent optional parameter that a 400/422 response rejects, or
+ * undefined. Structured `param` (OpenAI SDK errors) wins; otherwise the message must
+ * name the parameter (quoted or bare) alongside a rejection cue. Examples this matches:
+ *   "Unsupported value: 'temperature' does not support 0.1 with this model."
+ *   "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."
+ *   "temperature must be 1 for reasoning models"
+ *   "`temperature` is deprecated for this model." (Anthropic, newer Claude models)
+ * Dropping any of these is safe — the model falls back to its own defaults — so the
+ * cue list is intentionally broad. Token-limit value complaints are the exception: they
+ * are returned as undefined so the caller surfaces the provider's validation error.
+ */
+export function findUnsupportedRequestParam(
+  error: unknown,
+  sentParams: readonly DroppableRequestParam[]
+): DroppableRequestParam | undefined {
+  if (!error || typeof error !== "object" || sentParams.length === 0) return undefined;
+  const status = Number((error as { status?: unknown }).status);
+  if (status !== 400 && status !== 422) return undefined;
+
+  const message = errorMessage(error);
+  const structuredParam = (error as { param?: unknown }).param;
+  if (typeof structuredParam === "string") {
+    const match = sentParams.find((param) => structuredParam.toLowerCase() === param);
+    if (match) {
+      return isInvalidTokenLimitValueError(error, match, message) ? undefined : match;
+    }
+  }
+
+  if (!PARAM_REJECTION_CUES.test(message)) return undefined;
+  const named = sentParams.find((param) =>
+    new RegExp(`(?:^|[^\\w])${param}(?:$|[^\\w])`, "i").test(message)
+  );
+  if (!named) return undefined;
+  return isInvalidTokenLimitValueError(error, named, message) ? undefined : named;
+}
+
+const TOOL_NOUN = String.raw`(?:tools?|tool[\s_-]?(?:use|calling|calls|choice)|function[\s_-]?calling)`;
+
+/** Provider phrasings for "this model/route cannot take tools" (OpenRouter, Ollama, vLLM, generic). */
+const TOOLS_UNSUPPORTED_PHRASES: RegExp[] = [
+  /\bno\s+endpoints?\s+found\s+that\s+supports?\b[^.]{0,40}\btool/i,
+  new RegExp(String.raw`\b(?:does|do|did)\s+not\s+support\s+${TOOL_NOUN}\b`, "i"),
+  new RegExp(
+    String.raw`\b${TOOL_NOUN}\b[^.;!?]{0,40}\b(?:not\s+supported|unsupported|not\s+enabled|not\s+available)\b`,
+    "i"
+  ),
+  /\b(?:unsupported|unknown|unrecognized|unrecognised|unexpected|extra)\s+(?:parameters?|arguments?|fields?|propert(?:y|ies)|inputs?)\b[^.;!?,]{0,40}\b(?:tools|tool_choice)\b/i,
+  /\btool[\s_-]?choice\b[^.]{0,40}\brequires\b/i,
+  /--enable-auto-tool-choice/i,
+];
+
+/**
+ * True when the provider rejects the request because the model or route cannot use tools.
+ * OpenRouter reports this as a 404 ("No endpoints found that support tool use"), which the
+ * router retry logic would otherwise treat as a transient routing miss.
+ */
+export function isToolsUnsupportedError(error: unknown): boolean {
+  if (!error) return false;
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const status = Number((error as { status?: unknown }).status);
+    if (Number.isFinite(status) && ![400, 404, 405, 422, 501].includes(status)) return false;
+    const param = (error as { param?: unknown }).param;
+    if (typeof param === "string" && /^(?:tools|tool_choice)$/i.test(param)) return true;
+  }
+  const message = errorMessage(error);
+  return TOOLS_UNSUPPORTED_PHRASES.some((pattern) => pattern.test(message));
+}
+
+const CONTEXT_LENGTH_PHRASES =
+  /\b(?:context[_\s-]?length(?:[_\s-]?exceeded)?|context[_\s-]window|maximum\s+context|prompt\s+is\s+too\s+long|input\s+is\s+too\s+long|too\s+many\s+(?:input\s+)?tokens|reduce\s+the\s+length\s+of\s+the\s+(?:messages|prompt|input)|exceeds?\s+(?:the\s+)?(?:model'?s?\s+)?(?:maximum|max)\s+(?:context|input|prompt|token)|request\s+entity\s+too\s+large|payload\s+too\s+large)/i;
+
+/** The conversation no longer fits the model's context window (OpenAI, Anthropic, OpenRouter, vLLM phrasings). */
+export function isContextLengthError(error: unknown): boolean {
+  if (!error) return false;
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const status = Number((error as { status?: unknown }).status);
+    if (status === 413) return true;
+    if (Number.isFinite(status) && status !== 400 && status !== 422) return false;
+  }
+  return CONTEXT_LENGTH_PHRASES.test(errorMessage(error));
+}
+
 export function isRetriableLlmError(error: unknown, context: LlmRetryContext = {}): boolean {
   if (!error) return false;
 

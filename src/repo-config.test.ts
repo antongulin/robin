@@ -1,7 +1,14 @@
 import {
+  DEFAULT_AGENT_MAX_DIFF_SIZE,
+  DEFAULT_AGENT_MAX_TURNS,
+  DEFAULT_AGENT_MODE,
   DEFAULT_MAX_COMMENTS,
   DEFAULT_ACTION_MAX_DIFF_SIZE,
+  isReasoningEffortConfigured,
   parseRepoConfigYaml,
+  resolveAgentMaxDiffSize,
+  resolveAgentMaxTurns,
+  resolveAgentMode,
   resolveJsonResponseMode,
   resolveMaxComments,
   resolveMaxDiffSize,
@@ -130,8 +137,66 @@ describe("resolveReasoningEffort", () => {
     expect(resolveReasoningEffort("   ", { reasoningEffort: "high" })).toBe("high");
   });
 
-  it("stays unset when neither the input nor repo config sets it", () => {
+  it("sends nothing when neither the input nor repo config sets it", () => {
     expect(resolveReasoningEffort("", undefined)).toBeUndefined();
     expect(resolveReasoningEffort("  ", {})).toBeUndefined();
+    expect(resolveReasoningEffort("", { reasoningEffort: "  " })).toBeUndefined();
+  });
+
+  it("sends nothing when the value is off, in any case", () => {
+    expect(resolveReasoningEffort("off", undefined)).toBeUndefined();
+    expect(resolveReasoningEffort(" OFF ", { reasoningEffort: "high" })).toBeUndefined();
+    expect(resolveReasoningEffort("", { reasoningEffort: "Off" })).toBeUndefined();
+  });
+
+  it("keeps none as a provider value rather than an opt-out", () => {
+    expect(resolveReasoningEffort("none", undefined)).toBe("none");
+  });
+});
+
+describe("isReasoningEffortConfigured", () => {
+  it("is true only when the user set a value via input or repo config", () => {
+    expect(isReasoningEffortConfigured("high", undefined)).toBe(true);
+    expect(isReasoningEffortConfigured("", { reasoningEffort: "low" })).toBe(true);
+    expect(isReasoningEffortConfigured("off", undefined)).toBe(true);
+    expect(isReasoningEffortConfigured("", undefined)).toBe(false);
+    expect(isReasoningEffortConfigured("  ", {})).toBe(false);
+    expect(isReasoningEffortConfigured("", { reasoningEffort: "  " })).toBe(false);
+  });
+});
+
+describe("agent mode config", () => {
+  it("parses agent-mode and agent-max-turns", () => {
+    const config = parseRepoConfigYaml("agent-mode: off   # diff only\nagent-max-turns: 6\n");
+    expect(config.agentMode).toBe("off");
+    expect(config.agentMaxTurns).toBe(6);
+    expect(parseRepoConfigYaml("agent-mode: sometimes").agentMode).toBeUndefined();
+  });
+
+  it("preserves single-shot by default and honors an explicit auto from input or repo config", () => {
+    expect(DEFAULT_AGENT_MODE).toBe("off");
+    expect(resolveAgentMode("", {})).toBe("off");
+    expect(resolveAgentMode("", { agentMode: "off" })).toBe("off");
+    expect(resolveAgentMode("", { agentMode: "auto" })).toBe("auto");
+    expect(resolveAgentMode("auto", { agentMode: "off" })).toBe("auto");
+    expect(resolveAgentMode("OFF", {})).toBe("off");
+    expect(resolveAgentMode("bogus", { agentMode: "off" })).toBe("off");
+    expect(resolveAgentMode("bogus", { agentMode: "auto" })).toBe("auto");
+  });
+
+  it("resolves max turns with a default and an upper cap", () => {
+    expect(resolveAgentMaxTurns("", {})).toBe(DEFAULT_AGENT_MAX_TURNS);
+    expect(resolveAgentMaxTurns("", { agentMaxTurns: 4 })).toBe(4);
+    expect(resolveAgentMaxTurns("7", { agentMaxTurns: 4 })).toBe(7);
+    expect(resolveAgentMaxTurns("0", {})).toBe(DEFAULT_AGENT_MAX_TURNS);
+    expect(resolveAgentMaxTurns("500", {})).toBe(100);
+  });
+
+  it("resolves the agent diff size separately from max-diff-size", () => {
+    expect(parseRepoConfigYaml("agent-max-diff-size: 120000").agentMaxDiffSize).toBe(120000);
+    expect(resolveAgentMaxDiffSize("", {})).toBe(DEFAULT_AGENT_MAX_DIFF_SIZE);
+    expect(resolveAgentMaxDiffSize("", { agentMaxDiffSize: 90000, maxDiffSize: 25000 })).toBe(90000);
+    expect(resolveAgentMaxDiffSize("300000", { agentMaxDiffSize: 90000 })).toBe(300000);
+    expect(resolveAgentMaxDiffSize("0", {})).toBe(DEFAULT_AGENT_MAX_DIFF_SIZE);
   });
 });
