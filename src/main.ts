@@ -39,6 +39,7 @@ import {
 } from "./repo-config";
 import { getReviewPrompt, getSummaryPrompt, getHelpMessage } from "./prompts/review-prompts";
 import { ReviewerCommand, hasRequiredPermission, parseSlashCommand } from "./commands";
+import { shouldSkipSynchronizeEvent } from "./trigger";
 
 async function run(): Promise<void> {
   let octokit: ReturnType<typeof github.getOctokit> | undefined;
@@ -56,6 +57,7 @@ async function run(): Promise<void> {
     const token = core.getInput("github-token", { required: true });
     octokit = github.getOctokit(token);
     const minCommandPermission = core.getInput("min-command-permission") || "write";
+    const reviewOnSynchronize = core.getBooleanInput("review-on-synchronize");
 
     core.info(`Event: ${eventName}`);
 
@@ -74,6 +76,13 @@ async function run(): Promise<void> {
     }
 
     if (eventName === "pull_request") {
+      if (shouldSkipSynchronizeEvent(payload.action, reviewOnSynchronize)) {
+        core.info(
+          "Skipping pull_request synchronize event. Pushes to an existing PR are reviewed manually with /review unless review-on-synchronize is true."
+        );
+        return;
+      }
+
       shouldRun = true;
       prNumber = payload.pull_request?.number;
     } else if (eventName === "issue_comment") {
@@ -232,11 +241,13 @@ async function run(): Promise<void> {
     const agentMaxTurns = resolveAgentMaxTurns(agentMaxTurnsInput, repoConfig);
     const agentMaxDiffSize = resolveAgentMaxDiffSize(agentMaxDiffSizeInput, repoConfig);
     if (reasoningEffort) {
-      core.info(
-        `Reasoning effort: ${reasoningEffort}${reasoningEffortConfigured ? "" : " (default; set reasoning-effort: off to send none)"}`
-      );
-    } else {
+      core.info(`Reasoning effort: ${reasoningEffort}`);
+    } else if (reasoningEffortConfigured) {
       core.info("Reasoning effort: off (no reasoning configuration sent)");
+    } else {
+      core.info(
+        "Reasoning effort: not set (using the provider/model default; no reasoning configuration sent)"
+      );
     }
 
     const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);

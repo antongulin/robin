@@ -37,7 +37,7 @@ inputs:
     required: false
     default: ""
   reasoning-effort:
-    description: "Reasoning effort for providers/models that accept it (for example low, medium, high, xhigh, or max). Leave empty to defer to .github/robin.yml, which defaults to high; set to off to send no reasoning configuration. Unsupported or invalid values retry once with no reasoning override; a user-configured value that is rejected also leaves a status warning."
+    description: "Reasoning effort for providers/models that accept it (for example low, medium, high, xhigh, or max). Leave empty to defer to .github/robin.yml; when both are unset no reasoning control is sent and the provider/model decides. Set to off to send no reasoning configuration explicitly. Unsupported or invalid values retry once with no reasoning override; a user-configured value that is rejected also leaves a status warning."
     required: false
     default: ""
   llm-timeout-ms:
@@ -53,7 +53,7 @@ inputs:
     required: false
     default: "15"
   review-on-synchronize:
-    description: "Deprecated and ignored. Robin reviews every pull_request event the workflow triggers on, including synchronize (new commits pushed to a PR); remove synchronize from the workflow trigger to review only on open."
+    description: "Review when new commits are pushed to an existing PR (the pull_request synchronize event). Default false: pushes are skipped and reviewed manually with /review. Set true, and trigger the workflow on synchronize, to review every push."
     required: false
     default: "false"
   min-command-permission:
@@ -73,7 +73,7 @@ inputs:
     required: false
     default: ".github/robin.yml"
   agent-mode:
-    description: "Multi-turn review where the model reads files, greps, and lists the repository at the PR head before answering. auto uses it and falls back to the single-shot diff review when the model does not support tool calling; off always uses the single-shot review. Leave empty to use the repo config, which defaults to auto."
+    description: "Multi-turn review where the model reads files, greps, and lists the repository at the PR head before answering. auto uses it and falls back to the single-shot diff review when the model does not support tool calling; off always uses the single-shot review. Leave empty to defer to .github/robin.yml; when both are unset the single-shot review runs."
     required: false
     default: ""
   agent-max-turns:

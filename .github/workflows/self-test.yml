@@ -70,6 +70,8 @@ jobs:
           llm-base-url: ${{ secrets.LLM_BASE_URL }}
           model: ${{ secrets.LLM_MODEL }}
           fail-on-high: "false"
+          # This repository dogfoods Robin on every push; consumers opt in the same way.
+          review-on-synchronize: "true"
 
   command-test:
     if: |

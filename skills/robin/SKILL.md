@@ -199,8 +199,9 @@ the next review while replies or threads from the current review remain open.
 - The approved budget is exhausted and another result would materially improve confidence:
   follow the budget-extension rules below.
 
-Robin’s recommended workflow reviews every push (it triggers on `synchronize`), but older
-installs and customized workflows may not. After pushing a fix:
+Robin’s default workflow reviews on PR open and on `/robin`, not on every push
+(`synchronize` is opt-in), but some installs and customized workflows do trigger on
+`synchronize`. After pushing a fix:
 
 1. Inspect the workflow trigger and Actions runs for `synchronize`.
 2. If the push started Robin, watch that run and do not post a duplicate command.
@@ -330,8 +331,8 @@ or published release notes as part of this PR protocol.
 - Treating severity as proof or fixing style noise.
 - Pushing before replying and resolving the current review.
 - Posting `/robin` while an automatic run is already active.
-- Assuming every push auto-runs Robin without checking the workflow trigger; older installs
-  omit `synchronize` and use `/robin` for re-reviews.
+- Assuming every push auto-runs Robin without checking the workflow trigger; the default
+  install omits `synchronize` and uses `/robin` for re-reviews.
 - Counting fix rounds instead of completed review results.
 - Treating approval for “one more” review as permission for every later review.
 - Treating auto-merge permission as continuous review permission.

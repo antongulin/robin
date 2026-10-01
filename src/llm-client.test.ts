@@ -69,8 +69,8 @@ function parameterWarnings(): unknown[][] {
   ).filter(([message]) => !String(message).includes("reasoning effort"));
 }
 
-function paramRejection(param: string, message: string, status = 400) {
-  return Object.assign(new Error(message), { status, param, code: "unsupported_value" });
+function paramRejection(param: string, message: string, status = 400, code = "unsupported_value") {
+  return Object.assign(new Error(message), { status, param, code });
 }
 
 function makeClient(baseUrl: string, model: string, options: { maxOutputTokens?: number; effort?: string } = {}) {
@@ -206,7 +206,7 @@ describe("LLMClient unsupported parameter fallback", () => {
     expect(create.mock.calls[1][0]).toHaveProperty("max_completion_tokens", 3000);
   });
 
-  it("drops the token cap entirely when max_completion_tokens is also rejected", async () => {
+  it("keeps the cap by trying max_tokens when a reasoning-family endpoint rejects max_completion_tokens", async () => {
     const client = makeClient("https://example.test/v1", "gpt-5", { maxOutputTokens: 3000 });
     const create = stubOpenAI(client);
     create
@@ -218,7 +218,27 @@ describe("LLMClient unsupported parameter fallback", () => {
     await client.chatCompletion("system", "user");
 
     expect(create).toHaveBeenCalledTimes(2);
-    expect(create.mock.calls[1][0]).not.toHaveProperty("max_tokens");
+    expect(create.mock.calls[0][0]).toHaveProperty("max_completion_tokens", 3000);
+    expect(create.mock.calls[1][0]).not.toHaveProperty("max_completion_tokens");
+    expect(create.mock.calls[1][0]).toHaveProperty("max_tokens", 3000);
+  });
+
+  it("surfaces the provider error instead of dropping the cap when both token fields are rejected", async () => {
+    const client = makeClient("https://example.test/v1", "gpt-5", { maxOutputTokens: 3000 });
+    const create = stubOpenAI(client);
+    create.mockImplementation((request: { max_tokens?: number; max_completion_tokens?: number }) => {
+      const rejected = request.max_tokens !== undefined ? "max_tokens" : "max_completion_tokens";
+      return Promise.reject(
+        Object.assign(new Error(`Unknown parameter: ${rejected}`), { status: 400 }),
+      );
+    });
+
+    await expect(client.chatCompletion("system", "user")).rejects.toThrow(
+      "Failed to get response from LLM",
+    );
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[0][0]).toHaveProperty("max_completion_tokens", 3000);
+    expect(create.mock.calls[1][0]).toHaveProperty("max_tokens", 3000);
     expect(create.mock.calls[1][0]).not.toHaveProperty("max_completion_tokens");
   });
 
@@ -268,7 +288,9 @@ describe("LLMClient unsupported parameter fallback", () => {
     const create = stubOpenAI(client);
     create
       .mockRejectedValueOnce(paramRejection("temperature", "Unsupported value: 'temperature'"))
-      .mockRejectedValueOnce(paramRejection("max_tokens", "Unsupported parameter: 'max_tokens'"))
+      .mockRejectedValueOnce(
+        paramRejection("max_tokens", "Unsupported parameter: 'max_tokens'", 400, "unsupported_parameter"),
+      )
       .mockResolvedValueOnce(completionResponse("review text"));
 
     const result = await client.chatCompletion("system", "user");

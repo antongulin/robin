@@ -1132,13 +1132,16 @@ class LLMClient {
     /**
      * Adjust the request shape once for a parameter the provider rejected. Returns true when
      * the request should be rebuilt and re-sent. Each parameter can trigger at most one
-     * adjustment per client so normal retries are not multiplied.
+     * adjustment per client so normal retries are not multiplied. Token-limit rejections are
+     * handled asymmetrically: the cap is never silently removed while the other field name
+     * has not been tried, and if both field names are rejected the provider error surfaces.
      */
     applyParameterFallback(error, request) {
         const param = (0, llm_retry_1.findUnsupportedRequestParam)(error, this.sentDroppableParams(request));
         if (!param)
             return false;
-        // Anthropic accepts only schema-constrained JSON, so there is no plain JSON mode to step down to.
+        // Anthropic's OpenAI-compatible endpoint ignores response_format, so there is no plain JSON
+        // mode to step down to; rely on the prompt and the markdown fallback parser instead.
         if (param === "response_format" && this.responseFormat === "json_schema" && this.provider !== "anthropic") {
             this.responseFormat = "json_object";
             core.warning(`Provider rejected the JSON schema response_format (${(0, llm_retry_1.errorMessage)(error)}). Retrying once with plain JSON-object mode and keeping that shape for the rest of this run.`);
@@ -1146,22 +1149,31 @@ class LLMClient {
         }
         if (this.droppedParams.includes(param))
             return false;
-        this.droppedParams.push(param);
         let action;
         switch (param) {
             case "temperature":
+                this.droppedParams.push(param);
                 this.sendTemperature = false;
                 action = "omitting temperature (the model uses its default)";
                 break;
             case "max_tokens":
-                this.tokenLimitParam = "max_completion_tokens";
-                action = "sending max_completion_tokens instead of max_tokens";
+            case "max_completion_tokens": {
+                // Preserve the configured cap by trying the other field name before ever giving up.
+                const other = param === "max_tokens" ? "max_completion_tokens" : "max_tokens";
+                this.droppedParams.push(param);
+                if (this.droppedParams.includes(other)) {
+                    // Both spellings have now been rejected. Never fall back to an uncapped request for a
+                    // configured cap — surface the provider's error instead.
+                    core.error(`Provider rejected both max_tokens and max_completion_tokens (${(0, llm_retry_1.errorMessage)(error)}). ` +
+                        "The configured max-output-tokens cap cannot be enforced on this endpoint, so the request is not sent uncapped.");
+                    return false;
+                }
+                this.tokenLimitParam = other;
+                action = `sending ${other} instead of ${param}`;
                 break;
-            case "max_completion_tokens":
-                this.tokenLimitParam = undefined;
-                action = "omitting the output token cap";
-                break;
+            }
             case "response_format":
+                this.droppedParams.push(param);
                 this.responseFormat = "none";
                 action = "omitting response_format (the review parser falls back to markdown)";
                 break;
@@ -1733,6 +1745,52 @@ function structuredReasoningParam(error) {
 }
 /** Rejection cues seen from OpenAI-compatible servers when a request key is not accepted. */
 const PARAM_REJECTION_CUES = /\b(?:unsupported|not\s+supported|no\s+longer\s+supported|deprecated|does\s+not\s+support|do\s+not\s+support|not\s+allowed|not\s+permitted|unknown|unrecognized|unrecognised|unexpected|invalid|extra\s+(?:inputs?|fields?)|only\s+(?:the\s+)?default|only\s+\S+\s+is\s+allowed|must\s+be|should\s+be|instead)\b/i;
+/** The two token-cap spellings whose *value* validation must not be mistaken for an unsupported field. */
+const TOKEN_LIMIT_PARAMS = new Set([
+    "max_tokens",
+    "max_completion_tokens",
+]);
+/**
+ * Structured codes that name the token-limit *field* as unknown/unsupported. Deliberately narrow:
+ * a bare `unsupported` substring would also match the value code `unsupported_value`, which must be
+ * handled as a bad value. The token-limit field must be named as unknown/unsupported explicitly.
+ */
+const UNSUPPORTED_FIELD_CODE = /(?:unsupported|unknown|unrecognized|unrecognised)[_-](?:parameter|argument|field|property|option|input|feature)/i;
+/**
+ * Structured codes that clearly report a bad *value* for a named field. These are explicit value
+ * validation signals and take priority over any message wording (a message can say "is not
+ * supported" while the code names a value problem like `unsupported_value` or `invalid_value`).
+ */
+const INVALID_VALUE_CODE = /(?:integer_below_min_value|integer_above_max_value|invalid_value|invalid_type|unsupported_value|out_of_range|less_than_minimum|greater_than_maximum)/i;
+/** Message-only phrasings that name the token-limit *field* as unknown/unsupported. */
+const UNSUPPORTED_TOKEN_LIMIT_FIELD_PHRASE = /\b(?:unsupported|unknown|unrecognized|unrecognised|unexpected)\s+(?:parameter|argument|field|property|option|input|feature)\b[^.;!?,]{0,40}\b(?:max_tokens|max_completion_tokens)\b|\b(?:max_tokens|max_completion_tokens)\b[^.]{0,40}\bis\s+not\s+(?:supported|allowed|permitted|recognized|recognised)\b|\b(?:does|do|did)\s+not\s+support\b[^.]{0,40}\b(?:max_tokens|max_completion_tokens)\b|\b(?:max_tokens|max_completion_tokens)\b[^.]{0,20}\b(?:is\s+|are\s+)?(?:unsupported|unknown|unrecognized|unrecognised)\b/i;
+/**
+ * True only when a 400/422 response names a sent token-limit parameter but the complaint is about
+ * its value (below the provider minimum, outside a range, non-integer, …), not about the field
+ * being unknown. Swapping the field or dropping the cap would hide a real configuration error and
+ * silently run the review uncapped, so these must surface. Scoped to the token-limit params so
+ * temperature/response_format value recovery (Kimi's "temperature must be 1", schema step-downs)
+ * keeps working.
+ *
+ * Priority: an explicit structured *value* code wins first, then a structured code that names the
+ * field itself as unknown/unsupported (so a provider's "Invalid parameter: max_tokens is not
+ * supported …" still routes to the rename/omit path), then the message-only field phrasings, then
+ * the generic message value heuristics.
+ */
+function isInvalidTokenLimitValueError(error, param, message) {
+    if (!TOKEN_LIMIT_PARAMS.has(param))
+        return false;
+    const code = error.code;
+    if (typeof code === "string" && INVALID_VALUE_CODE.test(code))
+        return true;
+    if (typeof code === "string" && UNSUPPORTED_FIELD_CODE.test(code))
+        return false;
+    if (UNSUPPORTED_TOKEN_LIMIT_FIELD_PHRASE.test(message))
+        return false;
+    return new RegExp(String.raw `\b(?:invalid|invalid_value)\b[^.]{0,60}${param}\b` +
+        String.raw `|${param}\b[^.]{0,60}\b(?:must|should|expected|needs?)\b[^.]{0,40}\b(?:be\s+)?(?:greater|less|at\s+most|at\s+least|between|>=|<=|positive|[0-9])` +
+        String.raw `|\b(?:expected|requires?|minimum|maximum)\b[^.]{0,30}\b(?:a\s+)?(?:value\s+)?(?:>=|<=|greater|less|at\s+least|at\s+most|between|[0-9])\b[^.]{0,40}${param}\b`, "i").test(message);
+}
 /**
  * Returns the first sent optional parameter that a 400/422 response rejects, or
  * undefined. Structured `param` (OpenAI SDK errors) wins; otherwise the message must
@@ -1742,7 +1800,8 @@ const PARAM_REJECTION_CUES = /\b(?:unsupported|not\s+supported|no\s+longer\s+sup
  *   "temperature must be 1 for reasoning models"
  *   "`temperature` is deprecated for this model." (Anthropic, newer Claude models)
  * Dropping any of these is safe — the model falls back to its own defaults — so the
- * cue list is intentionally broad.
+ * cue list is intentionally broad. Token-limit value complaints are the exception: they
+ * are returned as undefined so the caller surfaces the provider's validation error.
  */
 function findUnsupportedRequestParam(error, sentParams) {
     if (!error || typeof error !== "object" || sentParams.length === 0)
@@ -1750,16 +1809,20 @@ function findUnsupportedRequestParam(error, sentParams) {
     const status = Number(error.status);
     if (status !== 400 && status !== 422)
         return undefined;
+    const message = errorMessage(error);
     const structuredParam = error.param;
     if (typeof structuredParam === "string") {
         const match = sentParams.find((param) => structuredParam.toLowerCase() === param);
-        if (match)
-            return match;
+        if (match) {
+            return isInvalidTokenLimitValueError(error, match, message) ? undefined : match;
+        }
     }
-    const message = errorMessage(error);
     if (!PARAM_REJECTION_CUES.test(message))
         return undefined;
-    return sentParams.find((param) => new RegExp(`(?:^|[^\\w])${param}(?:$|[^\\w])`, "i").test(message));
+    const named = sentParams.find((param) => new RegExp(`(?:^|[^\\w])${param}(?:$|[^\\w])`, "i").test(message));
+    if (!named)
+        return undefined;
+    return isInvalidTokenLimitValueError(error, named, message) ? undefined : named;
 }
 const TOOL_NOUN = String.raw `(?:tools?|tool[\s_-]?(?:use|calling|calls|choice)|function[\s_-]?calling)`;
 /** Provider phrasings for "this model/route cannot take tools" (OpenRouter, Ollama, vLLM, generic). */
@@ -1917,6 +1980,7 @@ const diff_annotate_1 = __nccwpck_require__(4523);
 const repo_config_1 = __nccwpck_require__(2800);
 const review_prompts_1 = __nccwpck_require__(319);
 const commands_1 = __nccwpck_require__(367);
+const trigger_1 = __nccwpck_require__(9717);
 async function run() {
     let octokit;
     let statusOwner = "";
@@ -1932,6 +1996,7 @@ async function run() {
         const token = core.getInput("github-token", { required: true });
         octokit = github.getOctokit(token);
         const minCommandPermission = core.getInput("min-command-permission") || "write";
+        const reviewOnSynchronize = core.getBooleanInput("review-on-synchronize");
         core.info(`Event: ${eventName}`);
         const owner = github.context.repo.owner;
         const repo = github.context.repo.repo;
@@ -1945,6 +2010,10 @@ async function run() {
             return;
         }
         if (eventName === "pull_request") {
+            if ((0, trigger_1.shouldSkipSynchronizeEvent)(payload.action, reviewOnSynchronize)) {
+                core.info("Skipping pull_request synchronize event. Pushes to an existing PR are reviewed manually with /review unless review-on-synchronize is true.");
+                return;
+            }
             shouldRun = true;
             prNumber = payload.pull_request?.number;
         }
@@ -2061,10 +2130,13 @@ async function run() {
         const agentMaxTurns = (0, repo_config_1.resolveAgentMaxTurns)(agentMaxTurnsInput, repoConfig);
         const agentMaxDiffSize = (0, repo_config_1.resolveAgentMaxDiffSize)(agentMaxDiffSizeInput, repoConfig);
         if (reasoningEffort) {
-            core.info(`Reasoning effort: ${reasoningEffort}${reasoningEffortConfigured ? "" : " (default; set reasoning-effort: off to send none)"}`);
+            core.info(`Reasoning effort: ${reasoningEffort}`);
+        }
+        else if (reasoningEffortConfigured) {
+            core.info("Reasoning effort: off (no reasoning configuration sent)");
         }
         else {
-            core.info("Reasoning effort: off (no reasoning configuration sent)");
+            core.info("Reasoning effort: not set (using the provider/model default; no reasoning configuration sent)");
         }
         const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
         if (!diff || diff.trim().length === 0) {
@@ -2810,7 +2882,7 @@ function buildReasoningFallbackNotice(reason) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.REASONING_EFFORT_OFF = exports.DEFAULT_REASONING_EFFORT = exports.DEFAULT_AGENT_MAX_DIFF_SIZE = exports.DEFAULT_AGENT_MAX_TURNS = exports.DEFAULT_AGENT_MODE = exports.DEFAULT_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
+exports.REASONING_EFFORT_OFF = exports.DEFAULT_AGENT_MAX_DIFF_SIZE = exports.DEFAULT_AGENT_MAX_TURNS = exports.DEFAULT_AGENT_MODE = exports.DEFAULT_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
 exports.parseRepoConfigYaml = parseRepoConfigYaml;
 exports.resolveMaxDiffSize = resolveMaxDiffSize;
 exports.resolveMaxComments = resolveMaxComments;
@@ -2825,7 +2897,8 @@ exports.DEFAULT_CONFIG_FILE = ".github/robin.yml";
 exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
 /** Single default shared by action.yml and the reusable review.yml workflow. */
 exports.DEFAULT_MAX_COMMENTS = 15;
-exports.DEFAULT_AGENT_MODE = "auto";
+/** Single-shot diff review unless the caller explicitly opts into the multi-turn agent review. */
+exports.DEFAULT_AGENT_MODE = "off";
 exports.DEFAULT_AGENT_MAX_TURNS = 40;
 const MAX_AGENT_MAX_TURNS = 100;
 /** Diff characters sent up front in agent mode (~50-65k tokens); the single-shot fallback keeps max-diff-size. */
@@ -2959,7 +3032,7 @@ function resolveRequestChanges(actionInput, repoConfig) {
         return false;
     return repoConfig?.requestChanges ?? true;
 }
-/** Multi-turn tool review: explicit input first, then `.github/robin.yml`, else `auto`. */
+/** Multi-turn tool review: explicit input first, then `.github/robin.yml`, else single-shot (`off`). */
 function resolveAgentMode(actionInput, repoConfig) {
     const input = actionInput.trim().toLowerCase();
     if (input === "auto" || input === "off")
@@ -2983,18 +3056,24 @@ function resolveAgentMaxDiffSize(actionInput, repoConfig) {
         return repoConfig.agentMaxDiffSize;
     return exports.DEFAULT_AGENT_MAX_DIFF_SIZE;
 }
-/** Sent when neither the action input nor `.github/robin.yml` sets `reasoning-effort`. */
-exports.DEFAULT_REASONING_EFFORT = "high";
-/** Sentinel value that sends no reasoning configuration at all. */
+/**
+ * Sentinel value that sends no reasoning configuration at all.
+ *
+ * There is deliberately no applied default: when neither the action input nor
+ * `.github/robin.yml` sets `reasoning-effort`, Robin sends no reasoning control and
+ * lets the provider/model choose. An explicit value (including `high`) is still sent.
+ */
 exports.REASONING_EFFORT_OFF = "off";
 /**
  * Reasoning effort is provider configuration: explicit input first, then `.github/robin.yml`,
- * else the default. `off` (any case) disables reasoning configuration entirely.
+ * else unset so the provider default applies. `off` (any case) also disables reasoning
+ * configuration entirely.
  */
 function resolveReasoningEffort(actionInput, repoConfig) {
     const configured = configuredReasoningEffort(actionInput, repoConfig);
-    const value = configured ?? exports.DEFAULT_REASONING_EFFORT;
-    return value.toLowerCase() === exports.REASONING_EFFORT_OFF ? undefined : value;
+    if (configured === undefined)
+        return undefined;
+    return configured.toLowerCase() === exports.REASONING_EFFORT_OFF ? undefined : configured;
 }
 /** True when the user set `reasoning-effort` themselves (input or repo config), not the default. */
 function isReasoningEffortConfigured(actionInput, repoConfig) {
@@ -3956,6 +4035,28 @@ function formatDuration(ms) {
     return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
 //# sourceMappingURL=status-reporter.js.map
+
+/***/ }),
+
+/***/ 9717:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.shouldSkipSynchronizeEvent = shouldSkipSynchronizeEvent;
+/**
+ * Pull-request trigger policy.
+ *
+ * A `pull_request` `synchronize` event fires on every push to an existing PR. By default Robin
+ * reviews a PR when it opens (and on `/review`), not on every push, so `synchronize` is skipped
+ * unless the caller explicitly sets `review-on-synchronize: true`. Other pull_request actions
+ * (opened, reopened, ready_for_review) always run.
+ */
+function shouldSkipSynchronizeEvent(action, reviewOnSynchronize) {
+    return action === "synchronize" && !reviewOnSynchronize;
+}
+//# sourceMappingURL=trigger.js.map
 
 /***/ }),
 

@@ -540,6 +540,134 @@ describe("findUnsupportedRequestParam", () => {
     ).toBeUndefined();
   });
 
+  it("treats a token-limit value complaint as invalid, not as an unsupported field", () => {
+    const both = ["max_tokens", "max_completion_tokens"] as const;
+    // Structured param + invalid-value code/message must surface rather than be dropped.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_completion_tokens",
+          code: "integer_below_min_value",
+          message:
+            "Invalid value for 'max_completion_tokens': Expected a value >= 16, but got 8 instead.",
+        },
+        both
+      )
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam(
+        { status: 422, param: "max_tokens", code: "invalid_value", message: "Invalid value for 'max_tokens'" },
+        both
+      )
+    ).toBeUndefined();
+    // Message-only value complaints (no structured param) must also surface.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          message: "Invalid value for 'max_tokens': Expected a value >= 16, but got 1 instead.",
+        },
+        both
+      )
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "max_tokens must be at least 16" },
+        both
+      )
+    ).toBeUndefined();
+  });
+
+  it("lets an explicit structured value code beat unsupported-sounding message wording", () => {
+    const both = ["max_tokens", "max_completion_tokens"] as const;
+    // `unsupported_value` is a value code, not an unknown field, even though the message says
+    // "Unsupported value" / "is not supported".
+    for (const param of both) {
+      expect(
+        findUnsupportedRequestParam(
+          {
+            status: 400,
+            param,
+            code: "unsupported_value",
+            message: `Unsupported value for ${param}: must be at least 16.`,
+          },
+          both
+        )
+      ).toBeUndefined();
+      expect(
+        findUnsupportedRequestParam(
+          {
+            status: 400,
+            param,
+            code: "invalid_value",
+            message: `${param} value 1 is not supported; must be at least 16.`,
+          },
+          both
+        )
+      ).toBeUndefined();
+    }
+    // Control: a genuine unknown-field code still routes to the rename/omit path.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_tokens",
+          code: "unsupported_parameter",
+          message: "Invalid parameter: max_tokens is not supported with this model.",
+        },
+        both
+      )
+    ).toBe("max_tokens");
+  });
+
+  it("still recovers genuine unsupported token-limit fields", () => {
+    const both = ["max_tokens", "max_completion_tokens"] as const;
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_tokens",
+          code: "unsupported_parameter",
+          message:
+            "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+        },
+        both
+      )
+    ).toBe("max_tokens");
+    // A structured unsupported-field code wins over the "Invalid parameter:" wording: the cap is
+    // enforceable via the other spelling, so this must not be read as a bad value.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          param: "max_tokens",
+          code: "unsupported_parameter",
+          message:
+            "Invalid parameter: max_tokens is not supported with this model. Use max_completion_tokens instead.",
+        },
+        both
+      )
+    ).toBe("max_tokens");
+    // Same wording without a structured code still resolves through the unambiguous phrase.
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          message:
+            "Invalid parameter: max_tokens is not supported with this model. Use max_completion_tokens instead.",
+        },
+        both
+      )
+    ).toBe("max_tokens");
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "Unknown parameter: max_completion_tokens" },
+        both
+      )
+    ).toBe("max_completion_tokens");
+  });
+
   it("ignores non-validation statuses and unrelated validation errors", () => {
     expect(
       findUnsupportedRequestParam({ status: 500, message: "temperature service failed" }, sent)

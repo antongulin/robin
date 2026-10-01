@@ -112,8 +112,8 @@ active review is explicitly non-terminal.
 ## Assuming every fix push triggers Robin
 
 **What happened:** Agent pushed fixes and waited for a re-review that never started. The
-Robin workflow did not trigger on `synchronize` (older installs omit it); re-reviews there
-use the `/robin` command.
+Robin workflow does not trigger on `synchronize` by default (older installs omit it too);
+re-reviews there use the `/robin` command.
 
 **Fix in the skill:** Inspect the installed workflow and Actions runs after a push. Watch an
 actual synchronize-triggered run when present; otherwise request `/robin`. Never do both.

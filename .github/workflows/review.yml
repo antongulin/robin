@@ -30,7 +30,7 @@ on:
         type: string
         default: ""
       reasoning-effort:
-        description: "Reasoning effort for providers/models that accept it; empty defers to .github/robin.yml (default high), off sends no reasoning configuration. Rejected controls or values retry once without the override."
+        description: "Reasoning effort for providers/models that accept it; empty defers to .github/robin.yml. When both are unset no reasoning control is sent. off sends no reasoning configuration explicitly. Rejected controls or values retry once without the override."
         required: false
         type: string
         default: ""
@@ -60,7 +60,7 @@ on:
         type: string
         default: ""
       review-on-synchronize:
-        description: "Deprecated and ignored; kept so existing callers keep working. Pushes are reviewed whenever the caller triggers on synchronize."
+        description: "Review pushes to an existing PR (pull_request synchronize event). Default false; set true and trigger on synchronize to review every push."
         required: false
         type: boolean
         default: false
@@ -75,7 +75,7 @@ on:
         type: string
         default: ""
       agent-mode:
-        description: "auto (default) runs a multi-turn review with repository tools and falls back to single-shot when the model lacks tool support; off always runs single-shot. Leave empty to use repo config."
+        description: "auto runs a multi-turn review with repository tools and falls back to single-shot when the model lacks tool support; off always runs single-shot. Leave empty to defer to .github/robin.yml; when both are unset the single-shot review runs."
         required: false
         type: string
         default: ""

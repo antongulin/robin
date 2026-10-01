@@ -1,9 +1,9 @@
 import {
   DEFAULT_AGENT_MAX_DIFF_SIZE,
   DEFAULT_AGENT_MAX_TURNS,
+  DEFAULT_AGENT_MODE,
   DEFAULT_MAX_COMMENTS,
   DEFAULT_ACTION_MAX_DIFF_SIZE,
-  DEFAULT_REASONING_EFFORT,
   isReasoningEffortConfigured,
   parseRepoConfigYaml,
   resolveAgentMaxDiffSize,
@@ -137,11 +137,10 @@ describe("resolveReasoningEffort", () => {
     expect(resolveReasoningEffort("   ", { reasoningEffort: "high" })).toBe("high");
   });
 
-  it("defaults to high when neither the input nor repo config sets it", () => {
-    expect(DEFAULT_REASONING_EFFORT).toBe("high");
-    expect(resolveReasoningEffort("", undefined)).toBe("high");
-    expect(resolveReasoningEffort("  ", {})).toBe("high");
-    expect(resolveReasoningEffort("", { reasoningEffort: "  " })).toBe("high");
+  it("sends nothing when neither the input nor repo config sets it", () => {
+    expect(resolveReasoningEffort("", undefined)).toBeUndefined();
+    expect(resolveReasoningEffort("  ", {})).toBeUndefined();
+    expect(resolveReasoningEffort("", { reasoningEffort: "  " })).toBeUndefined();
   });
 
   it("sends nothing when the value is off, in any case", () => {
@@ -174,12 +173,15 @@ describe("agent mode config", () => {
     expect(parseRepoConfigYaml("agent-mode: sometimes").agentMode).toBeUndefined();
   });
 
-  it("prefers the action input, then repo config, then auto", () => {
-    expect(resolveAgentMode("", {})).toBe("auto");
+  it("preserves single-shot by default and honors an explicit auto from input or repo config", () => {
+    expect(DEFAULT_AGENT_MODE).toBe("off");
+    expect(resolveAgentMode("", {})).toBe("off");
     expect(resolveAgentMode("", { agentMode: "off" })).toBe("off");
+    expect(resolveAgentMode("", { agentMode: "auto" })).toBe("auto");
     expect(resolveAgentMode("auto", { agentMode: "off" })).toBe("auto");
     expect(resolveAgentMode("OFF", {})).toBe("off");
     expect(resolveAgentMode("bogus", { agentMode: "off" })).toBe("off");
+    expect(resolveAgentMode("bogus", { agentMode: "auto" })).toBe("auto");
   });
 
   it("resolves max turns with a default and an upper cap", () => {

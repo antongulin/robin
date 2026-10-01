@@ -177,12 +177,15 @@ export class LLMClient {
   /**
    * Adjust the request shape once for a parameter the provider rejected. Returns true when
    * the request should be rebuilt and re-sent. Each parameter can trigger at most one
-   * adjustment per client so normal retries are not multiplied.
+   * adjustment per client so normal retries are not multiplied. Token-limit rejections are
+   * handled asymmetrically: the cap is never silently removed while the other field name
+   * has not been tried, and if both field names are rejected the provider error surfaces.
    */
   private applyParameterFallback(error: unknown, request: ChatRequest): boolean {
     const param = findUnsupportedRequestParam(error, this.sentDroppableParams(request));
     if (!param) return false;
-    // Anthropic accepts only schema-constrained JSON, so there is no plain JSON mode to step down to.
+    // Anthropic's OpenAI-compatible endpoint ignores response_format, so there is no plain JSON
+    // mode to step down to; rely on the prompt and the markdown fallback parser instead.
     if (param === "response_format" && this.responseFormat === "json_schema" && this.provider !== "anthropic") {
       this.responseFormat = "json_object";
       core.warning(
@@ -191,23 +194,35 @@ export class LLMClient {
       return true;
     }
     if (this.droppedParams.includes(param)) return false;
-    this.droppedParams.push(param);
 
     let action: string;
     switch (param) {
       case "temperature":
+        this.droppedParams.push(param);
         this.sendTemperature = false;
         action = "omitting temperature (the model uses its default)";
         break;
       case "max_tokens":
-        this.tokenLimitParam = "max_completion_tokens";
-        action = "sending max_completion_tokens instead of max_tokens";
+      case "max_completion_tokens": {
+        // Preserve the configured cap by trying the other field name before ever giving up.
+        const other: TokenLimitParam =
+          param === "max_tokens" ? "max_completion_tokens" : "max_tokens";
+        this.droppedParams.push(param);
+        if (this.droppedParams.includes(other)) {
+          // Both spellings have now been rejected. Never fall back to an uncapped request for a
+          // configured cap — surface the provider's error instead.
+          core.error(
+            `Provider rejected both max_tokens and max_completion_tokens (${errorMessage(error)}). ` +
+              "The configured max-output-tokens cap cannot be enforced on this endpoint, so the request is not sent uncapped."
+          );
+          return false;
+        }
+        this.tokenLimitParam = other;
+        action = `sending ${other} instead of ${param}`;
         break;
-      case "max_completion_tokens":
-        this.tokenLimitParam = undefined;
-        action = "omitting the output token cap";
-        break;
+      }
       case "response_format":
+        this.droppedParams.push(param);
         this.responseFormat = "none";
         action = "omitting response_format (the review parser falls back to markdown)";
         break;

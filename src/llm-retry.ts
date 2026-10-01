@@ -173,6 +173,65 @@ export type DroppableRequestParam =
 const PARAM_REJECTION_CUES =
   /\b(?:unsupported|not\s+supported|no\s+longer\s+supported|deprecated|does\s+not\s+support|do\s+not\s+support|not\s+allowed|not\s+permitted|unknown|unrecognized|unrecognised|unexpected|invalid|extra\s+(?:inputs?|fields?)|only\s+(?:the\s+)?default|only\s+\S+\s+is\s+allowed|must\s+be|should\s+be|instead)\b/i;
 
+/** The two token-cap spellings whose *value* validation must not be mistaken for an unsupported field. */
+const TOKEN_LIMIT_PARAMS = new Set<DroppableRequestParam>([
+  "max_tokens",
+  "max_completion_tokens",
+]);
+
+/**
+ * Structured codes that name the token-limit *field* as unknown/unsupported. Deliberately narrow:
+ * a bare `unsupported` substring would also match the value code `unsupported_value`, which must be
+ * handled as a bad value. The token-limit field must be named as unknown/unsupported explicitly.
+ */
+const UNSUPPORTED_FIELD_CODE =
+  /(?:unsupported|unknown|unrecognized|unrecognised)[_-](?:parameter|argument|field|property|option|input|feature)/i;
+
+/**
+ * Structured codes that clearly report a bad *value* for a named field. These are explicit value
+ * validation signals and take priority over any message wording (a message can say "is not
+ * supported" while the code names a value problem like `unsupported_value` or `invalid_value`).
+ */
+const INVALID_VALUE_CODE =
+  /(?:integer_below_min_value|integer_above_max_value|invalid_value|invalid_type|unsupported_value|out_of_range|less_than_minimum|greater_than_maximum)/i;
+
+/** Message-only phrasings that name the token-limit *field* as unknown/unsupported. */
+const UNSUPPORTED_TOKEN_LIMIT_FIELD_PHRASE =
+  /\b(?:unsupported|unknown|unrecognized|unrecognised|unexpected)\s+(?:parameter|argument|field|property|option|input|feature)\b[^.;!?,]{0,40}\b(?:max_tokens|max_completion_tokens)\b|\b(?:max_tokens|max_completion_tokens)\b[^.]{0,40}\bis\s+not\s+(?:supported|allowed|permitted|recognized|recognised)\b|\b(?:does|do|did)\s+not\s+support\b[^.]{0,40}\b(?:max_tokens|max_completion_tokens)\b|\b(?:max_tokens|max_completion_tokens)\b[^.]{0,20}\b(?:is\s+|are\s+)?(?:unsupported|unknown|unrecognized|unrecognised)\b/i;
+
+/**
+ * True only when a 400/422 response names a sent token-limit parameter but the complaint is about
+ * its value (below the provider minimum, outside a range, non-integer, …), not about the field
+ * being unknown. Swapping the field or dropping the cap would hide a real configuration error and
+ * silently run the review uncapped, so these must surface. Scoped to the token-limit params so
+ * temperature/response_format value recovery (Kimi's "temperature must be 1", schema step-downs)
+ * keeps working.
+ *
+ * Priority: an explicit structured *value* code wins first, then a structured code that names the
+ * field itself as unknown/unsupported (so a provider's "Invalid parameter: max_tokens is not
+ * supported …" still routes to the rename/omit path), then the message-only field phrasings, then
+ * the generic message value heuristics.
+ */
+function isInvalidTokenLimitValueError(
+  error: unknown,
+  param: DroppableRequestParam,
+  message: string
+): boolean {
+  if (!TOKEN_LIMIT_PARAMS.has(param)) return false;
+
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && INVALID_VALUE_CODE.test(code)) return true;
+  if (typeof code === "string" && UNSUPPORTED_FIELD_CODE.test(code)) return false;
+  if (UNSUPPORTED_TOKEN_LIMIT_FIELD_PHRASE.test(message)) return false;
+
+  return new RegExp(
+    String.raw`\b(?:invalid|invalid_value)\b[^.]{0,60}${param}\b` +
+      String.raw`|${param}\b[^.]{0,60}\b(?:must|should|expected|needs?)\b[^.]{0,40}\b(?:be\s+)?(?:greater|less|at\s+most|at\s+least|between|>=|<=|positive|[0-9])` +
+      String.raw`|\b(?:expected|requires?|minimum|maximum)\b[^.]{0,30}\b(?:a\s+)?(?:value\s+)?(?:>=|<=|greater|less|at\s+least|at\s+most|between|[0-9])\b[^.]{0,40}${param}\b`,
+    "i"
+  ).test(message);
+}
+
 /**
  * Returns the first sent optional parameter that a 400/422 response rejects, or
  * undefined. Structured `param` (OpenAI SDK errors) wins; otherwise the message must
@@ -182,7 +241,8 @@ const PARAM_REJECTION_CUES =
  *   "temperature must be 1 for reasoning models"
  *   "`temperature` is deprecated for this model." (Anthropic, newer Claude models)
  * Dropping any of these is safe — the model falls back to its own defaults — so the
- * cue list is intentionally broad.
+ * cue list is intentionally broad. Token-limit value complaints are the exception: they
+ * are returned as undefined so the caller surfaces the provider's validation error.
  */
 export function findUnsupportedRequestParam(
   error: unknown,
@@ -192,15 +252,21 @@ export function findUnsupportedRequestParam(
   const status = Number((error as { status?: unknown }).status);
   if (status !== 400 && status !== 422) return undefined;
 
+  const message = errorMessage(error);
   const structuredParam = (error as { param?: unknown }).param;
   if (typeof structuredParam === "string") {
     const match = sentParams.find((param) => structuredParam.toLowerCase() === param);
-    if (match) return match;
+    if (match) {
+      return isInvalidTokenLimitValueError(error, match, message) ? undefined : match;
+    }
   }
 
-  const message = errorMessage(error);
   if (!PARAM_REJECTION_CUES.test(message)) return undefined;
-  return sentParams.find((param) => new RegExp(`(?:^|[^\\w])${param}(?:$|[^\\w])`, "i").test(message));
+  const named = sentParams.find((param) =>
+    new RegExp(`(?:^|[^\\w])${param}(?:$|[^\\w])`, "i").test(message)
+  );
+  if (!named) return undefined;
+  return isInvalidTokenLimitValueError(error, named, message) ? undefined : named;
 }
 
 const TOOL_NOUN = String.raw`(?:tools?|tool[\s_-]?(?:use|calling|calls|choice)|function[\s_-]?calling)`;

@@ -12,7 +12,7 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 
 - A review when you open a pull request (or when someone comments `/robin`)
 - A short summary plus inline comments on changed lines, with one-click suggested fixes when the model can pin one down
-- Reviews that check the rest of your repo (callers, definitions) when your model supports tool calling
+- Optional reviews that check the rest of your repo (callers, definitions) when you enable agent mode and your model supports tool calling
 - Your choice of AI provider — including **free** options
 
 When there's nothing worth flagging, Robin says so instead of inventing nitpicks:
@@ -125,7 +125,7 @@ name: Robin
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
 
@@ -144,6 +144,8 @@ jobs:
 ```
 
 Commit and push. Open a pull request — you should see a review within a few minutes.
+
+By default Robin reviews when the PR opens (and on `/review`), not on every push. To also review each push, add `synchronize` to the `pull_request` `types:` and set `review-on-synchronize: true` in the job's `with:` block.
 
 > [!IMPORTANT]
 > Use **`@main`** for the latest fixes, or pin a release tag (for example `@v2` or `@v2.7.0`) from [releases](https://github.com/antongulin/robin/releases). Do **not** use `@v0`. See [Version pins](#version-pins) below.
@@ -237,14 +239,15 @@ Focused change. Main risk: timeout errors are not handled clearly.
 
 ## Agent mode: reviews with repository context
 
-Robin doesn't only look at the diff. When your model supports tool calling, the review is a
-short multi-turn investigation: the model can read full files, grep for callers of a changed
-function, and list directories at the PR's head commit before it decides what's a bug. Findings
-can come with a one-click GitHub **suggested change** containing the exact fix.
+Robin doesn't only look at the diff. When you enable agent mode (`agent-mode: auto`) and your
+model supports tool calling, the review is a short multi-turn investigation: the model can
+read full files, grep for callers of a changed function, and list directories at the PR's
+head commit before it decides what's a bug. Findings can come with a one-click GitHub
+**suggested change** containing the exact fix.
 
 - Nothing to set up: Robin downloads a read-only snapshot of the PR through the GitHub API (no checkout, and PR code is never run).
 - If the model doesn't support tools (some free OpenRouter routes, many small Ollama models), Robin quietly falls back to the classic diff-only review.
-- Turn it off with `agent-mode: off` in `.github/robin.yml`, or cap the investigation with `agent-max-turns` (default 40).
+- Agent mode is opt-in: set `agent-mode: auto` in `.github/robin.yml`, and cap the investigation with `agent-max-turns` (default 40). Unset keeps the single-shot diff review.
 - Long investigations don't hit a wall: when the context fills up, Robin has the model summarize what it has found so far and keeps going, like Cursor's context compaction.
 
 Details: [Agent mode](docs/ADVANCED.md#agent-mode-multi-turn-review-with-repository-context).
@@ -287,7 +290,7 @@ GitHub’s servers cannot reach `localhost` on your laptop. For Ollama at home, 
 
 ## Optional: config and custom rules
 
-Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to set `max-diff-size`, skip extra paths, and more. The same file is the normal place to change `reasoning-effort` for providers that expose reasoning controls; it defaults to `high`, and `off` sends no reasoning configuration. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
+Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to set `max-diff-size`, skip extra paths, and more. The same file is the normal place to change `reasoning-effort` for providers that expose reasoning controls; when it is unset Robin sends no reasoning control and the provider/model decides, and `off` is an explicit way to send nothing. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
 
 Add `.github/code-reviewer.md` in your repo:
 
@@ -310,8 +313,8 @@ Add `.github/code-reviewer.md` in your repo:
 | `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/robin` again |
 | `OpenRouter stall` / job runs 45 min with no review | Auto-router hung — action now aborts after 45s with no stream and retries | Watch Actions log for `LLM resolved model` (routing OK); pin `@v2` or `@main` for the fix |
 | `404 Provider returned error` | Normal for `openrouter/free` when one provider is down — the action retries up to 5 times; keep `LLM_MODEL=openrouter/free` |
-| `temperature` / `max_tokens` rejected by the model | The action warns, retries once without that parameter (or with `max_completion_tokens`), and keeps that shape for the run. To pin a value some models insist on (Kimi requires `1`), set `llm-temperature` in your workflow's `with:` block, see [docs/ADVANCED.md](docs/ADVANCED.md#models-that-require-a-fixed-temperature) |
-| `reasoning-effort` rejected as unsupported or invalid | The action warns, retries once with no reasoning override, and completes the review when that retry succeeds. If you set the value yourself, the final status comment tells you to update `reasoning-effort` in `.github/robin.yml` or the workflow `with:` block; a rejected `high` default only shows in the Actions log. Set `reasoning-effort: off` to stop sending it |
+| `temperature` / `max_tokens` rejected by the model | The action warns, retries once with the parameter renamed or dropped (or with `max_completion_tokens`), and keeps that shape for the run. If the endpoint rejects both token-cap spellings, the provider error surfaces rather than running uncapped. To pin a value some models insist on (Kimi requires `1`), set `llm-temperature` in your workflow's `with:` block, see [docs/ADVANCED.md](docs/ADVANCED.md#models-that-require-a-fixed-temperature) |
+| `reasoning-effort` rejected as unsupported or invalid | The action warns, retries once with no reasoning override, and completes the review when that retry succeeds. If you set the value yourself, the final status comment tells you to update `reasoning-effort` in `.github/robin.yml` or the workflow `with:` block. With no value configured Robin sends no reasoning control at all, so nothing is rejected. Set `reasoning-effort: off` to be explicit |
 
 More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)
 
