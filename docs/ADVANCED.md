@@ -138,7 +138,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 
 ## Agent mode (multi-turn review with repository context)
 
-By default (`agent-mode: auto`), `/review` is a multi-turn conversation instead of a
+When enabled (`agent-mode: auto`), `/review` is a multi-turn conversation instead of a
 single request. Agent mode is opt-in: when neither the input nor `.github/robin.yml` sets
 `agent-mode`, Robin runs the classic single-shot diff review. Set `auto` to enable the
 investigation below; set `off` to force the single-shot review.
