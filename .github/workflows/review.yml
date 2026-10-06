@@ -101,6 +101,9 @@ on:
         required: true
       LLM_MODEL:
         required: true
+      ROBIN_TOKEN:
+        description: "Optional token for PR API calls and comments. Pass a GitHub App installation token or PAT to post as that identity instead of github-actions[bot]. Defaults to github.token."
+        required: false
 
 permissions:
   actions: read # lets Robin detect when a cancelled run was superseded by a newer one
@@ -133,7 +136,7 @@ jobs:
       - name: Robin
         uses: antongulin/robin@main
         with:
-          github-token: ${{ github.token }}
+          github-token: ${{ secrets.ROBIN_TOKEN || github.token }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}
           llm-base-url: ${{ secrets.LLM_BASE_URL }}
           model: ${{ secrets.LLM_MODEL }}

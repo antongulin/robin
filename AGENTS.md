@@ -31,6 +31,7 @@ For a direct action step: `antongulin/robin@main` or `@v2`.
 | `LLM_API_KEY` | Provider API key |
 | `LLM_BASE_URL` | OpenAI-compatible base URL |
 | `LLM_MODEL` | Model id |
+| `ROBIN_TOKEN` (optional) | Token for PR API calls and comments. Pass a GitHub App installation token or PAT to post as that identity instead of `github-actions[bot]`. Defaults to `github.token`. |
 
 Free OpenRouter example:
 

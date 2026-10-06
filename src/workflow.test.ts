@@ -253,4 +253,15 @@ describe("reusable review workflow", () => {
       "If no matching runner is online, GitHub queues the job until one comes online.",
     );
   });
+
+  it("lets callers post as a GitHub App or PAT through an optional token secret", () => {
+    // Declared as an optional workflow_call secret so the posting identity can be overridden.
+    expect(reviewWorkflow).toMatch(
+      /ROBIN_TOKEN:\n\s+description: .+\n\s+required: false/,
+    );
+    // Falls back to the automatic token when the secret is not provided.
+    expect(reviewWorkflow).toContain(
+      "github-token: ${{ secrets.ROBIN_TOKEN || github.token }}",
+    );
+  });
 });

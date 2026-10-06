@@ -209,6 +209,38 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
+## Posting as a GitHub App
+
+By default Robin comments as `github-actions[bot]`. To post as a GitHub App instead, mint an
+installation token in a separate job and pass it as the optional `ROBIN_TOKEN` secret:
+
+```yaml
+jobs:
+  token:
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.app-token.outputs.token }}
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.ROBIN_APP_ID }}
+          private-key: ${{ secrets.ROBIN_APP_PRIVATE_KEY }}
+
+  review:
+    needs: token
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    secrets:
+      ROBIN_TOKEN: ${{ needs.token.outputs.token }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+The app needs **Contents: read**, **Pull requests: write**, and **Actions: read**. Omit
+`ROBIN_TOKEN` to keep the default `github-actions[bot]` identity. Details:
+[docs/ADVANCED.md](docs/ADVANCED.md#post-as-a-github-app-custom-token).
+
 ## Using it day to day
 
 | When | What happens |

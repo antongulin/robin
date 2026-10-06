@@ -113,7 +113,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `github-token` | `${{ github.token }}` | Token for PR API and comments (direct action only; reusable workflow uses `github.token`) |
+| `github-token` | `${{ github.token }}` | Token for PR API and comments. Direct action input; on the reusable workflow pass the optional `ROBIN_TOKEN` secret instead (see [Post as a GitHub App](#post-as-a-github-app-custom-token)) |
 | `llm-api-key` / `LLM_API_KEY` | `ollama` | Provider API key |
 | `llm-base-url` / `LLM_BASE_URL` | — | OpenAI-compatible base URL (required) |
 | `model` / `LLM_MODEL` | — | Model name (required) |
@@ -418,6 +418,44 @@ for a value you configured.
 Auth, rate-limit, server, timeout, and unrelated validation errors do not trigger this
 fallback. The retry omits the optional reasoning override; it does not guess a different
 provider-specific effort value.
+
+## Post as a GitHub App (custom token)
+
+By default Robin posts with the workflow's `GITHUB_TOKEN`, so reviews and comments are
+authored by `github-actions[bot]`. To post as a GitHub App (or any other identity), mint an
+installation token and pass it to the reusable workflow as the optional `ROBIN_TOKEN`
+secret. When the secret is omitted, Robin falls back to `github.token` and nothing changes.
+
+A job that calls a reusable workflow cannot run steps, so mint the token in a separate job
+and pass its output:
+
+```yaml
+jobs:
+  token:
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.app-token.outputs.token }}
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.ROBIN_APP_ID }}
+          private-key: ${{ secrets.ROBIN_APP_PRIVATE_KEY }}
+
+  review:
+    needs: token
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    secrets:
+      ROBIN_TOKEN: ${{ needs.token.outputs.token }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+The app needs **Contents: read**, **Pull requests: write**, and **Actions: read** (Robin
+reads recent runs to detect a superseded review). A fine-grained PAT with the same
+permissions works too. The token is used for every PR API call, so the review, the status
+comment, and the inline comments all appear as that identity.
 
 ## Review flow
 
