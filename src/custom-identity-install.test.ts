@@ -65,4 +65,17 @@ describe.each(installers)("%s custom identity preservation", (_name, command, sc
     expect(fs.readFileSync(target, "utf8")).toBe(workflow);
     expect(fs.readdirSync(path.join(dir, ".github/workflows"))).toEqual(["app-review.yml"]);
   });
+
+  it.each([['"', "robin.yml"], ["'", "custom.yml"]])("preserves quoted uses values (%s)", (quote, filename) => {
+    const workflow = [
+      "name: Quoted identity", "on: [pull_request]", "jobs:", "  review:",
+      `    uses: ${quote}antongulin/robin/.github/workflows/review.yml@v2${quote}`,
+      "    secrets:", "      ROBIN_TOKEN: ${{ secrets.REVIEW_PAT }}", "",
+    ].join("\n");
+    const target = path.join(dir, ".github/workflows", filename);
+    fs.writeFileSync(target, workflow);
+    expect(run()).toContain("custom identity");
+    expect(fs.readFileSync(target, "utf8")).toBe(workflow);
+    expect(fs.readdirSync(path.join(dir, ".github/workflows"))).toEqual([filename]);
+  });
 });

@@ -69,7 +69,7 @@ scan_robin_workflows
 CUSTOM_IDENTITY=0
 if [ -d "$WORKFLOW_DIR" ]; then
   while IFS= read -r candidate; do
-    if grep -Eiq '^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/robin(/\.github/workflows/review\.ya?ml)?@' "$candidate" \
+    if grep -Eiq 'antongulin/robin(/\.github/workflows/review\.ya?ml)?@' "$candidate" \
       && { tr '\r\n' '  ' < "$candidate" | LC_ALL=C grep -Eq "(^|[^[:alnum:]_])(ROBIN_TOKEN|github-token)[\"']?[[:space:]]*:|(^|[^[:alnum:]_])secrets[\"']?[[:space:]]*:[[:space:]]*[\"']?inherit([^[:alnum:]_]|$)|uses:[[:space:]]*actions/create-github-app-token@"; }; then
       CUSTOM_IDENTITY=1
     fi

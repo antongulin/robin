@@ -67,9 +67,9 @@ const robinWorkflows = workflowFiles.filter((candidate) =>
 
 // Keep the whole workflow: custom identity can depend on other steps/jobs. Rebuilding
 // just its secrets block would erase that wiring. Conservative detection is intentional.
-const customIdentityWorkflows = robinWorkflows.filter((candidate) => {
+const customIdentityWorkflows = workflowFiles.filter((candidate) => {
   const source = fs.readFileSync(candidate, "utf8");
-  return /^[ \t]*(?:-[ \t]*)?uses:\s*antongulin\/robin(?:\/\.github\/workflows\/review\.ya?ml)?@/im.test(source)
+  return /antongulin\/robin(?:\/\.github\/workflows\/review\.ya?ml)?@/i.test(source)
     && (/\b(?:ROBIN_TOKEN|github-token)["']?\s*:/.test(source)
       || /\bsecrets["']?\s*:\s*["']?inherit\b/.test(source)
       || /uses:\s*actions\/create-github-app-token@/.test(source));
