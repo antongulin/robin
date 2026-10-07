@@ -64,6 +64,18 @@ scan_robin_workflows() {
 }
 scan_robin_workflows
 
+# Custom identity can depend on steps, jobs and inherited secrets. Preserve the whole
+# workflow set rather than rebuilding a partial configuration or adding a duplicate.
+CUSTOM_IDENTITY=0
+if [ -d "$WORKFLOW_DIR" ]; then
+  while IFS= read -r candidate; do
+    if grep -Eiq '^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/robin(/\.github/workflows/review\.ya?ml)?@' "$candidate" \
+      && { grep -Eq "(ROBIN_TOKEN|github-token)[\"']?[[:space:]]*:|secrets[\"']?[[:space:]]*:[[:space:]]*[\"']?inherit|uses:[[:space:]]*actions/create-github-app-token@" "$candidate"; }; then
+      CUSTOM_IDENTITY=1
+    fi
+  done < <(find "$WORKFLOW_DIR" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print)
+fi
+
 # Preserve an existing modern Robin ref unless ROBIN_REF explicitly overrides it.
 if [ -z "${ROBIN_REF+x}" ]; then
   if [ "$ROBIN_WF_COUNT" -gt 1 ]; then
@@ -214,6 +226,9 @@ if is_robin_source_repository; then
   if [ -f "$WORKFLOW_PATH" ] && is_robin_workflow "$WORKFLOW_PATH"; then
     warn "$WORKFLOW_PATH is a redundant consumer workflow; remove it instead of committing it here."
   fi
+elif [ "$CUSTOM_IDENTITY" -eq 1 ]; then
+  warn "Preserved custom identity workflows; no workflow files were changed or archived."
+  warn "Update workflow refs/settings manually, including any requested ROBIN_REF override."
 else
   if [ -f "$WORKFLOW_PATH" ] && ! is_robin_workflow "$WORKFLOW_PATH"; then
     die "$WORKFLOW_PATH exists but is not a Robin workflow. Move or rename it, then run again."
@@ -271,6 +286,8 @@ cat <<EOF
 Robin's source repository already reviews itself through Self-Test.
 The global companion skill was installed or updated; no consumer workflow is needed here.
 EOF
+elif [ "$CUSTOM_IDENTITY" -eq 1 ]; then
+  info "Keep your existing token setup. Docs: https://github.com/antongulin/robin/blob/main/docs/ADVANCED.md#custom-review-identity"
 else
 cat <<EOF
 

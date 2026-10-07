@@ -65,6 +65,16 @@ const robinWorkflows = workflowFiles.filter((candidate) =>
   robinReference.test(fs.readFileSync(candidate, "utf8"))
 );
 
+// Keep the whole workflow: custom identity can depend on other steps/jobs. Rebuilding
+// just its secrets block would erase that wiring. Conservative detection is intentional.
+const customIdentityWorkflows = robinWorkflows.filter((candidate) => {
+  const source = fs.readFileSync(candidate, "utf8");
+  return /^[ \t]*(?:-[ \t]*)?uses:\s*antongulin\/robin(?:\/\.github\/workflows\/review\.ya?ml)?@/im.test(source)
+    && (/\b(?:ROBIN_TOKEN|github-token)["']?\s*:/.test(source)
+      || /\bsecrets["']?\s*:\s*["']?inherit\b/.test(source)
+      || /uses:\s*actions\/create-github-app-token@/.test(source));
+});
+
 let selectedRef = ref;
 if (!process.env.ROBIN_REF) {
   if (!fs.existsSync(workflowPath) && robinWorkflows.length > 1) {
@@ -129,6 +139,10 @@ if (isRobinSourceRepository) {
   if (fs.existsSync(workflowPath) && robinReference.test(fs.readFileSync(workflowPath, "utf8"))) {
     warn(`${relative(workflowPath)} is a redundant consumer workflow; remove it instead of committing it here.`);
   }
+} else if (customIdentityWorkflows.length > 0) {
+  warn("Preserved custom identity workflows; no workflow files were changed or archived.");
+  for (const file of customIdentityWorkflows) info(relative(file));
+  warn("Update workflow refs/settings manually, including any requested ROBIN_REF override.");
 } else {
   if (fs.existsSync(workflowPath) && !robinReference.test(fs.readFileSync(workflowPath, "utf8"))) {
     die(`${relative(workflowPath)} exists but is not a Robin workflow. Move or rename it, then run again.`);
@@ -175,6 +189,8 @@ if (isRobinSourceRepository) {
   Robin's source repository already reviews itself through Self-Test.
   The global companion skill was installed or updated; no consumer workflow is needed here.
 `);
+} else if (customIdentityWorkflows.length > 0) {
+  console.log("Keep your existing token setup. Docs: https://github.com/antongulin/robin/blob/main/docs/ADVANCED.md#custom-review-identity");
 } else {
   console.log(`
   1. Add three repository secrets (Settings → Secrets and variables → Actions):

@@ -113,7 +113,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `github-token` | `${{ github.token }}` | Token for PR API and comments (direct action only; reusable workflow uses `github.token`) |
+| `github-token` / `ROBIN_TOKEN` | `${{ github.token }}` | Token for PR API and comments. Direct action input / optional reusable-workflow secret. See [Custom review identity](#custom-review-identity) |
 | `llm-api-key` / `LLM_API_KEY` | `ollama` | Provider API key |
 | `llm-base-url` / `LLM_BASE_URL` | — | OpenAI-compatible base URL (required) |
 | `model` / `LLM_MODEL` | — | Model name (required) |
@@ -418,6 +418,112 @@ for a value you configured.
 Auth, rate-limit, server, timeout, and unrelated validation errors do not trigger this
 fallback. The retry omits the optional reasoning override; it does not guess a different
 provider-specific effort value.
+
+## Custom review identity
+
+This is optional. With no `ROBIN_TOKEN` mapping, existing reusable-workflow callers
+keep `github.token` and the `github-actions[bot]` identity. An empty secret also uses
+that default. A nonempty but invalid or expired token causes an API error; Robin does
+not switch identities after an authentication failure. No new secret is required for
+the default setup, and the installers do not enable custom identity for you.
+
+### GitHub App: create and use the token in one job
+
+Install your GitHub App on the repository with **Contents: read**, **Pull requests:
+write**, and **Actions: read**. Store its ID as the `ROBIN_APP_ID` repository variable
+and its private key as the `ROBIN_APP_PRIVATE_KEY` repository secret. Keep your three
+existing LLM secrets. Use the direct action so token creation and the review share
+one job:
+
+```yaml
+name: Robin
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+       (startsWith(github.event.comment.body, '/robin') ||
+        startsWith(github.event.comment.body, '/review') ||
+        startsWith(github.event.comment.body, '/summary') ||
+        startsWith(github.event.comment.body, '/help')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: robin-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.ROBIN_APP_ID }}
+          private-key: ${{ secrets.ROBIN_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+          permission-actions: read
+      - uses: antongulin/robin@v2
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          llm-base-url: ${{ secrets.LLM_BASE_URL }}
+          model: ${{ secrets.LLM_MODEL }}
+```
+
+The token stays in the job and the token action revokes it during cleanup. Do not pass
+it through `needs.<job>.outputs`: GitHub omits secret-containing job outputs, and the
+token action revokes tokens when their creation job ends. See the
+[token action documentation](https://github.com/actions/create-github-app-token/tree/v2#how-it-works)
+and [GitHub job-output rules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idoutputs).
+
+GitHub withholds repository secrets from fork PR workflows. This setup does not change
+that rule. For a fork PR, use the existing maintainer `/robin` command path after
+inspection; do not switch to `pull_request_target`.
+
+### Reusable workflow: supply a token secret
+
+Store a fine-grained PAT with the same repository permissions as `ROBIN_TOKEN`, then
+add one mapping to your existing caller. Keep its current inputs and triggers:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    secrets:
+      ROBIN_TOKEN: ${{ secrets.ROBIN_TOKEN }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+Use a workflow revision that declares `ROBIN_TOKEN`; older pinned releases reject
+unknown secrets. Passing `secrets: inherit` also makes a repository's `ROBIN_TOKEN`
+available to this workflow. Remove the explicit mapping (or the inherited secret)
+to return to the default identity.
+
+A PAT posts as its owner. GitHub disallows approving or requesting changes on your
+own PR. Robin also only dismisses stale blocking reviews from bot accounts, so a
+PAT-authored blocking review may need manual dismissal after a clean rerun. Prefer
+a GitHub App for automated reviews; use `request-changes: false` for PAT advisor mode.
+Changing identity does not change the LLM provider, review triggers, or command permissions.
+
+### Rerunning an installer
+
+Both installers preserve the workflow files when a modern Robin workflow contains
+`ROBIN_TOKEN`, an explicit `github-token`, an App-token step, or `secrets: inherit`.
+They skip workflow regeneration and archiving, including `ROBIN_REF` overrides, so
+token steps, secret aliases, triggers, and job dependencies survive. The companion
+skill update still runs unless `ROBIN_SKILL=0`. Update refs and settings in these
+workflows yourself. Default installations keep the existing generation and migration
+behavior.
 
 ## Review flow
 

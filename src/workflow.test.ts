@@ -103,6 +103,16 @@ function workflowCallInputBlock(source: string, name: string): string | undefine
 }
 
 describe("reusable review workflow", () => {
+  it("makes custom identity opt-in while keeping the starter workflow unchanged", () => {
+    expect(reviewWorkflow).toMatch(/ROBIN_TOKEN:\n\s+description: .+\n\s+required: false/);
+    expect(reviewWorkflow).toContain("github-token: ${{ secrets.ROBIN_TOKEN || github.token }}");
+    expect(robinTemplate).not.toContain("ROBIN_TOKEN");
+    expect(robinTemplate).not.toContain("create-github-app-token");
+  });
+  it("keeps the documented App example covered by workflow linting", () => {
+    const appExample = readFileSync(join(repoRoot, "testdata/consumer-workflows/github-app.yml"), "utf8");
+    expect(advancedDocs).toContain("```yaml\n" + appExample + "```");
+  });
   it.each([
     ["review.yml", reviewWorkflow],
     ["self-test.yml", selfTestWorkflow],
