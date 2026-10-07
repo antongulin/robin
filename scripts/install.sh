@@ -70,7 +70,7 @@ CUSTOM_IDENTITY=0
 if [ -d "$WORKFLOW_DIR" ]; then
   while IFS= read -r candidate; do
     if grep -Eiq '^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/robin(/\.github/workflows/review\.ya?ml)?@' "$candidate" \
-      && { grep -Eq "(ROBIN_TOKEN|github-token)[\"']?[[:space:]]*:|secrets[\"']?[[:space:]]*:[[:space:]]*[\"']?inherit|uses:[[:space:]]*actions/create-github-app-token@" "$candidate"; }; then
+      && { tr '\r\n' '  ' < "$candidate" | LC_ALL=C grep -Eq "(^|[^[:alnum:]_])(ROBIN_TOKEN|github-token)[\"']?[[:space:]]*:|(^|[^[:alnum:]_])secrets[\"']?[[:space:]]*:[[:space:]]*[\"']?inherit([^[:alnum:]_]|$)|uses:[[:space:]]*actions/create-github-app-token@"; }; then
       CUSTOM_IDENTITY=1
     fi
   done < <(find "$WORKFLOW_DIR" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print)

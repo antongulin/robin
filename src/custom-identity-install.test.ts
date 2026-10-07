@@ -30,6 +30,7 @@ describe.each(installers)("%s custom identity preservation", (_name, command, sc
     ["robin.yml", "    secrets:\n      'ROBIN_TOKEN': ${{ secrets.REVIEW_PAT }}"],
     ["robin.yml", "    secrets: { ROBIN_TOKEN: '${{ secrets.REVIEW_PAT }}' }"],
     ["robin.yml", "    secrets: 'inherit'"],
+    ["robin.yml", "    secrets:\n      inherit"],
   ])("keeps %s and its job dependencies intact on repeated installs", (filename, secrets) => {
     const workflow = [
       "name: Custom reviewer", "on: [pull_request]", "jobs:",
