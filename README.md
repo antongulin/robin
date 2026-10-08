@@ -209,6 +209,17 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
+## Optional: your own review identity
+
+Robin uses `github-actions[bot]` by default. Existing workflows and the three-secret
+setup need no changes. To post as your own GitHub App, create its token and run the
+direct Robin action in the same job. Reusable-workflow callers can opt in by passing
+the optional `ROBIN_TOKEN` secret, for example a fine-grained PAT.
+
+See [Custom review identity](docs/ADVANCED.md#custom-review-identity) for complete
+examples, permissions, PAT limitations, and installer behavior. Custom identity
+workflows stay intact when you rerun either installer; update their refs manually.
+
 ## Using it day to day
 
 | When | What happens |

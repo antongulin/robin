@@ -32,6 +32,11 @@ For a direct action step: `antongulin/robin@main` or `@v2`.
 | `LLM_BASE_URL` | OpenAI-compatible base URL |
 | `LLM_MODEL` | Model id |
 
+Optional custom identity: reusable-workflow callers may pass `ROBIN_TOKEN`. Omitted
+or empty keeps `github.token`; do not add it to default installer templates. GitHub App
+examples must create and use their token in the same job via the direct action, never
+pass a masked token through job outputs. See [Custom review identity](docs/ADVANCED.md#custom-review-identity).
+
 Free OpenRouter example:
 
 - `LLM_BASE_URL`: `https://openrouter.ai/api/v1`
@@ -122,6 +127,11 @@ Keep action inputs, reusable-workflow `workflow_call` inputs, the `with:` forwar
 `review.yml`, the installer template, and the docs in sync — `src/workflow.test.ts` guards
 that parity. Behavior changes that touch optional request parameters should not silently
 drop a user-configured control; surface the provider error instead.
+
+Installers preserve complete custom identity workflows (explicit token mappings, App
+token steps, or inherited secrets), including their refs, rather than reconstructing
+them. Keep the shell and npm preservation tests in sync. The website's `public/install.sh`
+is a shipped copy of `scripts/install.sh`; publish matching changes in `robin-website`.
 
 ## Maintainers: release-notes upkeep (automatic)
 
