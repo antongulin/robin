@@ -430,10 +430,14 @@ the default setup, and the installers do not enable custom identity for you.
 ### GitHub App: create and use the token in one job
 
 Install your GitHub App on the repository with **Contents: read**, **Pull requests:
-write**, and **Actions: read**. Store its ID as the `ROBIN_APP_ID` repository variable
-and its private key as the `ROBIN_APP_PRIVATE_KEY` repository secret. Keep your three
+write**, and **Actions: read**. Store its **Client ID** (shown in the App settings)
+as the `ROBIN_APP_CLIENT_ID` repository variable and its private key as the `ROBIN_APP_PRIVATE_KEY` repository secret. Keep your three
 existing LLM secrets. Use the direct action so token creation and the review share
-one job:
+one job.
+
+[GitHub recommends Client ID](https://github.blog/changelog/2024-05-01-github-apps-can-now-use-the-client-id-to-fetch-installation-tokens/) for new setups. The token action at `@v2` still names
+its input `app-id`; pass the Client ID as that input's value. Existing numeric App ID
+configurations remain supported and do not need to change.
 
 ```yaml
 name: Robin
@@ -465,7 +469,7 @@ jobs:
       - uses: actions/create-github-app-token@v2
         id: app-token
         with:
-          app-id: ${{ vars.ROBIN_APP_ID }}
+          app-id: ${{ vars.ROBIN_APP_CLIENT_ID }}
           private-key: ${{ secrets.ROBIN_APP_PRIVATE_KEY }}
           permission-contents: read
           permission-pull-requests: write
