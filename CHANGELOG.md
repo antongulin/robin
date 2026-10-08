@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.0](https://github.com/antongulin/robin/compare/v2.9.0...v2.10.0) (2026-10-08)
+
+
+### Features
+
+* add optional custom review identity without changing defaults ([a68fe4a](https://github.com/antongulin/robin/commit/a68fe4a80ef295fa870acd15a2ad81408afe529f))
+
 ## [2.9.0](https://github.com/antongulin/robin/compare/v2.8.0...v2.9.0) (2026-10-01)
 
 
