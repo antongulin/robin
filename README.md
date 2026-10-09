@@ -292,10 +292,11 @@ offer it as a separate next step. Source: [skills/robin/SKILL.md](skills/robin/S
 | **OpenRouter (free)** | `https://openrouter.ai/api/v1` | `openrouter/free` |
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o`, `gpt-5-mini`, `o4-mini` |
 | Anthropic (Claude) | `https://api.anthropic.com/v1` | `claude-sonnet-4-5` |
+| OpenCode Go | `https://opencode.ai/zen/go/v1` | a model ID supported by OpenCode Go |
 | Groq | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
 | Ollama (your server) | `http://YOUR_SERVER:11434/v1` | `llama3.2` |
 
-Anthropic works through its OpenAI-compatible endpoint with your regular Anthropic API key; pasting `https://api.anthropic.com` without `/v1` is fine too. OpenAI reasoning models (`o1`/`o3`/`o4-mini`, `gpt-5*`, `codex-*`) are sent without `temperature` and with `max_completion_tokens` automatically. See [Provider notes](docs/ADVANCED.md#provider-notes).
+Anthropic works through its OpenAI-compatible endpoint with your regular Anthropic API key; pasting `https://api.anthropic.com` without `/v1` is fine too. Keep your existing OpenCode Go `LLM_API_KEY` and provider settings; Robin supplies the required User-Agent and a stable session ID automatically when the official Go endpoint is configured. OpenAI reasoning models (`o1`/`o3`/`o4-mini`, `gpt-5*`, `codex-*`) are sent without `temperature` and with `max_completion_tokens` automatically. See [Provider notes](docs/ADVANCED.md#provider-notes).
 
 GitHub’s servers cannot reach `localhost` on your laptop. For Ollama at home, use a public server, a tunnel, or a [self-hosted runner](docs/ADVANCED.md#save-github-actions-minutes).
 

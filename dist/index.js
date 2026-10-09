@@ -1044,6 +1044,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LLMClient = exports.ToolsUnsupportedError = void 0;
+const node_crypto_1 = __nccwpck_require__(7598);
 const openai_1 = __nccwpck_require__(2583);
 const review_schema_1 = __nccwpck_require__(665);
 const config_1 = __nccwpck_require__(4008);
@@ -1095,11 +1096,15 @@ class LLMClient {
         }
         core.info(`Initializing LLM client: baseUrl=${normalizedBaseUrl}, provider=${this.provider}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}, temperature=${this.temperature}`);
         // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
+        const defaultHeaders = (0, llm_provider_1.isOpenCodeGoEndpoint)(normalizedBaseUrl)
+            ? { "x-opencode-session": (0, node_crypto_1.randomUUID)(), "user-agent": "robin-review/2" }
+            : undefined;
         this.client = new openai_1.OpenAI({
             baseURL: normalizedBaseUrl,
             apiKey: apiKey || "ollama",
             maxRetries: 0,
             timeout: effectiveTimeoutMs,
+            defaultHeaders,
         });
         if (this.routerModel) {
             core.info(`OpenRouter router model — ${config_1.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS / 1000}s first-chunk stall detect, ${effectiveTimeoutMs / 1000}s stream cap, provider fallbacks.`);
@@ -1507,6 +1512,7 @@ exports.LLMClient = LLMClient;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.detectLlmProvider = detectLlmProvider;
 exports.normalizeLlmBaseUrl = normalizeLlmBaseUrl;
+exports.isOpenCodeGoEndpoint = isOpenCodeGoEndpoint;
 exports.isOpenAIReasoningModel = isOpenAIReasoningModel;
 const OPENAI_CHAT_SUFFIX = /\/chat\/completions\/?$/i;
 const ANTHROPIC_MESSAGES_SUFFIX = /\/messages\/?$/i;
@@ -1560,6 +1566,15 @@ function normalizeLlmBaseUrl(baseUrl) {
     url.search = "";
     url.hash = "";
     return url.toString().replace(/\/+$/, "");
+}
+/** True only for the official OpenCode Go API endpoint after normalizing pasted suffixes. */
+function isOpenCodeGoEndpoint(baseUrl) {
+    const url = parseUrl(normalizeLlmBaseUrl(baseUrl));
+    return Boolean(url &&
+        url.protocol === "https:" &&
+        url.hostname.toLowerCase() === "opencode.ai" &&
+        !url.port &&
+        url.pathname === "/zen/go/v1");
 }
 /**
  * OpenAI reasoning families (o-series, GPT-5, codex) reject sampling controls such as
