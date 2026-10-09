@@ -515,6 +515,36 @@ describe("findUnsupportedRequestParam", () => {
     ).toBe("response_format");
   });
 
+  it("recognizes the OpenCode response_format type-unavailable validation message", () => {
+    const message =
+      "400 Upstream request failed: [invalid_request_error] This response_format type is unavailable now (request_id: test-request)";
+    expect(findUnsupportedRequestParam({ status: 400, message }, sent)).toBe("response_format");
+    for (const status of [401, 500]) {
+      expect(findUnsupportedRequestParam({ status, message }, sent)).toBeUndefined();
+    }
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message: "This response_format type could not be loaded" },
+        sent
+      )
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam(
+        {
+          status: 400,
+          message: "response_format uses a supported type; the upstream service is unavailable",
+        },
+        sent
+      )
+    ).toBeUndefined();
+    expect(
+      findUnsupportedRequestParam(
+        { status: 400, message },
+        ["temperature", "max_tokens"]
+      )
+    ).toBeUndefined();
+  });
+
   it("only reports parameters that were actually sent", () => {
     expect(
       findUnsupportedRequestParam(
