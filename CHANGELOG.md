@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.2](https://github.com/antongulin/robin/compare/v2.10.1...v2.10.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* recognize unavailable OpenCode response format ([#99](https://github.com/antongulin/robin/issues/99)) ([5d5abcb](https://github.com/antongulin/robin/commit/5d5abcb4ff5e1288511a17237e0474cdee5b553d))
+
 ## [2.10.1](https://github.com/antongulin/robin/compare/v2.10.0...v2.10.1) (2026-10-09)
 
 
