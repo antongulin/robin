@@ -6,6 +6,7 @@ jest.mock("@actions/core", () => ({
 
 import * as http from "http";
 import { AddressInfo } from "net";
+import { IncomingHttpHeaders } from "http";
 import { LLMClient } from "./llm-client";
 
 /**
@@ -22,18 +23,23 @@ type Body = Record<string, unknown>;
 interface Gateway {
   baseUrl: string;
   requests: Body[];
+  headers: IncomingHttpHeaders[];
   close: () => Promise<void>;
 }
 
-function startGateway(handler: (body: Body) => { status: number; body: unknown }): Promise<Gateway> {
+function startGateway(
+  handler: (body: Body, headers: IncomingHttpHeaders) => { status: number; body: unknown },
+): Promise<Gateway> {
   const requests: Body[] = [];
+  const headers: IncomingHttpHeaders[] = [];
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk) => chunks.push(chunk as Buffer));
     req.on("end", () => {
       const parsed = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
       requests.push(parsed);
-      const { status, body } = handler(parsed);
+      headers.push(req.headers);
+      const { status, body } = handler(parsed, req.headers);
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(body));
     });
@@ -45,6 +51,7 @@ function startGateway(handler: (body: Body) => { status: number; body: unknown }
       resolve({
         baseUrl: `http://127.0.0.1:${port}/v1`,
         requests,
+        headers,
         close: () =>
           new Promise<void>((done) => {
             server.close(() => done());
@@ -89,6 +96,26 @@ function makeClient(baseUrl: string, model: string, maxOutputTokens: number): LL
 
 const hasAnyTokenField = (body: Body) =>
   body.max_tokens !== undefined || body.max_completion_tokens !== undefined;
+
+function redirectSdkClientToGateway(client: LLMClient, gateway: Gateway): () => void {
+  type SdkTransport = (input: string | URL | { url: string }, init?: RequestInit) => Promise<Response>;
+  const sdkClient = (client as unknown as { client: { fetch: SdkTransport } }).client;
+  const originalFetch = sdkClient.fetch;
+  const localAgent = new http.Agent();
+  sdkClient.fetch = (input, init) => {
+    const source = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    if (source.origin !== "https://opencode.ai") {
+      throw new Error(`Unexpected SDK test transport origin: ${source.origin}`);
+    }
+    const target = new URL(`${source.pathname}${source.search}`, gateway.baseUrl);
+    const localInit = Object.assign({}, init, { agent: localAgent }) as RequestInit;
+    return originalFetch(target.href, localInit);
+  };
+  return () => {
+    sdkClient.fetch = originalFetch;
+    localAgent.destroy();
+  };
+}
 
 describe("max-output-tokens compatibility (real local endpoint)", () => {
   it("keeps the cap by switching to max_tokens on a max_tokens-only gateway (reasoning-family name)", async () => {
@@ -254,6 +281,94 @@ describe("max-output-tokens compatibility (real local endpoint)", () => {
       expect(gateway.requests[0]).not.toHaveProperty("max_tokens");
     } finally {
       await gateway.close();
+    }
+  });
+});
+
+describe("OpenCode Go session headers (real OpenAI SDK and local endpoint)", () => {
+  it("keeps one session ID across calls, tool turns, and a parameter fallback retry", async () => {
+    const gateway = await startGateway((body, headers) => {
+      if (!headers["x-opencode-session"]) {
+        return {
+          status: 400,
+          body: {
+            error: {
+              message: "Request is missing x-opencode-session",
+              type: "invalid_request_error",
+            },
+          },
+        };
+      }
+      return body.max_completion_tokens !== undefined
+        ? unsupportedField("max_completion_tokens", "Use 'max_tokens' instead.")
+        : completion("gpt-5");
+    });
+    try {
+      const client = makeClient(
+        "https://opencode.ai/zen/go/v1/chat/completions/",
+        "gpt-5",
+        1234,
+      );
+      const restoreFetch = redirectSdkClientToGateway(client, gateway);
+
+      try {
+        await client.chatCompletion("system", "first");
+        await client.chatCompletion("system", "second");
+        await client.chatWithTools(
+          [
+            { role: "system", content: "system" },
+            { role: "user", content: "user" },
+          ],
+          [{ type: "function", function: { name: "read_file", parameters: { type: "object" } } }],
+        );
+      } finally {
+        restoreFetch();
+      }
+
+      expect(gateway.requests).toHaveLength(4);
+      expect(gateway.requests[0]).toHaveProperty("max_completion_tokens", 1234);
+      expect(gateway.requests[1]).toHaveProperty("max_tokens", 1234);
+      const sessionIds = gateway.headers.map((headers) => headers["x-opencode-session"]);
+      expect(sessionIds[0]).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      expect(new Set(sessionIds).size).toBe(1);
+      expect(gateway.headers.every((headers) => headers["user-agent"] === "robin-review/2")).toBe(
+        true,
+      );
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("uses a distinct session for another Go client and leaves other providers' headers unchanged", async () => {
+    const gateway = await startGateway(() => completion("gpt-4o"));
+    try {
+      const first = makeClient("https://opencode.ai/zen/go/v1", "gpt-4o", 1234);
+      const second = makeClient("https://opencode.ai/zen/go/v1", "gpt-4o", 1234);
+      const restoreFirst = redirectSdkClientToGateway(first, gateway);
+      const restoreSecond = redirectSdkClientToGateway(second, gateway);
+      try {
+        await first.chatCompletion("system", "first client");
+        await second.chatCompletion("system", "second client");
+      } finally {
+        restoreFirst();
+        restoreSecond();
+      }
+      const goSessionIds = gateway.headers.map((headers) => headers["x-opencode-session"]);
+      expect(goSessionIds.every((value) => typeof value === "string")).toBe(true);
+      expect(new Set(goSessionIds).size).toBe(2);
+    } finally {
+      await gateway.close();
+    }
+
+    const otherGateway = await startGateway(() => completion("gpt-4o"));
+    try {
+      await makeClient(otherGateway.baseUrl, "gpt-4o", 1234).chatCompletion("system", "other");
+      expect(otherGateway.headers[0]["x-opencode-session"]).toBeUndefined();
+      expect(otherGateway.headers[0]["user-agent"]).not.toBe("robin-review/2");
+    } finally {
+      await otherGateway.close();
     }
   });
 });

@@ -1,4 +1,9 @@
-import { detectLlmProvider, isOpenAIReasoningModel, normalizeLlmBaseUrl } from "./llm-provider";
+import {
+  detectLlmProvider,
+  isOpenCodeGoEndpoint,
+  isOpenAIReasoningModel,
+  normalizeLlmBaseUrl,
+} from "./llm-provider";
 
 describe("detectLlmProvider", () => {
   it("recognizes the hosted providers by hostname", () => {
@@ -51,6 +56,32 @@ describe("normalizeLlmBaseUrl", () => {
 
   it("returns unparseable input unchanged so the SDK reports the real error", () => {
     expect(normalizeLlmBaseUrl("not a url")).toBe("not a url");
+  });
+});
+
+describe("isOpenCodeGoEndpoint", () => {
+  it.each([
+    "https://opencode.ai/zen/go/v1",
+    "https://opencode.ai/zen/go/v1/",
+    "https://opencode.ai/zen/go/v1/chat/completions",
+    "https://opencode.ai/zen/go/v1/chat/completions/",
+  ])("recognizes the official Go endpoint after URL normalization: %s", (url) => {
+    expect(isOpenCodeGoEndpoint(url)).toBe(true);
+  });
+
+  it.each([
+    "https://api.openai.com/v1",
+    "https://api.anthropic.com/v1",
+    "https://openrouter.ai/api/v1",
+    "https://opencode.ai/zen/v1",
+    "https://opencode.ai.evil.example/zen/go/v1",
+    "https://evil.example/zen/go/v1",
+    "http://opencode.ai/zen/go/v1",
+    "https://subdomain.opencode.ai/zen/go/v1",
+    "https://opencode.ai:444/zen/go/v1",
+    "not a url",
+  ])("does not recognize a different or malformed endpoint: %s", (url) => {
+    expect(isOpenCodeGoEndpoint(url)).toBe(false);
   });
 });
 

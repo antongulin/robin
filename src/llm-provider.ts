@@ -59,6 +59,18 @@ export function normalizeLlmBaseUrl(baseUrl: string): string {
   return url.toString().replace(/\/+$/, "");
 }
 
+/** True only for the official OpenCode Go API endpoint after normalizing pasted suffixes. */
+export function isOpenCodeGoEndpoint(baseUrl: string): boolean {
+  const url = parseUrl(normalizeLlmBaseUrl(baseUrl));
+  return Boolean(
+    url &&
+      url.protocol === "https:" &&
+      url.hostname.toLowerCase() === "opencode.ai" &&
+      !url.port &&
+      url.pathname === "/zen/go/v1",
+  );
+}
+
 /**
  * OpenAI reasoning families (o-series, GPT-5, codex) reject sampling controls such as
  * `temperature` and only accept `max_completion_tokens`. Detect them up front so the

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { OpenAI } from "openai";
 import { REVIEW_JSON_SCHEMA } from "./prompts/review-schema";
 import {
@@ -25,6 +26,7 @@ import {
 } from "./llm-retry";
 import {
   detectLlmProvider,
+  isOpenCodeGoEndpoint,
   isOpenAIReasoningModel,
   LlmProvider,
   normalizeLlmBaseUrl,
@@ -133,11 +135,15 @@ export class LLMClient {
     );
 
     // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
+    const defaultHeaders = isOpenCodeGoEndpoint(normalizedBaseUrl)
+      ? { "x-opencode-session": randomUUID(), "user-agent": "robin-review/2" }
+      : undefined;
     this.client = new OpenAI({
       baseURL: normalizedBaseUrl,
       apiKey: apiKey || "ollama",
       maxRetries: 0,
       timeout: effectiveTimeoutMs,
+      defaultHeaders,
     });
 
     if (this.routerModel) {
