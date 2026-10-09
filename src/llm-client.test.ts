@@ -263,6 +263,35 @@ describe("LLMClient unsupported parameter fallback", () => {
     expect(create.mock.calls[2][0]).not.toHaveProperty("response_format");
   });
 
+  it("falls back for OpenCode's response_format type-unavailable message and keeps omission", async () => {
+    const client = makeClient("https://example.test/v1", "model");
+    const create = stubOpenAI(client);
+    const rejection = () =>
+      Object.assign(
+        new Error(
+          "400 Upstream request failed: [invalid_request_error] This response_format type is unavailable now (request_id: test-request)",
+        ),
+        { status: 400 },
+      );
+    create
+      .mockRejectedValueOnce(rejection())
+      .mockRejectedValueOnce(rejection())
+      .mockResolvedValueOnce(completionResponse("review text"))
+      .mockResolvedValueOnce(completionResponse("second review"));
+
+    await client.chatCompletion("system", "user", true);
+    await client.chatCompletion("system", "another user", true);
+
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(create.mock.calls[0][0].response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: { name: "robin_review", strict: true },
+    });
+    expect(create.mock.calls[1][0].response_format).toEqual({ type: "json_object" });
+    expect(create.mock.calls[2][0]).not.toHaveProperty("response_format");
+    expect(create.mock.calls[3][0]).not.toHaveProperty("response_format");
+  });
+
   it("drops a rejected schema straight away on Anthropic, which has no plain JSON mode", async () => {
     const client = makeClient("https://api.anthropic.com/v1", "claude-opus-5-5");
     const create = stubOpenAI(client);

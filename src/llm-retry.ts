@@ -261,6 +261,15 @@ export function findUnsupportedRequestParam(
     }
   }
 
+  // OpenCode wraps this validation error in a generic invalid_request_error message, so it misses
+  // the general rejection cues above. Keep this exception specific to a sent response_format type.
+  if (
+    sentParams.includes("response_format") &&
+    /\bresponse_format\b\s*["'`]?\s*type\s+(?:is\s+)?unavailable\b/i.test(message)
+  ) {
+    return "response_format";
+  }
+
   if (!PARAM_REJECTION_CUES.test(message)) return undefined;
   const named = sentParams.find((param) =>
     new RegExp(`(?:^|[^\\w])${param}(?:$|[^\\w])`, "i").test(message)
