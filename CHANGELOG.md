@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.1](https://github.com/antongulin/robin/compare/v2.10.0...v2.10.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* send stable session headers to OpenCode Go ([f88e302](https://github.com/antongulin/robin/commit/f88e30278de1c28cd5b24ed38ff63e4b069da980))
+* send stable session headers to OpenCode Go ([f88e302](https://github.com/antongulin/robin/commit/f88e30278de1c28cd5b24ed38ff63e4b069da980))
+
 ## [2.10.0](https://github.com/antongulin/robin/compare/v2.9.0...v2.10.0) (2026-10-08)
 
 
