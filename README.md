@@ -1,6 +1,8 @@
-# Robin
+<p align="center">
+  <a href="https://www.robinreview.dev/"><img src="https://www.robinreview.dev/brand/repository.png" width="100%" alt="Robin Review — AI code reviews on your terms" /></a>
+</p>
 
-<img src="https://www.robinreview.dev/brand/mascot-320.webp" width="180" height="180" alt="Robin bird wearing a green Robin Hood hat, carrying a bow and arrows" />
+# Robin
 
 Free AI code reviews for every pull request. You bring an API key; Robin reviews show up like a teammate left comments.
 
