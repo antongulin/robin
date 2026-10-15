@@ -45,6 +45,8 @@ describe("StatusReporter", () => {
     clock = 134_000;
 
     const body = reporter.render();
+    expect(body).toContain(":bow_and_arrow: Robin");
+    expect(body).not.toMatch(/<img\b|!\[/);
     expect(body).toContain("Still working on this pull request · 2m 14s elapsed");
     expect(body).toContain("**Agent:** turn 3 of 40 · 7 tool calls · 1 compaction");
     expect(body).toContain("**Now:** Thinking about the next step (2m 14s)");

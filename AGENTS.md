@@ -103,6 +103,15 @@ user documentation; `skills/robin/` is the companion chat skill shipped for codi
 | `src/prompts/`, `src/review-parser.ts` | Review prompts, JSON schema, response parsing |
 | `action.yml`, `.github/workflows/review.yml` | Action inputs and reusable-workflow schema (forwarded 1:1) |
 | `docs/`, `README.md`, `llms.txt` | User-facing setup, behavior, and troubleshooting |
+| `docs/assets/brand/`, `src/brand.ts` | Compact artwork copies/provenance and decorative review/help mark |
+
+**Brand ownership.** The website owns artwork masters and deterministic exports at
+`https://www.robinreview.dev/brand/`. Core keeps exact lightweight copies and source
+credits in `docs/assets/brand/`; refresh them from the website build rather than adding
+an image generator here. Use the full bird for introductory artwork and the head for
+small marks. Review and summary bodies and help use at most one decorative mark;
+inline findings, progress comments and terminal output stay text-only. Preserve the
+exact `ROBIN_SIGNATURE` text and recognition logic independently of presentation.
 
 **Documentation ownership.** This root `AGENTS.md` is the documentation contract for the whole
 repository: the source, workflow, docs, and skill surfaces above share this single ownership

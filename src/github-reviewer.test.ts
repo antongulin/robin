@@ -1,6 +1,96 @@
 import { GitHubReviewer } from "./github-reviewer";
+import { StructuredReview } from "./review-parser";
 
 describe("GitHubReviewer", () => {
+  it.each([false, true])("publishes one decorative summary mark and preserves findings (inline fallback: %s)", async (fallback) => {
+    const findings: StructuredReview = {
+      summary: "Validate the incoming value before saving it.",
+      high: [],
+      medium: [{
+        severity: "medium", category: "correctness", file: "src/value.ts", line: 2,
+        description: "The value needs validation.", recommendation: "Validate before saving.",
+        suggestion: "const value = validate(input);",
+      }],
+      low: [{
+        severity: "low", category: "reliability", description: "Report failed saves.",
+        recommendation: "Handle the error.",
+      }],
+      suggestions: [], rawResponse: "",
+    };
+    const createReview = jest.fn().mockResolvedValue({ data: { id: 99 } });
+    if (fallback) createReview.mockRejectedValueOnce({
+      status: 422, response: { data: { errors: [{ field: "comments.line", code: "invalid" }] } },
+    });
+    const listFiles = jest.fn();
+    const octokit = {
+      paginate: jest.fn().mockImplementation(async (method) => method === listFiles ? [{
+        filename: "src/value.ts", patch: "@@ -1 +1,2 @@\n const input = read();\n+const value = input;",
+      }] : []),
+      rest: { pulls: { listFiles, listReviews: jest.fn(), createReview } },
+    };
+
+    await new GitHubReviewer(octokit as any).postReview("o", "r", 7, findings);
+
+    expect(createReview).toHaveBeenCalledTimes(fallback ? 2 : 1);
+    for (const [request] of createReview.mock.calls) {
+      expect(request).toMatchObject({ owner: "o", repo: "r", pull_number: 7, event: "COMMENT" });
+      expect(request.body.match(/<img\b/g)).toHaveLength(1);
+      expect(request.body).toMatch(/<img [^>]*width="24" height="24" alt=""/);
+      expect(request.body).toContain(":bow_and_arrow: Robin");
+      expect(request.body).toContain(findings.summary);
+      expect(request.body).toContain("**1 Medium**");
+      expect(request.body).toContain("**1 Low**");
+      expect(request.body).toContain("Report failed saves.");
+      expect(request.body).toContain("comment `/robin`");
+    }
+    const inline = createReview.mock.calls[0][0].comments;
+    expect(inline).toHaveLength(1);
+    expect(inline[0]).toMatchObject({ path: "src/value.ts", line: 2, side: "RIGHT" });
+    expect(inline[0].body).toContain("The value needs validation.");
+    expect(inline[0].body).toContain("```suggestion\nconst value = validate(input);\n```");
+    expect(inline[0].body).not.toMatch(/<img\b|!\[/);
+    expect(createReview.mock.calls[0][0].body).not.toContain("The value needs validation.");
+    if (fallback) {
+      const retry = createReview.mock.calls[1][0];
+      expect(retry).not.toHaveProperty("comments");
+      expect(retry.body).toContain("The value needs validation.");
+    }
+  });
+
+  it("supersedes legacy and decorated Robin reviews through the publishing path, including custom bots", async () => {
+    let decoratedBody = "";
+    const legacyBody = "## :bow_and_arrow: Robin\n\nPrevious findings";
+    const createReview = jest.fn().mockImplementation(async ({ body }) => {
+      decoratedBody = body;
+      return { data: { id: 99 } };
+    });
+    const dismissReview = jest.fn().mockResolvedValue({});
+    const listFiles = jest.fn();
+    const bot = { type: "Bot", login: "github-actions[bot]" };
+    const customBot = { type: "Bot", login: "custom-reviewer[bot]" };
+    const octokit = {
+      paginate: jest.fn().mockImplementation(async (method) => method === listFiles ? [] : [
+        { id: 10, state: "CHANGES_REQUESTED", body: legacyBody, user: bot },
+        { id: 11, state: "CHANGES_REQUESTED", body: decoratedBody, user: customBot },
+        { id: 12, state: "COMMENTED", body: decoratedBody, user: bot },
+        { id: 13, state: "CHANGES_REQUESTED", body: decoratedBody, user: { type: "User" } },
+        { id: 14, state: "CHANGES_REQUESTED", body: "Unrelated review", user: bot },
+        { id: 99, state: "CHANGES_REQUESTED", body: decoratedBody, user: bot },
+      ]),
+      rest: { pulls: { listFiles, listReviews: jest.fn(), createReview, dismissReview } },
+    };
+
+    await new GitHubReviewer(octokit as any).postReview("o", "r", 7, {
+      summary: "Looks good.", high: [], medium: [], low: [], suggestions: [], rawResponse: "",
+    });
+
+    expect(createReview).toHaveBeenCalledTimes(1);
+    expect(dismissReview.mock.calls.map(([request]) => request.review_id)).toEqual([10, 11]);
+    for (const [request] of dismissReview.mock.calls) {
+      expect(request).toMatchObject({ owner: "o", repo: "r", pull_number: 7 });
+    }
+  });
+
   it("resolves review event from high findings and request-changes mode", () => {
     expect(GitHubReviewer.resolveReviewEvent(true, true)).toBe("REQUEST_CHANGES");
     expect(GitHubReviewer.resolveReviewEvent(true, false)).toBe("COMMENT");
