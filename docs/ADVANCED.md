@@ -632,3 +632,49 @@ No daily quota from this action. Real limits:
 - Provider presets
 - Large PR chunking by file
 - GitHub App install flow
+
+
+## Large pull requests: acquisition and coverage
+
+Robin first requests the complete diff from GitHub's pull request API. If GitHub
+returns its structured `406` / `PullRequest.diff: too_large` rejection, Robin uses
+native Git to acquire the patch. Authentication, rate-limit, network, and other API
+failures remain failures; they do not activate this fallback.
+
+The fallback requires Git on the runner, HTTPS access to the repository, and the
+same explicit `github-token` used by the action with permission to fetch its Git
+objects. This also applies to self-hosted runners. GitHub Enterprise uses the
+runner's `GITHUB_SERVER_URL`. Robin does not retry with an anonymous or alternate
+identity. Fetch authentication is supplied through a private child environment;
+no token is placed in command arguments, repository URLs, or saved Git config.
+Inherited Git configuration, credentials helpers, tracing, hooks, external diff
+commands, and text conversion helpers are disabled. The temporary repository is
+bare, has a private directory, and is removed after success or failure. No PR code
+is checked out or executed.
+
+Robin captures the PR base SHA, head SHA, and changed-file count, fetches those
+objects with history, and compares their unique common merge base to the captured
+head. It verifies the object identities and NUL-delimited path count, then checks
+the PR metadata again before returning the patch. Renames count as one change.
+The patch includes full object IDs, binary patches, deletions, and mode changes.
+Missing history, ambiguous ancestry, changed metadata, invalid encoding, failed
+cleanup, or incomplete acquisition aborts the review. Each Git command has a
+120-second timeout and a 32 MiB output limit; exceeding either fails rather than
+returning a patch prefix. Git diagnostics are replaced with fixed error codes.
+
+Acquiring the complete patch does not raise the review's `max-diff-size` or
+`agent-max-diff-size`. Repository configuration is loaded from the PR base, so a
+configuration added only in the PR cannot enlarge that PR's review. Existing
+`skip-paths` and generated-file exclusions still apply, including lockfiles and
+`dist/`. Set a suitable base-branch cap and narrowly scoped exclusions when a
+large patch must reach the model. Account for line annotations, prompt overhead,
+and output reserve when checking the provider's context capacity. A changed-file
+list does not prove that all file contents reached the outgoing request.
+
+Generated lockfiles and rebuilt bundles need separate verification when filtered
+out; do not describe them as model-reviewed. Verify dependency pins and resolved
+versions with the package manager's reproducible install and CI. Rebuild committed
+`dist/index.js` from the reviewed source and compare the artifact. Binary patches
+preserve bytes, but do not establish semantic review of binary assets. Local Git
+and loopback-provider tests do not prove private GitHub fetch permissions or a
+live provider's acceptance of a particular large request.
