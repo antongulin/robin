@@ -9,7 +9,7 @@ import { GitUtils } from "./git-utils";
 
 const TOKEN = "synthetic-github-token-never-real";
 const limit = { status: 406, response: { data: { errors: [{ resource: "PullRequest", field: "diff", code: "too_large" }] } } };
-const realExecFile = childProcess.execFile;
+const realSpawn = childProcess.spawn;
 let fixture: string;
 let base: string;
 let head: string;
@@ -39,12 +39,14 @@ function api(files = 379) {
 // Intercept only the network boundary. Every object, merge-base and diff operation
 // is real Git; production receives no local transport override.
 function redirectFetch() {
-  return jest.spyOn(childProcess, "execFile").mockImplementation(((file: string, args: string[], options: any, callback: any) => {
+  return jest.spyOn(childProcess, "spawn").mockImplementation(((file: string, args: string[], options: any) => {
+    if (file !== "git") return realSpawn(file, args, options);
     commands.push({ args: [...args], env: { ...options.env } });
     const init = args.indexOf("init");
     if (init >= 0) temporary.push(args[args.length - 1]);
-    expect(options.timeout).toBe(120_000);
-    expect(options.maxBuffer).toBe(32 * 1024 * 1024);
+    expect(options.detached).toBe(true);
+    expect(options.shell).toBe(false);
+    expect(options.stdio).toEqual(["ignore", "pipe", "pipe"]);
     expect(args.join(" ")).not.toContain(TOKEN);
     expect(args.join(" ")).not.toContain(Buffer.from(`x-access-token:${TOKEN}`).toString("base64"));
     for (const key of ["GIT_EXTERNAL_DIFF", "GIT_TRACE", "GIT_TRACE_CURL", "GIT_CONFIG_PARAMETERS", "GIT_ALTERNATE_OBJECT_DIRECTORIES"]) {
@@ -54,13 +56,16 @@ function redirectFetch() {
     if (at >= 0) {
       const directory = args[at + 1];
       expect(statSync(directory).mode & 0o777).toBe(0o700);
-      expect(readFileSync(join(directory, "config"), "utf8")).not.toContain(TOKEN);
+      const config = readFileSync(join(directory, "config"), "utf8");
+      expect(config).not.toContain(TOKEN);
+      expect(config).not.toContain(Buffer.from(`x-access-token:${TOKEN}`).toString("base64"));
     }
     if (args.includes("fetch")) {
+      expect(args[args.indexOf("--") + 1]).toBe("https://github.com/fixture/repository.git");
       const rewritten = args.map(arg => arg === "https://github.com/fixture/repository.git" ? fixture : arg);
-      return realExecFile(file, ["-c", "protocol.file.allow=always", ...rewritten], options, callback);
+      return realSpawn(file, ["-c", "protocol.file.allow=always", ...rewritten], options);
     }
-    return realExecFile(file, args, options, callback);
+    return realSpawn(file, args, options);
   }) as any);
 }
 
@@ -183,23 +188,8 @@ test.each(["missing", "unrelated"])("A3/A4: real %s object/ancestry failure is s
   await expect(utils.getPullRequestDiff("fixture", "repository", 1)).rejects.toThrow(/^NATIVE_DIFF_COMMAND_FAILED$/);
 });
 
-test.each(["timeout", "output", "read"])("A4: %s child failure never returns partial output or diagnostic secrets", async kind => {
-  const spy = redirectFetch(); const redirect = spy.getMockImplementation()!;
-  spy.mockImplementation(((file: string, args: string[], options: any, callback: any) => {
-    if (args.includes("diff") && !args.includes("--name-status")) {
-      expect(options.timeout).toBe(120_000); expect(options.maxBuffer).toBe(32 * 1024 * 1024);
-      const error = Object.assign(new Error(TOKEN), { killed: kind === "timeout", code: kind === "output" ? "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" : "EIO" });
-      callback(error, Buffer.from("partial"), Buffer.from(TOKEN)); return {};
-    }
-    return (redirect as any)(file, args, options, callback);
-  }) as any);
-  const { utils } = api();
-  await expect(utils.getPullRequestDiff("fixture", "repository", 1)).rejects.toThrow(
-    kind === "output" ? /^NATIVE_DIFF_OUTPUT_LIMIT$/ : kind === "timeout" ? /^NATIVE_DIFF_CHILD_TERMINATED$/ : /^NATIVE_DIFF_COMMAND_FAILED$/);
-});
-
 test("A4: missing explicit token never starts Git or falls back to anonymous", async () => {
-  const { request, get } = api(); const spy = jest.spyOn(childProcess, "execFile");
+  const { request, get } = api(); const spy = jest.spyOn(childProcess, "spawn");
   const utils = new GitUtils({ request, rest: { pulls: { get } } } as unknown as Octokit);
   await expect(utils.getPullRequestDiff("fixture", "repository", 1)).rejects.toThrow("NATIVE_DIFF_INVALID_SNAPSHOT");
   expect(spy).not.toHaveBeenCalled();
@@ -217,11 +207,25 @@ test("A4: inherited Git helpers, tracing and config injection do not reach child
   }
 });
 
-test("A4: cleanup failure is explicit even after a valid patch", async () => {
+test("N7/A4: cleanup failure is explicit even after a valid real-Git patch", async () => {
   redirectFetch(); const { utils } = api();
   const realRm = fs.rm;
   const spy = jest.spyOn(fs, "rm").mockRejectedValueOnce(new Error(TOKEN));
   await expect(utils.getPullRequestDiff("fixture", "repository", 1)).rejects.toThrow(/^NATIVE_DIFF_CLEANUP_FAILED$/);
   spy.mockRestore();
   for (const directory of temporary) await realRm(directory, { recursive: true, force: true });
+});
+
+
+test("N9: ordinary API diff remains byte identical on unsupported native platform", async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+  try {
+    const { utils, request, get } = api();
+    const patch = "diff --git a/literal b/literal\n+é\r\n";
+    request.mockResolvedValueOnce({ data: patch });
+    const launch = jest.spyOn(childProcess, "spawn");
+    expect(await utils.getPullRequestDiff("fixture", "repository", 1)).toBe(patch);
+    expect(get).not.toHaveBeenCalled(); expect(launch).not.toHaveBeenCalled();
+  } finally { Object.defineProperty(process, "platform", platform); }
 });

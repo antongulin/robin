@@ -99,7 +99,7 @@ function added(path: string, text: string): string {
   return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(line => `+${line}`).join("\n")}\n`;
 }
 
-async function capture(baseConfig: boolean, small = false): Promise<{ request: any; configRefs: string[]; requests: number }> {
+async function capture(baseConfig: boolean, small = false, lifecycleFailure = false): Promise<{ request: any; configRefs: string[]; requests: number }> {
   const requests: any[] = [];
   const server = http.createServer((req, res) => {
     // A synthetic bearer is the only credential allowed at this boundary.
@@ -138,8 +138,13 @@ async function capture(baseConfig: boolean, small = false): Promise<{ request: a
     added("pnpm-lock.yaml", "EXCLUDED_GENERATED_LOCK"), ...markers, large,
   ].join("");
   const octokit = {
-    request: jest.fn().mockResolvedValue({ data: diff }),
+    request: lifecycleFailure ? jest.fn().mockRejectedValue({ status: 406, response: { data: {
+      errors: [{ resource: "PullRequest", field: "diff", code: "too_large" }],
+    } } }) : jest.fn().mockResolvedValue({ data: diff }),
     rest: {
+      pulls: { get: jest.fn().mockResolvedValue({ data: {
+        base: { sha: "a".repeat(40) }, head: { sha: "b".repeat(40) }, changed_files: 1,
+      } }) },
       repos: { getContent: jest.fn(async ({ path, ref }: { path: string; ref: string }) => {
         if (path === ".github/robin.yml") {
           configRefs.push(ref);
@@ -162,14 +167,29 @@ async function capture(baseConfig: boolean, small = false): Promise<{ request: a
   jest.mocked(GitHubReviewer).mockImplementation(() => ({ postReview: jest.fn().mockResolvedValue(undefined) }) as any);
   let timer: NodeJS.Timeout | undefined;
   try {
+    if (lifecycleFailure) jest.doMock("./native-diff", () => ({
+      nativePullRequestDiff: jest.fn().mockRejectedValue(new Error("NATIVE_DIFF_LIFECYCLE_FAILED")),
+    }));
     await jest.isolateModulesAsync(async () => { await import("./main"); });
     await Promise.race([done, new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error("SYNTHETIC_MAIN_TIMEOUT")), 15_000);
     })]);
-    expect(core.setFailed).not.toHaveBeenCalled();
-    expect(requests).toHaveLength(1);
+    if (lifecycleFailure) {
+      expect(core.setFailed).toHaveBeenCalledWith("NATIVE_DIFF_LIFECYCLE_FAILED");
+      expect(requests).toHaveLength(0);
+      expect(GitHubReviewer).not.toHaveBeenCalled();
+      expect(octokit.rest.issues.updateComment).toHaveBeenCalledWith(expect.objectContaining({
+        body: expect.stringContaining("NATIVE_DIFF_LIFECYCLE_FAILED"),
+      }));
+      expect(octokit.request).toHaveBeenCalledTimes(1);
+      expect(octokit.rest.pulls.get).toHaveBeenCalledTimes(1);
+    } else {
+      expect(core.setFailed).not.toHaveBeenCalled();
+      expect(requests).toHaveLength(1);
+    }
     return { request: requests[0], configRefs, requests: requests.length };
   } finally {
+    if (lifecycleFailure) jest.dontMock("./native-diff");
     if (timer) clearTimeout(timer);
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(new Error("SYNTHETIC_CLOSE_FAILED")) : resolve()));
   }
@@ -218,4 +238,10 @@ test("C3: an ordinary small review still reaches the actual loopback request int
   const { request } = await capture(false, true);
   expect(JSON.stringify(request.messages)).toContain("MARKER_0_MANDATORY");
   expect(JSON.stringify(request.messages)).not.toContain("truncated");
+});
+
+
+test("N10: lifecycle acquisition failure posts failed status without provider requests or reviews", async () => {
+  const result = await capture(false, false, true);
+  expect(result.requests).toBe(0);
 });

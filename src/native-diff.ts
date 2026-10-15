@@ -1,10 +1,7 @@
-import { execFile } from "child_process";
+import { NativeProcessLifecycleError, runNativeGit } from "./native-process";
 import { mkdtemp, rm } from "fs/promises";
 import { devNull, tmpdir } from "os";
 import { join } from "path";
-
-const MAX_OUTPUT = 32 * 1024 * 1024;
-const TIMEOUT_MS = 120_000;
 
 export interface DiffSnapshot {
   base: string;
@@ -35,20 +32,7 @@ async function git(args: string[], token?: string, origin?: string): Promise<Buf
     "-c", "protocol.https.allow=always",
     "-c", "http.followRedirects=false",
   ];
-  return new Promise((resolve, reject) => {
-    execFile("git", [...options, ...args], {
-      env, encoding: "buffer", maxBuffer: MAX_OUTPUT,
-      timeout: TIMEOUT_MS, killSignal: "SIGKILL", windowsHide: true,
-    }, (error, stdout) => {
-      if (error) {
-        const code = error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-          ? "NATIVE_DIFF_OUTPUT_LIMIT" : error.killed ? "NATIVE_DIFF_CHILD_TERMINATED" : "NATIVE_DIFF_COMMAND_FAILED";
-        reject(new Error(code));
-      } else {
-        resolve(stdout);
-      }
-    });
-  });
+  return runNativeGit([...options, ...args], env);
 }
 
 function countPaths(inventory: Buffer): number {
@@ -76,6 +60,9 @@ export async function nativePullRequestDiff(
       !Number.isSafeInteger(snapshot.files) || snapshot.files < 0) {
     throw new Error("NATIVE_DIFF_INVALID_SNAPSHOT");
   }
+  if (process.platform !== "linux" && process.platform !== "darwin") {
+    throw new Error("NATIVE_DIFF_UNSUPPORTED_PLATFORM");
+  }
   let origin: string;
   try {
     const server = new URL(process.env.GITHUB_SERVER_URL || "https://github.com");
@@ -88,6 +75,7 @@ export async function nativePullRequestDiff(
   }
 
   let directory: string | undefined;
+  let retainStorage = false;
   try {
     directory = await mkdtemp(join(tmpdir(), "robin-diff-"));
     await git(["init", "--bare", "--template=", directory]);
@@ -109,10 +97,11 @@ export async function nativePullRequestDiff(
     await verifySnapshot();
     return text;
   } catch (error) {
+    retainStorage = error instanceof NativeProcessLifecycleError;
     if (error instanceof Error && /^NATIVE_DIFF_[A-Z_]+$/.test(error.message)) throw error;
     throw new Error("NATIVE_DIFF_FAILED");
   } finally {
-    if (directory) {
+    if (directory && !retainStorage) {
       try { await rm(directory, { recursive: true, force: true }); }
       catch { throw new Error("NATIVE_DIFF_CLEANUP_FAILED"); }
     }
