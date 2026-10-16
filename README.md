@@ -10,8 +10,6 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node 24](https://img.shields.io/badge/runtime-node24-brightgreen.svg)](action.yml)
 
-[Artwork and downloads](https://www.robinreview.dev/brand/) · [Source credits and compact copies](docs/assets/brand/README.md)
-
 ![A Robin review on a pull request — summary, severity-tiered findings, and a teammate-style note](docs/assets/robin-review.png)
 
 ## What you get
