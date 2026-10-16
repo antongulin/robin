@@ -35,8 +35,8 @@ describe("GitHubReviewer", () => {
     for (const [request] of createReview.mock.calls) {
       expect(request).toMatchObject({ owner: "o", repo: "r", pull_number: 7, event: "COMMENT" });
       expect(request.body.match(/<img\b/g)).toHaveLength(1);
-      expect(request.body).toMatch(/<a href="https:\/\/www\.robinreview\.dev\/">\s*<img [^>]*width="24" height="24" alt="" \/>\s*<\/a>/);
-      expect(request.body).toContain("The [Robin](https://www.robinreview.dev/) Hood of code review");
+      expect(request.body.match(/<a\b/g)).toHaveLength(1);
+      expect(request.body).toMatch(/<a href="https:\/\/www\.robinreview\.dev\/">\s*<img [^>]*width="24" height="24" alt="" \/> The Robin<\/a> Hood of code review/);
       expect(request.body).toContain("<!-- :bow_and_arrow: Robin -->");
       expect(request.body.replace(/<!--[\s\S]*?-->/g, "")).not.toContain(":bow_and_arrow:");
       expect(request.body).toContain(findings.summary);
