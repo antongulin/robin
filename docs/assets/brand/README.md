@@ -12,10 +12,12 @@ byte for byte from the website build; core needs no image-generation dependency.
 
 README and review/help images use stable absolute URLs under
 `https://www.robinreview.dev/brand/`, so GitHub and npm can resolve them. Keep
-descriptive alt text for standalone artwork, empty alt text for decorative marks
-beside a label, and explicit width and height. Review and summary headers keep the
-readable `:bow_and_arrow: Robin` signature. Inline findings and progress stay
-text-only; the image does not change the GitHub account posting a review.
+descriptive alt text for standalone artwork and empty alt text for decorative marks
+beside a label. Fixed-size marks should use explicit pixel dimensions; responsive
+banners should fill their container while preserving intrinsic proportions, without
+a forced height. Review and summary headers keep the readable `:bow_and_arrow: Robin`
+signature. Inline findings and progress stay text-only; the image does not change the
+GitHub account posting a review.
 
 To refresh these copies, take the same-named files from the website's generated
 `dist/brand/` after a successful build and delivery. Copy the creative prompt from
