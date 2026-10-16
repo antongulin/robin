@@ -97,9 +97,9 @@ The easiest free setup uses [OpenRouter](https://openrouter.ai/):
 | `LLM_MODEL` | `openrouter/free` |
 
 > [!TIP]
-> `openrouter/free` picks a free model for each review — **$0 from OpenRouter**. OpenRouter rotates which model runs; **leave this secret as `openrouter/free`** — the action retries and uses provider fallbacks when a route is temporarily unavailable. You only spend [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) minutes while the job runs (often a few minutes per review).
+> `openrouter/free` picks a free model for each review — **$0 from OpenRouter**. OpenRouter rotates which model runs; **leave this secret as `openrouter/free`** — the action retries and uses provider fallbacks when a route is temporarily unavailable. You only spend [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) minutes while the job runs. Review duration depends on the model, diff, review mode and retries.
 >
-> GitHub Free includes about **2,000 Actions minutes/month** (public and private repos); [GitHub Pro](https://docs.github.com/en/billing/concepts/product-billing/github-actions) includes about **3,000 minutes/month** (check your plan for current limits). Reviews usually take a few minutes each.
+> Check [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) for included minutes and runner charges. See [Review timing](docs/ADVANCED.md#review-timing) to distinguish queue time from the review itself.
 
 Other providers (OpenAI, Groq, Ollama, etc.) work too. See [Supported providers](#supported-providers) or [docs/ADVANCED.md](docs/ADVANCED.md).
 
@@ -147,7 +147,7 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
-Commit and push. Open a pull request — you should see a review within a few minutes.
+Commit and push, then open a pull request. Follow the run in **Actions**; [review timing](docs/ADVANCED.md#review-timing) varies with the workload and provider.
 
 By default Robin reviews when the PR opens (and on `/review`), not on every push. To also review each push, add `synchronize` to the `pull_request` `types:` and set `review-on-synchronize: true` in the job's `with:` block.
 

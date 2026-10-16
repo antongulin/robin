@@ -191,6 +191,35 @@ investigation plus the final answer. Lower `agent-max-turns` if you want faster 
 reviews. Leave `agent-mode` unset (or set `agent-mode: off`) in `.github/robin.yml` to keep
 diff-only reviews.
 
+## Review timing
+
+Measure the review job and its Robin step separately in GitHub Actions:
+
+| Measurement | Calculation | What it includes |
+| --- | --- | --- |
+| Queue/start delay | Job start minus run creation | Time before this job starts, including any prerequisite jobs |
+| Job duration | Job completion minus job start | Runner setup, action download, Robin and cleanup |
+| Robin step duration | Robin step completion minus step start | Diff/snapshot preparation, model requests, retries and posting |
+| Observed LLM request interval | Response or failure log timestamp minus the corresponding `LLM attempt` timestamp | Request wait, including any parameter fallback inside that attempt; not pure model inference time |
+
+A successful job can skip a review or handle `/help`. Confirm `Posted review #…`
+and the linked PR review before counting it as a completed review. Track failed,
+cancelled, skipped and still-running jobs separately.
+
+Agent mode can make many model requests before producing a review. At its turn or
+investigation time limit, Robin asks for a final answer without tools. If that fails,
+Robin can start a single-shot fallback, whose requests have their own timeout and
+retries. The investigation budget therefore does not cap total job duration; the
+workflow job timeout still applies. Look for `Agent turn`, fallback warnings,
+`LLM attempt` and `Retrying LLM request` in the log.
+
+To compare providers, match repository, review mode, diff size, Robin revision and
+retry behavior, and check that requests started after the provider change. Masked
+base URLs and model IDs cannot prove which endpoint or model served a request.
+Secret-write receipts establish intended configuration at that time; keep that
+attribution separate from direct runtime evidence. A few unmatched jobs cannot
+establish a provider speedup.
+
 ## Usage patterns
 
 ### Advisor mode (never block the PR)

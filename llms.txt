@@ -24,6 +24,11 @@
 - Optional `llm-temperature` input (default `0.1`, range 0–2): set it in the caller workflow's `with:` block only to pin a specific value a provider insists on — Kimi models require `1`. Invalid values log a warning and fall back to the default.
 - `reasoning-effort` setting (unset sends nothing, provider-dependent): set it in `.github/robin.yml` as the normal per-repository location, or override it in the caller workflow's `with:` block. When unset everywhere Robin sends no reasoning control and the provider/model default applies; `off` is an explicit way to send nothing. `api.openai.com` receives OpenAI-native `reasoning_effort`, `api.anthropic.com` receives nothing (its compatibility layer ignores reasoning controls), and other hosts receive the OpenRouter-style `reasoning: { effort, exclude: true }` object; hidden reasoning is never parsed. If a provider rejects a configured control or clearly rejects its value (400/422), Robin warns, retries that completion once with no reasoning override, and continues that way for the run; a user-configured value also leaves an update-config warning in the final status comment. Auth, rate-limit, server, timeout, and unrelated validation errors do not use this fallback.
 
+## Timing and verification
+
+- Review duration depends on queue/start delay, diff size, review mode, model requests and retries. Measure job duration and the Robin step separately; an LLM attempt interval includes request overhead and parameter fallback, not just inference. See docs/ADVANCED.md#review-timing.
+- A successful Actions run can skip work or handle help. Confirm a posted PR review before counting it. Agent time-limit/final-answer failures can lead to a single-shot fallback with its own requests and retries. Masked model/base-URL logs and secret receipts do not directly prove the serving provider or model, and unmatched samples do not establish a speedup.
+
 ## Key files
 
 - [README.md](README.md): human setup and usage
