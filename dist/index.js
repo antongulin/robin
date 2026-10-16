@@ -343,9 +343,11 @@ function assistantToolMessage(content, calls) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ROBIN_MARK = void 0;
+exports.ROBIN_HEADER = exports.ROBIN_MARK = void 0;
 /** Decorative presentation only; keep Robin's text signature independent of this image. */
 exports.ROBIN_MARK = '<img src="https://www.robinreview.dev/brand/favicon-48.png" width="24" height="24" alt="" />';
+/** Decorative review and summary header; help keeps its compact mark-only format. */
+exports.ROBIN_HEADER = '<a href="https://www.robinreview.dev/">' + exports.ROBIN_MARK + '</a> The [Robin](https://www.robinreview.dev/) Hood of code review';
 //# sourceMappingURL=brand.js.map
 
 /***/ }),
@@ -913,7 +915,9 @@ class GitHubReviewer {
      */
     buildReviewBody(findings, postedFindings) {
         const parts = [];
-        parts.push("## " + brand_1.ROBIN_MARK + " " + exports.ROBIN_SIGNATURE);
+        parts.push("## " + brand_1.ROBIN_HEADER);
+        parts.push("");
+        parts.push("<!-- " + exports.ROBIN_SIGNATURE + " -->");
         parts.push("");
         parts.push("> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass.");
         parts.push("");
@@ -2262,7 +2266,7 @@ async function run() {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: ["## " + brand_1.ROBIN_MARK + " " + github_reviewer_1.ROBIN_SIGNATURE + " · Summary", "", reviewText].join("\n"),
+                body: ["## " + brand_1.ROBIN_HEADER + " · Summary", "", "<!-- " + github_reviewer_1.ROBIN_SIGNATURE + " -->", "", reviewText].join("\n"),
             });
             await reporter.close();
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary", undefined, reasoningNoticeReason()));

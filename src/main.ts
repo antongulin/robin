@@ -14,7 +14,7 @@ import { GitUtils } from "./git-utils";
 import { ReviewParser, StructuredReview } from "./review-parser";
 import { shouldRetryStructuredReview } from "./review-retry";
 import { GitHubReviewer, ROBIN_SIGNATURE } from "./github-reviewer";
-import { ROBIN_MARK } from "./brand";
+import { ROBIN_HEADER } from "./brand";
 import {
   DEFAULT_LLM_TEMPERATURE,
   DEFAULT_LLM_TIMEOUT_MS,
@@ -361,7 +361,7 @@ async function run(): Promise<void> {
         owner,
         repo,
         issue_number: prNumber,
-        body: ["## " + ROBIN_MARK + " " + ROBIN_SIGNATURE + " · Summary", "", reviewText].join("\n"),
+        body: ["## " + ROBIN_HEADER + " · Summary", "", "<!-- " + ROBIN_SIGNATURE + " -->", "", reviewText].join("\n"),
       });
       await reporter.close();
       await updateStatusComment(
