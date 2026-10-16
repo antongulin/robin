@@ -13,6 +13,10 @@ export interface RepoConfig {
   agentMode?: AgentMode;
   agentMaxTurns?: number;
   agentMaxDiffSize?: number;
+  /** Preserve invalid values so automatic bot reviews fail closed with a diagnostic. */
+  botReviewPolicy?: string;
+  /** null means a malformed YAML sequence; omitted means an empty allowlist. */
+  botAllowlist?: string[] | null;
 }
 
 export type AgentMode = "auto" | "off";
@@ -46,10 +50,40 @@ function stripTrailingComment(line: string): string {
 export function parseRepoConfigYaml(text: string): RepoConfig {
   const config: RepoConfig = {};
   let inSkipPaths = false;
+  let inBotAllowlist = false;
+  let botAllowlistIsInline = false;
 
   for (const rawLine of text.split("\n")) {
     const trimmed = rawLine.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
+    const setting = stripTrailingComment(trimmed);
+
+    if (inBotAllowlist) {
+      if (setting.startsWith("-") || /^\s/.test(rawLine)) {
+        const item = setting.match(/^-\s+(.+)$/)?.[1];
+        const login = item === undefined ? undefined : parseBotLogin(item);
+        if (login && !botAllowlistIsInline && config.botAllowlist) config.botAllowlist.push(login);
+        else config.botAllowlist = null;
+        continue;
+      }
+      inBotAllowlist = false;
+    }
+
+    const botPolicyMatch = setting.match(/^bot-review-policy:\s*(.*)$/i);
+    if (botPolicyMatch) {
+      config.botReviewPolicy = unquoteBotValue(botPolicyMatch[1]);
+      inSkipPaths = false;
+      continue;
+    }
+    const botListMatch = setting.match(/^bot-allowlist:\s*(.*)$/i);
+    if (botListMatch) {
+      const value = botListMatch[1];
+      config.botAllowlist = value === "" || value === "[]" ? [] : null;
+      inBotAllowlist = true;
+      botAllowlistIsInline = value !== "";
+      inSkipPaths = false;
+      continue;
+    }
 
     if (trimmed === "skip-paths:") {
       inSkipPaths = true;
@@ -70,8 +104,6 @@ export function parseRepoConfigYaml(text: string): RepoConfig {
 
     // Scalar settings tolerate the inline comments the shipped examples use
     // (`reasoning-effort: high   # provider note`); a `#` inside a quoted value is kept.
-    const setting = stripTrailingComment(trimmed);
-
     const maxDiffMatch = setting.match(/^max-diff-size:\s*(\d+)\s*$/i);
     if (maxDiffMatch) {
       config.maxDiffSize = parseInt(maxDiffMatch[1], 10);
@@ -145,6 +177,64 @@ export function resolveMaxDiffSize(actionInput: string, repoConfig?: RepoConfig)
     return repoConfig.maxDiffSize;
   }
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ACTION_MAX_DIFF_SIZE;
+}
+
+export type BotReviewPolicy = "all" | "none" | "allowlist";
+
+export interface BotReviewSettings {
+  policy: BotReviewPolicy;
+  allowlist: string[];
+  errors: string[];
+}
+
+function unquoteBotValue(value: string): string {
+  return value.replace(/^(["'])(.*)\1$/, "$2");
+}
+
+function isBotLogin(value: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\[bot\])?$/i.test(value);
+}
+
+function parseBotLogin(value: string): string | undefined {
+  // YAML numbers/booleans/null are not string logins. Quoting keeps numeric names valid.
+  if (/^(?:true|false|null|~|[-+]?\d+)$/i.test(value)) return undefined;
+  const login = unquoteBotValue(value);
+  return isBotLogin(login) ? login : undefined;
+}
+
+/** Nonblank inputs override the same base-config setting; [] explicitly clears the list. */
+export function resolveBotReviewSettings(
+  policyInput: string,
+  allowlistInput: string,
+  repoConfig?: RepoConfig
+): BotReviewSettings {
+  const value = policyInput.trim() || repoConfig?.botReviewPolicy;
+  const policy = value === undefined ? "all" : value;
+  const errors: string[] = [];
+  const validPolicy = policy === "all" || policy === "none" || policy === "allowlist";
+  if (!validPolicy) errors.push("Invalid bot-review-policy; expected all, none, or allowlist. Automatic bot reviews are skipped.");
+
+  const input = allowlistInput.trim();
+  const allowlist = input
+    ? input === "[]" ? [] : input.split(",").map(login => login.trim())
+    : repoConfig?.botAllowlist === undefined ? [] : repoConfig.botAllowlist;
+  if (allowlist === null || !allowlist.every(isBotLogin)) {
+    errors.push("Invalid bot-allowlist; use comma-separated logins in the input or a YAML sequence of string logins in repo config. Automatic bot reviews are skipped.");
+  }
+  return { policy: validPolicy ? policy : "none", allowlist: allowlist ?? [], errors };
+}
+
+/** Filter only authors GitHub identifies as Bots; ordinary automated User accounts pass. */
+export function shouldReviewAuthor(
+  author: { type?: string; login?: string } | null | undefined,
+  settings: BotReviewSettings
+): boolean {
+  if (author?.type !== "Bot") return true;
+  if (settings.errors.length > 0) return false;
+  if (settings.policy === "all") return true;
+  return settings.policy === "allowlist" && settings.allowlist.some(
+    login => login.toLowerCase() === author.login?.toLowerCase()
+  );
 }
 
 export function resolveMaxComments(actionInput: string, repoConfig?: RepoConfig): number {

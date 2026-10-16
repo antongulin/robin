@@ -2146,6 +2146,18 @@ async function run() {
         const agentModeInput = core.getInput("agent-mode") || "";
         const agentMaxTurnsInput = core.getInput("agent-max-turns") || "";
         const agentMaxDiffSizeInput = core.getInput("agent-max-diff-size") || "";
+        const gitUtils = new git_utils_1.GitUtils(octokit, token);
+        const baseRef = payload.pull_request?.base?.sha;
+        const repoConfig = await loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef);
+        if (eventName === "pull_request") {
+            const botSettings = (0, repo_config_1.resolveBotReviewSettings)(core.getInput("bot-review-policy"), core.getInput("bot-allowlist"), repoConfig);
+            for (const error of botSettings.errors)
+                core.warning(error);
+            if (!(0, repo_config_1.shouldReviewAuthor)(payload.pull_request?.user, botSettings)) {
+                core.info(`Skipping automatic review of bot-authored PR #${prNumber} (${payload.pull_request?.user?.login || "unknown bot"}); bot-review-policy: ${botSettings.policy}. Authorized maintainers can request /review.`);
+                return;
+            }
+        }
         core.info(`Model: ${model || "(not configured)"}`);
         core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
         statusCommand = command === "summary" ? "summary" : "review";
@@ -2185,9 +2197,6 @@ async function run() {
         if (!model) {
             throw new Error("Input required and not supplied: model");
         }
-        const gitUtils = new git_utils_1.GitUtils(octokit, token);
-        const baseRef = payload.pull_request?.base?.sha;
-        const repoConfig = await loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef);
         const maxDiffSize = (0, repo_config_1.resolveMaxDiffSize)(maxDiffSizeInput, repoConfig);
         const maxComments = (0, repo_config_1.resolveMaxComments)(maxCommentsInput, repoConfig);
         const jsonResponseMode = (0, repo_config_1.resolveJsonResponseMode)(jsonResponseModeInput, repoConfig);
@@ -3321,6 +3330,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.REASONING_EFFORT_OFF = exports.DEFAULT_AGENT_MAX_DIFF_SIZE = exports.DEFAULT_AGENT_MAX_TURNS = exports.DEFAULT_AGENT_MODE = exports.DEFAULT_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
 exports.parseRepoConfigYaml = parseRepoConfigYaml;
 exports.resolveMaxDiffSize = resolveMaxDiffSize;
+exports.resolveBotReviewSettings = resolveBotReviewSettings;
+exports.shouldReviewAuthor = shouldReviewAuthor;
 exports.resolveMaxComments = resolveMaxComments;
 exports.resolveJsonResponseMode = resolveJsonResponseMode;
 exports.resolveRequestChanges = resolveRequestChanges;
@@ -3364,10 +3375,40 @@ function stripTrailingComment(line) {
 function parseRepoConfigYaml(text) {
     const config = {};
     let inSkipPaths = false;
+    let inBotAllowlist = false;
+    let botAllowlistIsInline = false;
     for (const rawLine of text.split("\n")) {
         const trimmed = rawLine.trim();
         if (!trimmed || trimmed.startsWith("#"))
             continue;
+        const setting = stripTrailingComment(trimmed);
+        if (inBotAllowlist) {
+            if (setting.startsWith("-") || /^\s/.test(rawLine)) {
+                const item = setting.match(/^-\s+(.+)$/)?.[1];
+                const login = item === undefined ? undefined : parseBotLogin(item);
+                if (login && !botAllowlistIsInline && config.botAllowlist)
+                    config.botAllowlist.push(login);
+                else
+                    config.botAllowlist = null;
+                continue;
+            }
+            inBotAllowlist = false;
+        }
+        const botPolicyMatch = setting.match(/^bot-review-policy:\s*(.*)$/i);
+        if (botPolicyMatch) {
+            config.botReviewPolicy = unquoteBotValue(botPolicyMatch[1]);
+            inSkipPaths = false;
+            continue;
+        }
+        const botListMatch = setting.match(/^bot-allowlist:\s*(.*)$/i);
+        if (botListMatch) {
+            const value = botListMatch[1];
+            config.botAllowlist = value === "" || value === "[]" ? [] : null;
+            inBotAllowlist = true;
+            botAllowlistIsInline = value !== "";
+            inSkipPaths = false;
+            continue;
+        }
         if (trimmed === "skip-paths:") {
             inSkipPaths = true;
             continue;
@@ -3385,7 +3426,6 @@ function parseRepoConfigYaml(text) {
         }
         // Scalar settings tolerate the inline comments the shipped examples use
         // (`reasoning-effort: high   # provider note`); a `#` inside a quoted value is kept.
-        const setting = stripTrailingComment(trimmed);
         const maxDiffMatch = setting.match(/^max-diff-size:\s*(\d+)\s*$/i);
         if (maxDiffMatch) {
             config.maxDiffSize = parseInt(maxDiffMatch[1], 10);
@@ -3444,6 +3484,46 @@ function resolveMaxDiffSize(actionInput, repoConfig) {
         return repoConfig.maxDiffSize;
     }
     return Number.isFinite(parsed) && parsed > 0 ? parsed : exports.DEFAULT_ACTION_MAX_DIFF_SIZE;
+}
+function unquoteBotValue(value) {
+    return value.replace(/^(["'])(.*)\1$/, "$2");
+}
+function isBotLogin(value) {
+    return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\[bot\])?$/i.test(value);
+}
+function parseBotLogin(value) {
+    // YAML numbers/booleans/null are not string logins. Quoting keeps numeric names valid.
+    if (/^(?:true|false|null|~|[-+]?\d+)$/i.test(value))
+        return undefined;
+    const login = unquoteBotValue(value);
+    return isBotLogin(login) ? login : undefined;
+}
+/** Nonblank inputs override the same base-config setting; [] explicitly clears the list. */
+function resolveBotReviewSettings(policyInput, allowlistInput, repoConfig) {
+    const value = policyInput.trim() || repoConfig?.botReviewPolicy;
+    const policy = value === undefined ? "all" : value;
+    const errors = [];
+    const validPolicy = policy === "all" || policy === "none" || policy === "allowlist";
+    if (!validPolicy)
+        errors.push("Invalid bot-review-policy; expected all, none, or allowlist. Automatic bot reviews are skipped.");
+    const input = allowlistInput.trim();
+    const allowlist = input
+        ? input === "[]" ? [] : input.split(",").map(login => login.trim())
+        : repoConfig?.botAllowlist === undefined ? [] : repoConfig.botAllowlist;
+    if (allowlist === null || !allowlist.every(isBotLogin)) {
+        errors.push("Invalid bot-allowlist; use comma-separated logins in the input or a YAML sequence of string logins in repo config. Automatic bot reviews are skipped.");
+    }
+    return { policy: validPolicy ? policy : "none", allowlist: allowlist ?? [], errors };
+}
+/** Filter only authors GitHub identifies as Bots; ordinary automated User accounts pass. */
+function shouldReviewAuthor(author, settings) {
+    if (author?.type !== "Bot")
+        return true;
+    if (settings.errors.length > 0)
+        return false;
+    if (settings.policy === "all")
+        return true;
+    return settings.policy === "allowlist" && settings.allowlist.some(login => login.toLowerCase() === author.login?.toLowerCase());
 }
 function resolveMaxComments(actionInput, repoConfig) {
     const parsed = parseInt(actionInput, 10);

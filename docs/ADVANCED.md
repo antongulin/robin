@@ -11,6 +11,8 @@ max-diff-size: 25000
 max-comments: 10
 json-response-mode: true
 request-changes: true
+# bot-review-policy: none   # optional: skip automatic reviews of GitHub Bot authors; default all
+# bot-allowlist: []   # use a sequence of logins with bot-review-policy: allowlist
 # reasoning-effort: high   # unset: no reasoning control is sent (provider default). Set low/medium/high/… to send it, or "off" to be explicit
 # agent-mode: auto   # unset: single-shot diff review. Set auto for the multi-turn agent review
 # agent-max-turns: 40
@@ -30,10 +32,81 @@ skip-paths:
 | `agent-max-turns` | Used when the `agent-max-turns` input is empty. Tool-calling turns before the final review is requested (default `40`, max `100`) |
 | `agent-max-diff-size` | Used when the `agent-max-diff-size` input is empty. Diff characters sent up front in agent mode (default `200000`); `max-diff-size` still applies to the single-shot fallback |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
+| `bot-review-policy` | `all` (default), `none`, or `allowlist`; blank action/workflow input defers here. Applies to automatic PR reviews only |
+| `bot-allowlist` | YAML sequence of string logins (default empty); blank action/workflow input defers here. Used by `allowlist` policy; `[]` clears the list |
 
 Lockfiles (npm, yarn, pnpm, Cargo, Gemfile, poetry), `dist/`, `node_modules/`, and minified assets are always skipped automatically. If every changed file is skipped, the action posts a status comment and skips the LLM call.
 
 The config file uses a small YAML subset (line-based keys only), not full YAML nesting.
+
+Read configuration from the PR base branch: changing it only in the PR does not
+change that PR's settings. For `bot-review-policy`, `bot-allowlist`,
+`reasoning-effort`, `request-changes`, `use-json-response-mode`, and the three
+`agent-*` inputs, a nonblank input overrides the corresponding config key. Empty
+or omitted input defers to config, then to the documented default. Omit the boolean
+`request-changes` input on reusable-workflow callers to defer; direct action callers
+can use an empty string. `use-json-response-mode` maps to config `json-response-mode`.
+
+`max-diff-size` and `max-comments` use their existing numeric-default convention:
+config wins when the workflow passes `50000` or `15`, respectively, even if you wrote
+that value explicitly. A different valid input overrides config. `skip-paths` has
+no workflow input. Other inputs have no repository-config equivalent; put them in
+the caller workflow. The example's `25000` and `10` are sample overrides, not defaults.
+
+## Automatic bot PR reviews
+
+`bot-review-policy` controls automatic `pull_request` reviews:
+
+| Value | Review eligibility |
+| --- | --- |
+| `all` | Everyone, including bot authors. Default; existing installations need no changes |
+| `none` | Everyone except authors whose GitHub user type is `Bot` |
+| `allowlist` | Humans plus Bot authors whose login appears in `bot-allowlist`. An empty list excludes all bots |
+
+Robin checks the PR author's GitHub type and login, not the actor who opened,
+reopened, or updated the PR. Automated ordinary `User` accounts and unknown author
+types remain eligible. Login matches are exact and case-insensitive; policy values
+are `all`, `none`, and `allowlist` in lowercase. Include the full login, such as
+`dependabot[bot]`, rather than a display name or a substring.
+
+Choose one source, or override base config with nonblank workflow inputs:
+
+```yaml
+# .github/robin.yml on the PR base branch
+bot-review-policy: allowlist
+bot-allowlist:
+  - "dependabot[bot]"
+  - "renovate[bot]"
+```
+
+```yaml
+# Caller job's with: block (also supported by the direct action)
+with:
+  bot-review-policy: allowlist
+  bot-allowlist: "dependabot[bot],renovate[bot]"
+```
+
+Omitted, empty, or whitespace-only bot inputs defer to the same setting in base
+config. An explicit `bot-review-policy: all` overrides a restrictive base policy.
+To clear a base allowlist from the workflow, pass `bot-allowlist: '[]'`; an empty
+string defers rather than clearing. In repo config, use `bot-allowlist: []` or an
+empty sequence. Removing the repo key also leaves an empty list. Clearing the list
+only excludes bots under `allowlist`; use `none` to exclude all Bot authors.
+
+The config parser accepts a block sequence of string logins or `[]` for the list;
+nonempty inline arrays, scalar lists, nested mappings, and non-string entries are
+invalid. Quote numeric or YAML boolean-like login strings. Invalid policy/list
+values produce an Actions warning and skip automatic Bot-author reviews, including
+under `all`; they do not silently restore the permissive default. A valid workflow
+input replaces an invalid config value for that same setting. Human reviews and
+authorized manual commands continue.
+
+Robin logs the reason for a filtered skip before fetching the diff, downloading a
+snapshot, creating a status comment, or contacting the LLM. A successful skipped
+run does not mean a review was posted. A maintainer can comment `/review` on an
+excluded bot PR; existing `min-command-permission` checks still apply, and Robin
+still ignores bot-authored comments. Synchronize reviews also require the existing
+`review-on-synchronize` opt-in and workflow trigger.
 
 ## Pinning the action
 
@@ -54,11 +127,19 @@ uses: antongulin/robin/.github/workflows/review.yml@v1
 Releases are automated with [Release Please](https://github.com/googleapis/release-please) (`.github/workflows/release.yml`):
 
 1. Conventional commits on `main` accumulate in a **Release** pull request (`chore: release X.Y.Z`).
-2. Release PRs are verified, merged, and published automatically by the workflow.
+2. The workflow verifies release PR heads with read-only permissions, including while approval is pending. After successful verification, PRs without the required approval report **WAITING**. A maintainer reviews and merges them; automation can also merge an approved, verified head under the existing rules.
 3. The workflow updates `package.json`, `CHANGELOG.md`, creates tag `vX.Y.Z`, and publishes [GitHub release notes](https://github.com/antongulin/robin/releases).
 4. The workflow moves floating `v<major>` and `v<major>.<minor>` tags to the new release. For v2 and later, it also keeps `v1` at the latest `1.x` tag.
 
-Maintainers: do not create tags or releases by hand. Recover a failed release by fixing or rerunning the established workflow.
+The main push after a maintainer merge resumes publication from that PR's exact
+merge SHA. Bot-token merges publish in the same run, then dispatch npm at the
+exact release tag because GitHub suppresses token-generated release events.
+
+For recovery, run **Release** on **main** with `release-pr` set to the release PR
+number. Recovery verifies the merged tree even if GitHub deleted the source branch,
+and matching existing releases remain safe to resume without moving newer floating
+tags backward. See [Release approval and recovery](../CONTRIBUTING.md#release-approval-and-recovery)
+for commands and failure states. Do not create tags or releases by hand.
 
 ## Low-cost and free setups
 
@@ -114,7 +195,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | Input | Default | Description |
 | --- | --- | --- |
 | `github-token` / `ROBIN_TOKEN` | `${{ github.token }}` | Token for PR API and comments. Direct action input / optional reusable-workflow secret. See [Custom review identity](#custom-review-identity) |
-| `llm-api-key` / `LLM_API_KEY` | `ollama` | Provider API key |
+| `llm-api-key` / `LLM_API_KEY` | Direct action: `ollama` | Provider API key; the reusable workflow requires the secret |
 | `llm-base-url` / `LLM_BASE_URL` | — | OpenAI-compatible base URL (required) |
 | `model` / `LLM_MODEL` | — | Model name (required) |
 | `fail-on-high` | `false` | Fail the check if high-severity issues are found |
@@ -126,10 +207,12 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `llm-temperature` | `0.1` | Sampling temperature (0–2). Raise only if your model rejects the default — some models accept a single fixed value (Kimi requires `1`) |
 | `max-comments` | `15` | Max inline comments |
 | `review-on-synchronize` | `false` | Reusable workflow / action input. When the workflow triggers on `synchronize`, set `true` to review every push to an existing PR; default `false` skips pushes and re-reviews with `/review` |
+| `bot-review-policy` | empty (defer to repo config, then `all`) | Automatic PR review policy: `all`, `none`, or `allowlist`. See [Automatic bot PR reviews](#automatic-bot-pr-reviews); authorized manual commands bypass the filter |
+| `bot-allowlist` | empty (defer to repo config, then empty list) | Comma-separated exact, case-insensitive bot author logins; `[]` clears the base list. An empty list excludes all bots under `allowlist` |
 | `runner` | `'"ubuntu-latest"'` | Reusable workflow only: runner as a JSON string or JSON array |
-| `min-command-permission` | `write` | Who can run `/review` |
-| `review-instructions` | empty | Extra prompt text |
-| `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch |
+| `min-command-permission` | `write` | Minimum repository permission for slash commands: `read`, `triage`, `write`, `maintain`, or `admin` |
+| `review-instructions` | empty | Extra prompt text for code reviews (not `/summary`); appended to the built-in prompt alongside the rules file |
+| `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch for code reviews; empty disables this file. Missing files do not block review |
 | `config-file` | `.github/robin.yml` | Repo config path on the base branch |
 | `use-json-response-mode` | empty (defer to repo config, else true) | Request strict JSON-schema output (`response_format: json_schema`) for reviews, stepping down to `json_object` and then to no `response_format` if the provider rejects it. Pass `"true"` / `"false"` on the reusable workflow |
 | `agent-mode` | empty (defer to repo config, then single-shot) | `auto` lets the model read the repository with tools before reviewing, falling back to the single-shot diff review when the model has no tool support; unset or `off` always uses the single-shot review |

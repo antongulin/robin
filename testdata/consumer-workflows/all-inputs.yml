@@ -30,6 +30,8 @@ jobs:
       llm-timeout-ms: "600000"
       llm-temperature: "0.1"
       min-command-permission: write
+      bot-review-policy: allowlist
+      bot-allowlist: "dependabot[bot],renovate[bot]"
       review-instructions-file: .github/code-reviewer.md
       review-instructions: ""
       review-on-synchronize: false

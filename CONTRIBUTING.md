@@ -77,6 +77,52 @@ Merges to `main` use [Release Please](https://github.com/googleapis/release-plea
 | `fix:` | Patch | `fix: skip composer.lock in diff filter` |
 | `feat!:` or `BREAKING CHANGE:` | Major | `feat!: remove deprecated fail-on-critical input` |
 
-When a release is ready, the **Release** workflow opens or updates a `chore: release X.Y.Z` pull request. Release PRs are verified, merged, and published automatically by the workflow. The workflow creates the GitHub release, exact tag, and floating `@v1` / `@v1.0` tags without a manual maintainer merge.
+When a release is ready, the **Release** workflow opens or updates a `chore: release X.Y.Z` pull request. A maintainer supplies the required approval. The workflow verifies approved release PRs and can squash-merge them under the existing branch rules; a maintainer can also merge through GitHub. After the merge, the workflow publishes the GitHub release and exact tag, updates eligible floating tags, and dispatches npm publication at that exact release tag.
 
-**Repository setting (one-time):** In **Settings → Actions → General → Workflow permissions**, choose **Read and write permissions** and enable **Allow GitHub Actions to create and approve pull requests**. Without this, Release Please cannot open or merge release PRs.
+### Release approval and recovery
+
+The Release workflow runs on `main`. It validates the release PR's repository,
+GitHub Actions bot identity, expected Release Please branch, base branch, labels,
+state, and immutable commit before it checks out release code. A separate job runs
+installation, lint, tests, and the bundle comparison with read-only permissions and
+no persisted Git credentials. The publication job runs control code from the workflow
+revision, rather than scripts from the release tree.
+
+The workflow verifies an open PR's immutable head with read-only permissions even
+while approval is pending. After successful verification, an open PR without
+approval produces a successful **WAITING** summary and skips merge and publication.
+Review the current release PR and its verification results, then approve
+and squash-merge it through GitHub. The ensuing main push finds that PR by its
+exact merge SHA and resumes publication. If you approve and rerun Release while
+the PR remains open, automation can merge it with `--match-head-commit` after
+verification. The workflow does not bypass approval or enable auto-merge.
+
+If publication failed after the merge, run **Release → Run workflow** on **main**
+and enter the release PR number in `release-pr`. CLI equivalent:
+
+```bash
+gh workflow run release.yml --ref main -f release-pr=110
+```
+
+The number is an example; use the PR for the release you intend to resume.
+Recovery reads the immutable merge commit from GitHub, confirms that it belongs
+to main, and verifies that tree. A deleted Release Please branch needs no
+restoration. The control helper survives checkout even when the historical tree
+does not contain it. A rerun uses the original workflow revision; use a fresh
+dispatch on main when recovering a run that predates this recovery implementation.
+
+If a squash merge incorporates changes outside the tested head tree, publication
+fails with a recovery instruction. Dispatch again with that PR number so the
+read-only verification job checks the actual merged tree before publication.
+Changed heads, unexpected API/merge failures, tag mismatches, and failed checks
+remain failures; they do not become approval waits.
+
+Matching existing releases are safe to resume. Recovery checks the exact tag's
+commit, preserves newer floating-tag streams, and dispatches npm for the intended
+release tag rather than moving main. The npm workflow rejects a tag/package-version
+mismatch and skips a version that already exists on npm. Check both the GitHub
+release and npm run before declaring delivery complete. Keep credentials and
+branch protection unchanged; do not create tags or releases by hand.
+
+The repository must allow GitHub Actions to create pull requests. The workflow
+declares its job permissions; maintainers still supply required reviews.

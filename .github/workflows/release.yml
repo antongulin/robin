@@ -5,19 +5,27 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      release-pr:
+        description: "Release PR number to resume (open or merged; run on main)"
+        required: false
+        type: string
+        default: ""
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+permissions: {}
 
 concurrency:
-  group: release-please-${{ github.ref }}
+  group: release-please-main
   cancel-in-progress: false
 
 jobs:
   release-please:
+    if: github.ref == 'refs/heads/main' && !inputs.release-pr
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
     outputs:
       prs_created: ${{ steps.release.outputs.prs_created }}
       pr: ${{ steps.release.outputs.pr }}
@@ -27,205 +35,108 @@ jobs:
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Release Please only creates/updates release PRs here. The auto-release job below
-          # verifies the release PR before merging, then creates the GitHub release and
-          # floating tags from the merged manifest/changelog. Without this flag, the push
-          # created by that merge makes Release Please try to publish the same release too.
+          # Publication belongs to the verified release path below, including
+          # human-merged releases and dispatch recovery after branch deletion.
           skip-github-release: true
 
   auto-release:
     needs: release-please
-    if: needs.release-please.outputs.prs_created == 'true'
+    if: >-
+      always() && !cancelled() && github.ref == 'refs/heads/main' &&
+      (needs.release-please.result == 'success' || needs.release-please.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      number: ${{ steps.select.outputs.number }}
+      sha: ${{ steps.select.outputs.sha }}
+      state: ${{ steps.select.outputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Select trusted release PR
+        id: select
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PR_NUMBER: ${{ inputs.release-pr }}
+          RELEASE_PR: ${{ needs.release-please.outputs.pr }}
+          RELEASE_PRS: ${{ needs.release-please.outputs.prs }}
+          RELEASE_PRS_CREATED: ${{ needs.release-please.outputs.prs_created }}
+        run: node scripts/release-control.cjs select
+
+  verify-release:
+    needs: auto-release
+    if: >-
+      !cancelled() && needs.auto-release.result == 'success' &&
+      (needs.auto-release.outputs.state == 'OPEN' || needs.auto-release.outputs.state == 'MERGED')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Check out immutable release tree
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PR_NUMBER: ${{ needs.auto-release.outputs.number }}
+          SELECTED_SHA: ${{ needs.auto-release.outputs.sha }}
+          SELECTED_STATE: ${{ needs.auto-release.outputs.state }}
+        run: |
+          set -euo pipefail
+          # Old merged trees may not contain this helper. Preserve trusted control
+          # code before checkout; never execute a helper supplied by a PR.
+          cp scripts/release-control.cjs "$RUNNER_TEMP/release-control.cjs"
+          node "$RUNNER_TEMP/release-control.cjs" checkout
+      - name: Verify release tree
+        # No write token or persisted Git credentials in this job. Package scripts
+        # execute only after fresh bot/repo/branch/label/SHA validation.
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run lint
+          npm test -- --runInBand
+          npm run build
+          git diff --exit-code dist/index.js
+
+  publish-release:
+    needs: [auto-release, verify-release]
+    if: >-
+      !cancelled() && needs.auto-release.result == 'success' &&
+      needs.verify-release.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
       issues: write
       actions: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_PENDING_LABEL: "autorelease: pending"
-      RELEASE_TAGGED_LABEL: "autorelease: tagged"
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
-
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: npm
-
-      - name: Extract release PR number
-        id: release-pr
-        shell: bash
+      - name: Merge verified head and publish release
         env:
-          RELEASE_PR: ${{ needs.release-please.outputs.pr }}
-          RELEASE_PRS: ${{ needs.release-please.outputs.prs }}
-        run: |
-          set -euo pipefail
-
-          number=$(
-            node -e '
-              const pr = process.env.RELEASE_PR;
-              const prs = process.env.RELEASE_PRS;
-              let number = "";
-
-              if (pr && pr !== "null") {
-                number = JSON.parse(pr).number ?? "";
-              } else if (prs && prs !== "null") {
-                number = (JSON.parse(prs)[0] ?? {}).number ?? "";
-              }
-
-              process.stdout.write(String(number));
-            '
-          )
-
-          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
-            echo "Release Please reported an invalid PR number: $number" >&2
-            exit 1
-          fi
-
-          echo "number=$number" >> "$GITHUB_OUTPUT"
-
-      - name: Check out release PR
-        run: gh pr checkout "${{ steps.release-pr.outputs.number }}"
-
-      - name: Verify release PR
-        run: |
-          set -euo pipefail
-
-          npm ci
-          npm run lint
-          npm test
-          npm run build
-          git diff --exit-code dist/index.js
-
-      - name: Merge release PR
-        id: merge
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          number="${{ steps.release-pr.outputs.number }}"
-          # Repo is squash-only; --merge would be rejected by branch settings.
-          gh pr merge "$number" --squash --delete-branch
-          merge_sha=$(gh pr view "$number" --json mergeCommit -q '.mergeCommit.oid')
-
-          if [ -z "$merge_sha" ] || [ "$merge_sha" = "null" ]; then
-            echo "Release PR merged but merge commit was not available." >&2
-            exit 1
-          fi
-
-          git fetch origin main --tags --force || { echo "Fetch failed" >&2; exit 1; }
-          echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Create release and update floating tags
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          merge_sha="${{ steps.merge.outputs.merge_sha }}"
-          number="${{ steps.release-pr.outputs.number }}"
-          pending_label="$RELEASE_PENDING_LABEL"
-          tagged_label="$RELEASE_TAGGED_LABEL"
-
-          if [ -z "$number" ] || [[ ! "$number" =~ ^[0-9]+$ ]]; then
-            echo "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number" >&2
-            exit 1
-          fi
-
-          version=$(
-            git show "$merge_sha:.release-please-manifest.json" |
-              node -e '
-                let input = "";
-                process.stdin.on("data", chunk => input += chunk);
-                process.stdin.on("end", () => {
-                  process.stdout.write(JSON.parse(input)["."] ?? "");
-                });
-              '
-          )
-
-          if [ -z "$version" ] || [ "$version" = "null" ]; then
-            echo "Could not read release version from manifest." >&2
-            exit 1
-          fi
-
-          tag="v$version"
-          git fetch origin --tags --force || { echo "Fetch tags failed" >&2; exit 1; }
-
-          notes=$(
-            git show "$merge_sha:CHANGELOG.md" |
-              awk -v version="$version" '
-                $0 ~ "^## \\[" version "\\]" { capture = 1; print; next }
-                capture && /^## \[/ { exit }
-                capture { print }
-              '
-          )
-
-          if [ -z "$notes" ] || ! grep -q "^## \\[$version\\]" <<<"$notes"; then
-            echo "Release notes for $tag were empty or malformed." >&2
-            exit 1
-          fi
-
-          if gh release view "$tag" >/dev/null 2>&1; then
-            existing_sha=$(git rev-list -n 1 "$tag" 2>/dev/null || true)
-            if [ -n "$existing_sha" ] && [ "$existing_sha" != "$merge_sha" ]; then
-              echo "Existing release tag $tag points to $existing_sha, not $merge_sha." >&2
-              exit 1
-            fi
-            echo "Release $tag already exists."
-          else
-            gh release create "$tag" \
-              --target "$merge_sha" \
-              --title "$tag" \
-              --notes "$notes"
-          fi
-
-          IFS=. read -r major minor _patch <<<"$version"
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          # Floating tags intentionally move to the latest release in each stream.
-          git tag -f "v$major" "$merge_sha"
-          git tag -f "v$major.$minor" "$merge_sha"
-          git push origin -f "v$major" "v$major.$minor"
-
-          # v2+ releases do not move v1, but @v1 consumers need the latest 1.x workflow
-          # (including /robin in the issue_comment gate since v1.4.0). On a v1.x release
-          # line 189 already moved v1, so only resync for major >= 2.
-          if [ "$major" -ne 1 ]; then
-            latest_v1=$(
-              git tag -l "v1.*" --sort=-v:refname |
-                grep -E "^v1\\.[0-9]+\\.[0-9]+$" |
-                head -1
-            )
-            if [ -n "$latest_v1" ]; then
-              v1_sha=$(git rev-list -n 1 "$latest_v1")
-              git tag -f v1 "$v1_sha"
-              git push origin -f v1
-            fi
-          fi
-
-          if ! gh pr view "$number" --json number >/dev/null 2>&1; then
-            echo "Cannot verify release PR #$number before updating labels." >&2
-            exit 1
-          fi
-
-          label_action="add '$tagged_label'"
-          label_args=(--add-label "$tagged_label")
-          if gh pr view "$number" --json labels --template '{{range .labels}}{{.name}}{{"\n"}}{{end}}' | grep -Fxq "$pending_label"; then
-            label_action="remove '$pending_label' and add '$tagged_label'"
-            label_args=(--remove-label "$pending_label" "${label_args[@]}")
-          fi
-
-          if ! gh pr edit "$number" "${label_args[@]}"; then
-            echo "Failed to $label_action on release PR #$number." >&2
-            exit 1
-          fi
-
-      # Releases created with GITHUB_TOKEN don't trigger `release:` workflows
-      # (GitHub recursion guard). workflow_dispatch is exempt, so kick off the
-      # npm publish explicitly.
-      - name: Dispatch npm publish
-        shell: bash
-        run: gh workflow run publish.yml --ref main
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PR_NUMBER: ${{ needs.auto-release.outputs.number }}
+          SELECTED_SHA: ${{ needs.auto-release.outputs.sha }}
+          SELECTED_STATE: ${{ needs.auto-release.outputs.state }}
+        # This job executes trusted control code only, never release-tree scripts.
+        run: node scripts/release-control.cjs publish

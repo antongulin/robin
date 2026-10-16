@@ -1,4 +1,4 @@
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -9,6 +9,7 @@ const releaseWorkflow = readFileSync(
 );
 const contributing = readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf8");
 const advancedDocs = readFileSync(join(repoRoot, "docs", "ADVANCED.md"), "utf8");
+const publishWorkflow = readFileSync(join(repoRoot, ".github/workflows/publish.yml"), "utf8");
 
 function getWorkflowRunStep(workflow: string, stepName: string): string {
   const lines = workflow.split("\n");
@@ -43,85 +44,43 @@ function getWorkflowRunStep(workflow: string, stepName: string): string {
 }
 
 describe("release workflow", () => {
-  it("automatically verifies, merges, and publishes release PRs", () => {
-    expect(releaseWorkflow).toMatch(
-      /prs_created:\s*\$\{\{\s*steps\.release\.outputs\.prs_created\s*\}\}/,
-    );
-    expect(releaseWorkflow).toMatch(
-      /pr:\s*\$\{\{\s*steps\.release\.outputs\.pr\s*\}\}/,
-    );
-    expect(releaseWorkflow).toMatch(/\n  auto-release:\n/);
-    expect(releaseWorkflow).toContain(
-      "if: needs.release-please.outputs.prs_created == 'true'",
-    );
-    expect(releaseWorkflow).toMatch(
-      /uses:\s*googleapis\/release-please-action@v4[\s\S]*?with:[\s\S]*?skip-github-release:\s*true/,
-    );
-    expect(releaseWorkflow).toContain("gh pr merge \"$number\" --squash --delete-branch");
-    expect(releaseWorkflow).toContain("gh release create \"$tag\"");
-    expect(releaseWorkflow).toContain("git push origin -f \"v$major\" \"v$major.$minor\"");
-    expect(releaseWorkflow).toContain('if [ "$major" -ne 1 ]; then');
-    expect(releaseWorkflow).toContain('git tag -l "v1.*" --sort=-v:refname');
-    expect(releaseWorkflow).toContain("git tag -f v1 \"$v1_sha\"");
-    expect(releaseWorkflow).toContain("git push origin -f v1");
-    expect(releaseWorkflow).toContain('RELEASE_PENDING_LABEL: "autorelease: pending"');
-    expect(releaseWorkflow).toContain('RELEASE_TAGGED_LABEL: "autorelease: tagged"');
-    expect(releaseWorkflow).toContain("pending_label=\"$RELEASE_PENDING_LABEL\"");
-    expect(releaseWorkflow).toContain("tagged_label=\"$RELEASE_TAGGED_LABEL\"");
-    expect(releaseWorkflow).toContain(
-      "Cannot verify release PR #$number before updating labels.",
-    );
-    expect(releaseWorkflow).toContain("[[ ! \"$number\" =~ ^[0-9]+$ ]]");
-    expect(releaseWorkflow).toContain(
-      "Cannot update release PR labels for ${{ github.repository }}; invalid PR number: $number",
-    );
-    expect(releaseWorkflow).toContain(
-      "label_action=\"add '$tagged_label'\"",
-    );
-    expect(releaseWorkflow).toContain(
-      "label_action=\"remove '$pending_label' and add '$tagged_label'\"",
-    );
-    expect(releaseWorkflow).toContain(
-      "Failed to $label_action on release PR #$number.",
-    );
-    expect(releaseWorkflow).toContain("label_args=(--add-label \"$tagged_label\")");
-    expect(releaseWorkflow).toContain("grep -Fxq \"$pending_label\"");
-    expect(releaseWorkflow).toContain(
-      "label_args=(--remove-label \"$pending_label\" \"${label_args[@]}\")",
-    );
-    expect(releaseWorkflow).toContain("set -euo pipefail");
-    expect(releaseWorkflow).toContain("Release notes for $tag were empty or malformed.");
-    expect(releaseWorkflow).toContain("Existing release tag $tag points to");
-    expect(releaseWorkflow).not.toContain("jq ");
-    expect(releaseWorkflow).not.toMatch(/\n  verify-release:\n/);
-    expect(releaseWorkflow).not.toContain("needs.release-please.outputs.tag_name");
-    expect(releaseWorkflow).not.toContain("needs.release-please.outputs.release_created");
+  it("REL1–3: constrains merging to verified commits and supports branch-free recovery", () => {
+    expect(releaseWorkflow).not.toContain("gh pr checkout");
+    expect(releaseWorkflow).toContain("release-pr:");
+    expect(releaseWorkflow).toContain("persist-credentials: false");
+  });
+  it("keeps verification read-only and publication on trusted orchestration code", () => {
+    expect(releaseWorkflow).toMatch(/uses:\s*googleapis\/release-please-action@v4[\s\S]*?skip-github-release:\s*true/);
+    const verify = releaseWorkflow.split("  verify-release:\n")[1].split("  publish-release:\n")[0];
+    expect(verify).toContain("contents: read");
+    expect(verify).toContain("needs.auto-release.outputs.state == 'OPEN'");
+    expect(verify).not.toContain("APPROVED");
+    expect(verify).not.toContain("contents: write");
+    expect(verify).toContain('cp scripts/release-control.cjs "$RUNNER_TEMP/release-control.cjs"');
+    expect(verify).toContain('node "$RUNNER_TEMP/release-control.cjs" checkout');
+    expect(verify).toContain("npm ci");
+    expect(verify).toContain("npm run lint");
+    expect(verify).toContain("npm test -- --runInBand");
+    expect(verify).toContain("git diff --exit-code dist/index.js");
+    expect(releaseWorkflow).toContain("ref: ${{ github.workflow_sha }}");
+    const publish = releaseWorkflow.split("  publish-release:\n")[1];
+    expect(publish).toContain("needs.verify-release.result == 'success'");
+    expect(publish).toContain("node scripts/release-control.cjs publish");
+    expect(publish).not.toMatch(/npm (ci|test|run)/);
+    expect(releaseWorkflow).toContain("!cancelled()");
+    expect(releaseWorkflow).toContain("needs.release-please.result == 'skipped'");
+    expect(releaseWorkflow).not.toContain("--admin");
+    expect(releaseWorkflow).not.toContain("--auto");
   });
 
-  it("documents that releases publish automatically after merges to main", () => {
-    expect(contributing).toContain(
-      "Release PRs are verified, merged, and published automatically by the workflow.",
-    );
-    expect(advancedDocs).toContain(
-      "Release PRs are verified, merged, and published automatically by the workflow.",
-    );
+  it("documents approval waiting, automatic human-merge continuation and current-workflow recovery", () => {
+    expect(contributing).toContain("WAITING");
+    expect(contributing).toContain("release-pr");
+    expect(contributing).toContain("deleted");
+    expect(advancedDocs).toContain("release-pr");
   });
 
-  it("extracts release notes with shell syntax that runs on ubuntu-latest", () => {
-    const releaseStep = getWorkflowRunStep(
-      releaseWorkflow,
-      "Create release and update floating tags",
-    );
-    const awkMatch = releaseStep.match(/awk -v version="\$version" '\n([\s\S]*?)\n\s*'/);
-
-    expect(awkMatch).not.toBeNull();
-    expect(awkMatch?.[1]).toBeDefined();
-
-    const awkProgram = awkMatch![1]
-      .split("\n")
-      .map((line) => line.trimStart())
-      .join("\n");
-
+  it("extracts release notes from the selected version without including the previous release", () => {
     const changelog = [
       "# Changelog",
       "",
@@ -137,13 +96,28 @@ describe("release workflow", () => {
       "",
     ].join("\n");
 
-    const notes = execFileSync("awk", ["-v", "version=1.2.1", awkProgram], {
-      input: changelog,
-      encoding: "utf8",
-    });
+    const notes = execFileSync(process.execPath, ["-e",
+      "const helper = require(process.argv[1]); process.stdout.write(helper.extractNotes(process.argv[2], process.argv[3]));",
+      join(repoRoot, "scripts/release-control.cjs"), changelog, "1.2.1"], { encoding: "utf8" });
 
     expect(notes).toContain("## [1.2.1]");
     expect(notes).toContain("* harden auto release workflow");
     expect(notes).not.toContain("## [1.2.0]");
+  });
+
+  it.each([
+    ["refs/tags/v2.12.0", "v2.12.0", "2.12.0", true],
+    ["refs/heads/main", "main", "2.12.0", false],
+    ["refs/tags/v2.12.0", "v2.12.0", "2.13.0", false],
+    ["refs/tags/v2", "v2", "2.12.0", false],
+  ])("REL5: npm publication enforces intended tag/package version (%s, %s, %s)", (ref, tag, version, valid) => {
+    const step = getWorkflowRunStep(publishWorkflow, "Verify release version");
+    const program = step.split("node - <<'JS'\n")[1].split("\nJS")[0]
+      .replace("require('./package.json')", JSON.stringify({ name: "robin-review", version }));
+    const result = spawnSync(process.execPath, ["-e", program], {
+      env: { GITHUB_REF: ref, RELEASE_TAG: tag }, encoding: "utf8",
+    });
+    expect(result.status).toBe(valid ? 0 : 1);
+    expect(publishWorkflow).toContain("ref: ${{ github.sha }}");
   });
 });
