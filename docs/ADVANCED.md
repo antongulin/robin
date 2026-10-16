@@ -1,4 +1,4 @@
-# Advanced guide
+# <img src="https://www.robinreview.dev/brand/favicon-48.png" width="32" height="32" alt="" /> Advanced guide
 
 This document is for maintainers and power users. For a short setup, see the [README](../README.md).
 

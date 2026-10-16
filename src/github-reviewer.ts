@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import * as core from "@actions/core";
 import { StructuredReview, ReviewFinding } from "./review-parser";
+import { ROBIN_MARK } from "./brand";
 
 /** Marker present in every Robin review body; used to recognize Robin's own reviews. */
 export const ROBIN_SIGNATURE = ":bow_and_arrow: Robin";
@@ -280,7 +281,7 @@ export class GitHubReviewer {
   private buildReviewBody(findings: StructuredReview, postedFindings: Set<ReviewFinding>): string {
     const parts: string[] = [];
 
-    parts.push("## " + ROBIN_SIGNATURE);
+    parts.push("## " + ROBIN_MARK + " " + ROBIN_SIGNATURE);
     parts.push("");
     parts.push(
       "> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass."

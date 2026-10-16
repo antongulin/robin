@@ -1,6 +1,10 @@
-# Contributing
+# <img src="https://www.robinreview.dev/brand/favicon-48.png" width="32" height="32" alt="" /> Contributing
 
 Thanks for helping improve Robin.
+
+For artwork, use the [brand downloads](https://www.robinreview.dev/brand/) and
+[source credits](docs/assets/brand/README.md). The website owns the masters and
+export pipeline; this repository keeps two compact copies for documentation.
 
 ## Good First Areas
 

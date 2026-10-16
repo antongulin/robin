@@ -1,3 +1,7 @@
+<p align="center">
+  <a href="https://www.robinreview.dev/"><img src="https://www.robinreview.dev/brand/repository.png?v=feee03b10ca6" width="100%" alt="Robin — The Robin Hood of code review. Free AI code reviews for every pull request." /></a>
+</p>
+
 # Robin
 
 Free AI code reviews for every pull request. You bring an API key; Robin reviews show up like a teammate left comments.
@@ -5,6 +9,8 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 [![Self-Test](https://github.com/antongulin/robin/actions/workflows/self-test.yml/badge.svg)](https://github.com/antongulin/robin/actions/workflows/self-test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node 24](https://img.shields.io/badge/runtime-node24-brightgreen.svg)](action.yml)
+
+[Artwork and downloads](https://www.robinreview.dev/brand/) · [Source credits and compact copies](docs/assets/brand/README.md)
 
 ![A Robin review on a pull request — summary, severity-tiered findings, and a teammate-style note](docs/assets/robin-review.png)
 
