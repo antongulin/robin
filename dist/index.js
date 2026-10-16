@@ -586,27 +586,53 @@ function filterDiff(diff, extraSkipPatterns = []) {
 /***/ }),
 
 /***/ 8529:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GitUtils = void 0;
+const native_diff_1 = __nccwpck_require__(4692);
 class GitUtils {
+    token;
     octokit;
-    constructor(octokit) {
+    constructor(octokit, token) {
+        this.token = token;
         this.octokit = octokit;
     }
     async getPullRequestDiff(owner, repo, pullNumber) {
-        const response = await this.octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
-            owner,
-            repo,
-            pull_number: pullNumber,
-            headers: {
-                accept: "application/vnd.github.v3.diff",
-            },
+        try {
+            const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+                owner, repo, pull_number: pullNumber,
+                headers: { accept: "application/vnd.github.v3.diff" },
+            });
+            return String(data);
+        }
+        catch (error) {
+            // Only GitHub's structured diff-size rejection permits another acquisition path.
+            const failure = error;
+            const errors = failure?.response?.data?.errors;
+            const tooLarge = failure?.status === 406 && Array.isArray(errors) && errors.some(item => item?.resource === "PullRequest" && item?.field === "diff" && item?.code === "too_large");
+            if (!tooLarge)
+                throw error;
+        }
+        const capture = async () => {
+            const { data } = await this.octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+            return { base: data.base.sha, head: data.head.sha, files: data.changed_files };
+        };
+        let snapshot;
+        try {
+            snapshot = await capture();
+        }
+        catch {
+            throw new Error("NATIVE_DIFF_METADATA_FAILED");
+        }
+        return (0, native_diff_1.nativePullRequestDiff)(owner, repo, this.token, snapshot, async () => {
+            const current = await capture();
+            if (current.base !== snapshot.base || current.head !== snapshot.head || current.files !== snapshot.files) {
+                throw new Error("NATIVE_DIFF_SNAPSHOT_CHANGED");
+            }
         });
-        return String(response.data);
     }
     async getFileContent(owner, repo, path, ref) {
         try {
@@ -2153,7 +2179,7 @@ async function run() {
         if (!model) {
             throw new Error("Input required and not supplied: model");
         }
-        const gitUtils = new git_utils_1.GitUtils(octokit);
+        const gitUtils = new git_utils_1.GitUtils(octokit, token);
         const baseRef = payload.pull_request?.base?.sha;
         const repoConfig = await loadRepoConfig(octokit, gitUtils, owner, repo, prNumber, configFile, baseRef);
         const maxDiffSize = (0, repo_config_1.resolveMaxDiffSize)(maxDiffSizeInput, repoConfig);
@@ -2654,6 +2680,371 @@ function buildSummaryInput(diff) {
 }
 run();
 //# sourceMappingURL=main.js.map
+
+/***/ }),
+
+/***/ 4692:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.nativePullRequestDiff = nativePullRequestDiff;
+const native_process_1 = __nccwpck_require__(7518);
+const promises_1 = __nccwpck_require__(1943);
+const os_1 = __nccwpck_require__(857);
+const path_1 = __nccwpck_require__(6928);
+// Never propagate a child error: it can contain arguments, environment or stderr.
+async function git(args, token, origin) {
+    const env = {
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: os_1.devNull,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_CONFIG_COUNT: "0",
+        LC_ALL: "C",
+    };
+    if (token && origin) {
+        env.GIT_CONFIG_COUNT = "1";
+        env.GIT_CONFIG_KEY_0 = `http.${origin}/.extraheader`;
+        env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+    }
+    const options = [
+        "-c", `core.hooksPath=${os_1.devNull}`,
+        "-c", "credential.helper=",
+        "-c", "protocol.allow=never",
+        "-c", "protocol.https.allow=always",
+        "-c", "http.followRedirects=false",
+    ];
+    return (0, native_process_1.runNativeGit)([...options, ...args], env);
+}
+function countPaths(inventory) {
+    const fields = inventory.toString("utf8").split("\0");
+    if (fields.pop() !== "")
+        throw new Error("NATIVE_DIFF_INVALID_INVENTORY");
+    let count = 0;
+    for (let i = 0; i < fields.length; count++) {
+        const status = fields[i++];
+        const paths = /^R\d+$/.test(status) ? 2 : /^[AMDT]$/.test(status) ? 1 : 0;
+        if (!paths || i + paths > fields.length || fields.slice(i, i + paths).some(path => !path)) {
+            throw new Error("NATIVE_DIFF_INVALID_INVENTORY");
+        }
+        i += paths;
+    }
+    return count;
+}
+/** Acquire one immutable PR snapshot in private object storage, without checkout. */
+async function nativePullRequestDiff(owner, repo, token, snapshot, verifySnapshot) {
+    if (!token || !/^[a-z\d][a-z\d_.-]*$/i.test(owner) || !/^[a-z\d][a-z\d_.-]*$/i.test(repo) ||
+        !/^[a-f\d]{40}$/.test(snapshot.base) || !/^[a-f\d]{40}$/.test(snapshot.head) ||
+        !Number.isSafeInteger(snapshot.files) || snapshot.files < 0) {
+        throw new Error("NATIVE_DIFF_INVALID_SNAPSHOT");
+    }
+    if (process.platform !== "linux" && process.platform !== "darwin") {
+        throw new Error("NATIVE_DIFF_UNSUPPORTED_PLATFORM");
+    }
+    let origin;
+    try {
+        const server = new URL(process.env.GITHUB_SERVER_URL || "https://github.com");
+        if (server.protocol !== "https:" || server.username || server.password || server.search || server.hash || server.pathname !== "/") {
+            throw new Error();
+        }
+        origin = server.origin;
+    }
+    catch {
+        throw new Error("NATIVE_DIFF_INVALID_SERVER");
+    }
+    let directory;
+    let retainStorage = false;
+    try {
+        directory = await (0, promises_1.mkdtemp)((0, path_1.join)((0, os_1.tmpdir)(), "robin-diff-"));
+        await git(["init", "--bare", "--template=", directory]);
+        const at = ["--git-dir", directory];
+        await git([...at, "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--no-auto-maintenance", "--",
+            `${origin}/${owner}/${repo}.git`, snapshot.base, snapshot.head], token, origin);
+        for (const sha of [snapshot.base, snapshot.head]) {
+            const resolved = (await git([...at, "rev-parse", "--verify", `${sha}^{commit}`])).toString("ascii").trim();
+            if (resolved !== sha)
+                throw new Error("NATIVE_DIFF_OBJECT_MISMATCH");
+        }
+        const bases = (await git([...at, "merge-base", "--all", snapshot.base, snapshot.head])).toString("ascii").trim().split("\n");
+        if (bases.length !== 1 || !/^[a-f\d]{40}$/.test(bases[0]))
+            throw new Error("NATIVE_DIFF_AMBIGUOUS_BASE");
+        const range = [bases[0], snapshot.head, "--"];
+        const inventory = await git([...at, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--name-status", "-z", ...range]);
+        if (countPaths(inventory) !== snapshot.files)
+            throw new Error("NATIVE_DIFF_PATH_COUNT_MISMATCH");
+        const patch = await git([...at, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--full-index", "--binary", "--no-color", ...range]);
+        const text = patch.toString("utf8");
+        if (!Buffer.from(text, "utf8").equals(patch))
+            throw new Error("NATIVE_DIFF_INVALID_ENCODING");
+        await verifySnapshot();
+        return text;
+    }
+    catch (error) {
+        retainStorage = error instanceof native_process_1.NativeProcessLifecycleError;
+        if (error instanceof Error && /^NATIVE_DIFF_[A-Z_]+$/.test(error.message))
+            throw error;
+        throw new Error("NATIVE_DIFF_FAILED");
+    }
+    finally {
+        if (directory && !retainStorage) {
+            try {
+                await (0, promises_1.rm)(directory, { recursive: true, force: true });
+            }
+            catch {
+                throw new Error("NATIVE_DIFF_CLEANUP_FAILED");
+            }
+        }
+    }
+}
+//# sourceMappingURL=native-diff.js.map
+
+/***/ }),
+
+/***/ 7518:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.NativeProcessLifecycleError = exports.nativeProcessLimits = void 0;
+exports.runNativeGit = runNativeGit;
+const child_process_1 = __nccwpck_require__(5317);
+// Internal test seam; these are fixed production limits, never action/env inputs.
+exports.nativeProcessLimits = {
+    timeoutMs: 120_000, maxOutput: 32 * 1024 * 1024,
+    shutdownMs: 5000, probeMs: 1000,
+};
+class NativeProcessLifecycleError extends Error {
+    constructor() { super("NATIVE_DIFF_LIFECYCLE_FAILED"); }
+}
+exports.NativeProcessLifecycleError = NativeProcessLifecycleError;
+function validPid(pid) {
+    return Number.isSafeInteger(pid) && pid > 1;
+}
+function missing(error) {
+    return error?.code === "ESRCH";
+}
+// kill(0) includes zombies. Only a bounded, validated process-state snapshot can
+// distinguish those from live descendants that may still use the object store.
+function probeGroup(group) {
+    let cancel = () => { };
+    const result = new Promise(resolve => {
+        let probe;
+        try {
+            probe = (0, child_process_1.spawn)("ps", ["-A", "-o", "pgid=", "-o", "stat="], {
+                env: { PATH: process.env.PATH, LC_ALL: "C" }, shell: false,
+                stdio: ["ignore", "pipe", "ignore"],
+            });
+        }
+        catch {
+            resolve(false);
+            return;
+        }
+        let done = false;
+        let size = 0;
+        const chunks = [];
+        const finish = (stopped) => {
+            if (done)
+                return;
+            done = true;
+            clearTimeout(timer);
+            resolve(stopped);
+        };
+        cancel = () => {
+            if (done)
+                return;
+            // kill/destroy can synchronously emit error and reenter cancellation.
+            finish(false);
+            if (validPid(probe.pid)) {
+                try {
+                    probe.kill("SIGKILL");
+                }
+                catch { /* unknown; fail closed */ }
+            }
+            probe.stdout?.destroy();
+        };
+        const timer = setTimeout(() => cancel(), exports.nativeProcessLimits.probeMs);
+        probe.on("error", cancel);
+        probe.stdout?.on("error", cancel);
+        probe.stdout?.on("data", (chunk) => {
+            size += chunk.length;
+            if (size > 1024 * 1024)
+                cancel();
+            else
+                chunks.push(chunk);
+        });
+        probe.on("close", code => {
+            if (done)
+                return;
+            if (code !== 0 || size === 0) {
+                finish(false);
+                return;
+            }
+            const rows = Buffer.concat(chunks).toString("ascii").trim().split("\n");
+            let live = false;
+            let seen = false;
+            for (const row of rows) {
+                const match = /^\s*(\d+)\s+([A-Za-z][A-Za-z0-9+<>=-]*)\s*$/.exec(row);
+                if (!match || !Number.isSafeInteger(Number(match[1]))) {
+                    finish(false);
+                    return;
+                }
+                if (Number(match[1]) === group) {
+                    seen = true;
+                    if (!match[2].startsWith("Z"))
+                        live = true;
+                }
+            }
+            if (seen) {
+                finish(!live);
+                return;
+            }
+            // An omitted group is insufficient if kill(0) still sees it (e.g. a
+            // restricted ps). Confirm absence rather than assuming visibility.
+            try {
+                process.kill(-group, 0);
+                finish(false);
+            }
+            catch (error) {
+                finish(missing(error));
+            }
+        });
+        if (!probe.stdout)
+            cancel();
+    });
+    return { result, cancel: () => cancel() };
+}
+/** Run Git in one owned POSIX group. Never expose child errors or partial output. */
+function runNativeGit(args, env) {
+    return new Promise((resolve, reject) => {
+        let child;
+        try {
+            child = (0, child_process_1.spawn)("git", args, { env, detached: true, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+        }
+        catch {
+            reject(new Error("NATIVE_DIFF_COMMAND_FAILED"));
+            return;
+        }
+        const group = child.pid;
+        let closed = false;
+        let confirmed = group === undefined;
+        let stopping = false;
+        let settled = false;
+        let failure;
+        let shutdown;
+        let poll;
+        let probe;
+        const stdout = [];
+        let stdoutSize = 0;
+        let stderrSize = 0;
+        const finish = (error) => {
+            if (settled)
+                return;
+            settled = true;
+            clearTimeout(deadline);
+            clearTimeout(shutdown);
+            clearTimeout(poll);
+            probe?.cancel();
+            if (error)
+                reject(error);
+            else
+                resolve(Buffer.concat(stdout, stdoutSize));
+        };
+        const settle = () => { if (closed && confirmed)
+            finish(failure); };
+        const check = async () => {
+            if (settled || !validPid(group))
+                return;
+            try {
+                process.kill(-group, 0);
+            }
+            catch (error) {
+                if (missing(error)) {
+                    confirmed = true;
+                    settle();
+                    return;
+                }
+                // Permission/observation failures cannot establish shutdown.
+                poll = setTimeout(() => { void check(); }, 25);
+                return;
+            }
+            probe = probeGroup(group);
+            const stopped = await probe.result;
+            probe = undefined;
+            if (settled)
+                return;
+            if (stopped) {
+                confirmed = true;
+                settle();
+            }
+            else
+                poll = setTimeout(() => { void check(); }, 25);
+        };
+        const stop = () => {
+            if (stopping || settled)
+                return;
+            stopping = true;
+            clearTimeout(deadline);
+            shutdown = setTimeout(() => finish(new NativeProcessLifecycleError()), exports.nativeProcessLimits.shutdownMs);
+            if (validPid(group)) {
+                try {
+                    process.kill(-group, "SIGKILL");
+                }
+                catch (error) {
+                    if (missing(error))
+                        confirmed = true;
+                    else
+                        failure ||= new Error("NATIVE_DIFF_COMMAND_FAILED");
+                }
+                void check();
+            }
+            else if (group !== undefined) {
+                failure = new NativeProcessLifecycleError();
+                // No safe group target; preserve storage on the bounded failure path.
+            }
+            settle();
+        };
+        const fail = (code) => { failure ||= new Error(code); stop(); };
+        const deadline = setTimeout(() => fail("NATIVE_DIFF_CHILD_TERMINATED"), exports.nativeProcessLimits.timeoutMs);
+        child.on("error", () => fail("NATIVE_DIFF_COMMAND_FAILED"));
+        child.stdout?.on("error", () => fail("NATIVE_DIFF_COMMAND_FAILED"));
+        child.stderr?.on("error", () => fail("NATIVE_DIFF_COMMAND_FAILED"));
+        child.stdout?.on("data", (chunk) => {
+            if (failure || settled)
+                return;
+            stdoutSize += chunk.length;
+            if (stdoutSize > exports.nativeProcessLimits.maxOutput)
+                fail("NATIVE_DIFF_OUTPUT_LIMIT");
+            else
+                stdout.push(chunk);
+        });
+        child.stderr?.on("data", (chunk) => {
+            if (failure || settled)
+                return;
+            stderrSize += chunk.length;
+            if (stderrSize > exports.nativeProcessLimits.maxOutput)
+                fail("NATIVE_DIFF_OUTPUT_LIMIT");
+        });
+        child.on("exit", (code, signal) => {
+            if (code !== 0 || signal)
+                failure ||= new Error("NATIVE_DIFF_COMMAND_FAILED");
+            stop(); // A successful leader can leave helpers with closed or inherited pipes.
+        });
+        child.on("close", (code, signal) => {
+            closed = true;
+            if (code !== 0 || signal)
+                failure ||= new Error("NATIVE_DIFF_COMMAND_FAILED");
+            stop();
+            settle();
+        });
+        if (!child.stdout || !child.stderr)
+            fail("NATIVE_DIFF_COMMAND_FAILED");
+    });
+}
+//# sourceMappingURL=native-process.js.map
 
 /***/ }),
 
@@ -54301,6 +54692,14 @@ module.exports = require("events");
 
 "use strict";
 module.exports = require("fs");
+
+/***/ }),
+
+/***/ 1943:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("fs/promises");
 
 /***/ }),
 
