@@ -105,6 +105,8 @@ user documentation; `skills/robin/` is the companion chat skill shipped for codi
 | `action.yml`, `.github/workflows/review.yml` | Action inputs and reusable-workflow schema (forwarded 1:1) |
 | `docs/`, `README.md`, `llms.txt` | User-facing setup, behavior, and troubleshooting |
 | `docs/assets/brand/`, `src/brand.ts` | Compact artwork copies/provenance and shared GitHub heading |
+| `scripts/release-control.cjs`, `.github/workflows/release.yml`, `.github/workflows/publish.yml` | Trusted release selection, approval waiting, immutable verification/publication, and npm tag/version guard; maintainer recovery in `CONTRIBUTING.md` |
+| `src/release-control.test.ts`, `src/release-workflow.test.ts`, `testdata/release-tools.cjs` | Offline release state/process fixtures and workflow contracts; fixtures must never invoke live publication |
 
 **Brand ownership.** The website owns artwork masters and deterministic exports at
 `https://www.robinreview.dev/brand/`. Core keeps exact lightweight copies and source
@@ -152,8 +154,8 @@ is a shipped copy of `scripts/install.sh`; publish matching changes in `robin-we
 
 ## Maintainers: release-notes upkeep (automatic)
 
-Whenever a release lands (release-please auto-merges
-`chore: release X.Y.Z` and publishes the GitHub release), clean up its notes as part of
+Whenever an approved `chore: release X.Y.Z` PR merges and the workflow publishes
+the GitHub release, clean up its notes as part of
 the same task — do it automatically, without asking.
 
 1. Inspect every release cut during the session: `gh release view <tag> --json body`.

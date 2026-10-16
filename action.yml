@@ -60,6 +60,14 @@ inputs:
     description: "Minimum repository permission required to run slash commands: read, triage, write, maintain, or admin."
     required: false
     default: "write"
+  bot-review-policy:
+    description: "Automatic PR review policy: all reviews everyone (default), none skips GitHub Bot authors, allowlist reviews humans and bot logins in bot-allowlist. Empty defers to base-branch repo config. Authorized manual commands bypass this filter."
+    required: false
+    default: ""
+  bot-allowlist:
+    description: "Comma-separated bot author logins for bot-review-policy: allowlist (exact, case-insensitive). Empty defers to base-branch repo config; [] clears the list. Default empty list excludes all bots in allowlist mode."
+    required: false
+    default: ""
   review-instructions:
     description: "Additional reviewer instructions appended to the built-in review prompt."
     required: false

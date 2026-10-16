@@ -49,6 +49,16 @@ on:
         required: false
         type: string
         default: "write"
+      bot-review-policy:
+        description: "Automatic PR reviews: all (default), none skips GitHub Bot authors, allowlist permits listed bots plus humans. Empty defers to base-branch repo config. Authorized manual commands bypass the filter."
+        required: false
+        type: string
+        default: ""
+      bot-allowlist:
+        description: "Comma-separated bot author logins (exact, case-insensitive). Empty defers to base-branch repo config; [] clears the list. Default empty list."
+        required: false
+        type: string
+        default: ""
       review-instructions-file:
         description: "Repository file containing additional reviewer instructions."
         required: false
@@ -149,6 +159,8 @@ jobs:
           llm-timeout-ms: ${{ inputs.llm-timeout-ms }}
           llm-temperature: ${{ inputs.llm-temperature }}
           min-command-permission: ${{ inputs.min-command-permission }}
+          bot-review-policy: ${{ inputs.bot-review-policy }}
+          bot-allowlist: ${{ inputs.bot-allowlist }}
           review-instructions: ${{ inputs.review-instructions }}
           review-instructions-file: ${{ inputs.review-instructions-file }}
           review-on-synchronize: ${{ inputs.review-on-synchronize }}

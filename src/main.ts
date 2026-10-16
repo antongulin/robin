@@ -37,6 +37,8 @@ import {
   resolveMaxDiffSize,
   resolveReasoningEffort,
   resolveRequestChanges,
+  resolveBotReviewSettings,
+  shouldReviewAuthor,
 } from "./repo-config";
 import { getReviewPrompt, getSummaryPrompt, getHelpMessage } from "./prompts/review-prompts";
 import { ReviewerCommand, hasRequiredPermission, parseSlashCommand } from "./commands";
@@ -170,6 +172,22 @@ async function run(): Promise<void> {
     const agentMaxTurnsInput = core.getInput("agent-max-turns") || "";
     const agentMaxDiffSizeInput = core.getInput("agent-max-diff-size") || "";
 
+    const gitUtils = new GitUtils(octokit as any, token);
+    const baseRef = payload.pull_request?.base?.sha;
+    const repoConfig = await loadRepoConfig(
+      octokit, gitUtils, owner, repo, prNumber, configFile, baseRef
+    );
+    if (eventName === "pull_request") {
+      const botSettings = resolveBotReviewSettings(
+        core.getInput("bot-review-policy"), core.getInput("bot-allowlist"), repoConfig
+      );
+      for (const error of botSettings.errors) core.warning(error);
+      if (!shouldReviewAuthor(payload.pull_request?.user, botSettings)) {
+        core.info(`Skipping automatic review of bot-authored PR #${prNumber} (${payload.pull_request?.user?.login || "unknown bot"}); bot-review-policy: ${botSettings.policy}. Authorized maintainers can request /review.`);
+        return;
+      }
+    }
+
     core.info(`Model: ${model || "(not configured)"}`);
 
     core.info(`Running /${command} on PR #${prNumber} in ${owner}/${repo}`);
@@ -221,17 +239,6 @@ async function run(): Promise<void> {
       throw new Error("Input required and not supplied: model");
     }
 
-    const gitUtils = new GitUtils(octokit as any, token);
-    const baseRef = payload.pull_request?.base?.sha;
-    const repoConfig = await loadRepoConfig(
-      octokit,
-      gitUtils,
-      owner,
-      repo,
-      prNumber,
-      configFile,
-      baseRef
-    );
     const maxDiffSize = resolveMaxDiffSize(maxDiffSizeInput, repoConfig);
     const maxComments = resolveMaxComments(maxCommentsInput, repoConfig);
     const jsonResponseMode = resolveJsonResponseMode(jsonResponseModeInput, repoConfig);

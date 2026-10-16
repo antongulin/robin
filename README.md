@@ -308,6 +308,66 @@ GitHub’s servers cannot reach `localhost` on your laptop. For Ollama at home, 
 
 Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to set `max-diff-size`, skip extra paths, and more. The same file is the normal place to change `reasoning-effort` for providers that expose reasoning controls; when it is unset Robin sends no reasoning control and the provider/model decides, and `off` is an explicit way to send nothing. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
 
+### Optional settings index
+
+Existing installations keep their current behavior without adding settings. Set
+workflow inputs in the caller workflow's `with:` block (or the direct action's
+`with:` block). Set repository config on the PR base branch in `.github/robin.yml`;
+use `config-file` for another path.
+See the [complete input reference](docs/ADVANCED.md#all-workflow-inputs) and
+[config precedence](docs/ADVANCED.md#repository-config-file) for validation and exceptions.
+
+Triggers, authors, and permissions:
+
+| Setting | Default / behavior | Where |
+| --- | --- | --- |
+| `review-on-synchronize` | `false`; add the `synchronize` trigger too to review pushes | Workflow input |
+| `bot-review-policy` | `all`; `none` skips GitHub Bot authors, `allowlist` permits listed bots plus humans | Workflow input or repo config |
+| `bot-allowlist` | Empty list; exact case-insensitive logins. Comma-separated in workflow, YAML sequence in config | Workflow input or repo config |
+| `min-command-permission` | `write`; minimum permission for slash commands | Workflow input |
+| `github-token` / `ROBIN_TOKEN` | `github.token`; custom review identity | Direct action input / reusable workflow secret |
+| `runner` | JSON string `"ubuntu-latest"`; runner label or array of labels | Reusable workflow only |
+
+The [bot author filter](docs/ADVANCED.md#automatic-bot-pr-reviews) applies only to
+automatic PR reviews. Authorized `/review` commands can review excluded bot PRs.
+Blank bot inputs defer to base config; `bot-allowlist: '[]'` clears that list in workflow inputs.
+Use `bot-allowlist: []` in repo config to clear it there. Choose `none` to exclude all bots.
+
+Review scope, results, and instructions:
+
+| Setting | Default / behavior | Where |
+| --- | --- | --- |
+| `max-diff-size` | `50000` characters for single-shot reviews | Workflow input or repo config; config wins when input equals `50000` |
+| `max-comments` | `15` inline comments; extra findings stay in the review body | Workflow input or repo config; config wins when input equals `15` |
+| `skip-paths` | No extra exclusions; built-in generated-file exclusions still apply | Repo config only |
+| `fail-on-high` | `false`; optionally fail the check on high findings | Workflow input |
+| `request-changes` | `true`; high findings block the PR. `false` enables advisor mode | Workflow input or repo config |
+| `review-instructions` | Empty; append instructions for code reviews | Workflow input |
+| `review-instructions-file` | `.github/code-reviewer.md`, read from the base branch | Workflow input |
+| `config-file` | `.github/robin.yml`, read from the base branch | Workflow input |
+
+Model requests and repository context:
+
+| Setting | Default / behavior | Where |
+| --- | --- | --- |
+| `llm-api-key` / `LLM_API_KEY` | Direct action default `ollama`; reusable workflow requires the secret | Direct action input / reusable workflow secret |
+| `max-output-tokens` | Unset; provider/model response limit | Workflow input |
+| `reasoning-effort` | Unset; provider/model decides. `off` sends no reasoning configuration | Workflow input or repo config |
+| `llm-timeout-ms` | `600000` milliseconds (10 minutes) | Workflow input |
+| `llm-temperature` | `0.1`, range 0–2; model-specific exceptions apply | Workflow input |
+| `use-json-response-mode` / `json-response-mode` | `true`; request structured review output, with provider fallbacks | Workflow input / repo config key |
+| `agent-mode` | `off` (single-shot); `auto` enables repository tools with fallback | Workflow input or repo config |
+| `agent-max-turns` | `40`, capped at `100` | Workflow input or repo config |
+| `agent-max-diff-size` | `200000` characters up front in agent mode; single-shot fallback uses `max-diff-size` | Workflow input or repo config |
+
+Blank inputs for `request-changes`, `reasoning-effort`, `use-json-response-mode`,
+and the three `agent-*` settings defer to repo config, then to these defaults. Omit the
+boolean `request-changes` input on reusable-workflow callers to defer to repo config.
+The required model and endpoint remain `LLM_MODEL` and `LLM_BASE_URL` secrets
+(direct action inputs `model` and `llm-base-url`).
+
+### Custom reviewer rules
+
 Add `.github/code-reviewer.md` in your repo:
 
 ```md

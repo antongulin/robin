@@ -14,7 +14,91 @@ import {
   resolveMaxDiffSize,
   resolveReasoningEffort,
   resolveRequestChanges,
+  resolveBotReviewSettings,
+  shouldReviewAuthor,
 } from "./repo-config";
+
+describe("bot review policy (BOT1–4)", () => {
+  const bot = { type: "Bot", login: "dependabot[bot]" };
+  const human = { type: "User", login: "automation-user" };
+  const resolve = (policy = "", list = "", yaml = "") =>
+    resolveBotReviewSettings(policy, list, parseRepoConfigYaml(yaml));
+
+  it.each([bot, human, { login: "unknown" }, undefined])("BOT1: defaults to all for %p", author => {
+    expect(shouldReviewAuthor(author, resolve())).toBe(true);
+    expect(shouldReviewAuthor(author, resolve("  ", "  "))).toBe(true);
+  });
+
+  it("BOT2: none excludes only GitHub Bot authors, regardless of login", () => {
+    expect(shouldReviewAuthor(bot, resolve("none"))).toBe(false);
+    expect(shouldReviewAuthor(human, resolve("none"))).toBe(true);
+    expect(shouldReviewAuthor({ login: bot.login }, resolve("none"))).toBe(true);
+    expect(shouldReviewAuthor(undefined, resolve("none"))).toBe(true);
+  });
+
+  it("BOT2: allowlist uses exact case-insensitive logins and permits humans", () => {
+    const settings = resolve("allowlist", " DEPENDABOT[bot], release-bot ");
+    expect(shouldReviewAuthor(bot, settings)).toBe(true);
+    expect(shouldReviewAuthor({ type: "Bot", login: "release-bot" }, settings)).toBe(true);
+    expect(shouldReviewAuthor({ type: "Bot", login: "other-dependabot[bot]" }, settings)).toBe(false);
+    expect(shouldReviewAuthor({ type: "Bot" }, settings)).toBe(false);
+    expect(shouldReviewAuthor(human, settings)).toBe(true);
+    expect(shouldReviewAuthor(bot, resolve("allowlist"))).toBe(false);
+  });
+
+  it("BOT3: parses base YAML sequences, quoted logins and comments; blank inputs defer", () => {
+    const yaml = 'bot-review-policy: "allowlist" # chosen policy\nbot-allowlist:\n  - "DEPENDABOT[bot]" # trusted\n  - release-bot\nmax-comments: 3\n';
+    expect(shouldReviewAuthor(bot, resolve("", "", yaml))).toBe(true);
+    expect(parseRepoConfigYaml(yaml).maxComments).toBe(3);
+    expect(shouldReviewAuthor(bot, resolve("", "other-bot", yaml))).toBe(false);
+    expect(shouldReviewAuthor(bot, resolve("none", "", yaml))).toBe(false);
+    expect(shouldReviewAuthor(bot, resolve("all", "", "bot-review-policy: none"))).toBe(true);
+    expect(shouldReviewAuthor(bot, resolve("", "", "bot-review-policy: none"))).toBe(false);
+  });
+
+  it("BOT3: clears a configured allowlist with [] and treats omitted lists as empty", () => {
+    const yaml = "bot-review-policy: allowlist\nbot-allowlist:\n  - dependabot[bot]";
+    expect(shouldReviewAuthor(bot, resolve("", "[]", yaml))).toBe(false);
+    expect(resolve("", "[]", yaml).errors).toEqual([]);
+    expect(resolve("", "", "bot-review-policy: allowlist\nbot-allowlist: []").errors).toEqual([]);
+    expect(shouldReviewAuthor(bot, resolve("", "", "bot-review-policy: allowlist"))).toBe(false);
+  });
+
+  it.each([
+    ["sometimes", "", ""],
+    ["", "", "bot-review-policy: sometimes"],
+    ["", "", "bot-review-policy:"],
+    ["allowlist", "bot-one,,bot-two", ""],
+    ["allowlist", "bot one", ""],
+    ["", "", "bot-allowlist: dependabot[bot]"],
+    ["", "", "bot-allowlist: true"],
+    ["", "", "bot-allowlist: []\n  - dependabot[bot]"],
+    ["", "", "bot-allowlist:\n  - 42"],
+    ["", "", "bot-allowlist:\n  - true"],
+    ["", "", 'bot-allowlist:\n  - "unterminated'],
+    ["", "", "bot-allowlist:\n  nested: bad"],
+    ["", "", "bot-allowlist:\n  - dependabot[bot]\n  - {login: bad}"],
+  ])("BOT4: diagnoses malformed policy/list without allowing bots (%s %s %s)", (policy, list, yaml) => {
+    const settings = resolve(policy, list, yaml);
+    expect(settings.errors.join(" ")).toMatch(/bot-(review-policy|allowlist)/);
+    expect(shouldReviewAuthor(bot, settings)).toBe(false);
+    expect(shouldReviewAuthor(human, settings)).toBe(true);
+  });
+
+  it("BOT4: valid explicit input overrides malformed config for the same setting", () => {
+    expect(shouldReviewAuthor(bot, resolve("all", "[]", "bot-review-policy: bad\nbot-allowlist: bad"))).toBe(true);
+  });
+
+  it("BOT3: keeps bot sequences separate from skip paths and permits quoted numeric logins", () => {
+    const config = parseRepoConfigYaml('skip-paths:\n  - vendor/**\nbot-review-policy: allowlist\nbot-allowlist:\n  - "42"\n  - "true"\nmax-comments: 4');
+    const settings = resolveBotReviewSettings("", "", config);
+    expect(config.skipPaths).toEqual(["vendor/**"]);
+    expect(config.maxComments).toBe(4);
+    expect(settings.errors).toEqual([]);
+    expect(shouldReviewAuthor({ type: "Bot", login: "42" }, settings)).toBe(true);
+    expect(shouldReviewAuthor({ login: "unknown" }, settings)).toBe(true);
+  });
+});
 
 describe("parseRepoConfigYaml", () => {
   it("parses supported keys", () => {

@@ -15,6 +15,24 @@ jobs:
       id-token: write # npm trusted publishing (OIDC) — no token secret needed
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node - <<'JS'
+          const pkg = require('./package.json');
+          const tag = process.env.RELEASE_TAG;
+          if (!process.env.GITHUB_REF.startsWith('refs/tags/') ||
+              !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag) ||
+              pkg.name !== 'robin-review' || pkg.version !== tag.slice(1)) {
+            throw new Error('Publish requires an exact release tag matching robin-review package.json.');
+          }
+          console.log(`Verified ${pkg.name}@${pkg.version} at ${tag}`);
+          JS
 
       - uses: actions/setup-node@v4
         with:
