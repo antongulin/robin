@@ -56,9 +56,9 @@ Releases are automated with [Release Please](https://github.com/googleapis/relea
 1. Conventional commits on `main` accumulate in a **Release** pull request (`chore: release X.Y.Z`).
 2. Release PRs are verified, merged, and published automatically by the workflow.
 3. The workflow updates `package.json`, `CHANGELOG.md`, creates tag `vX.Y.Z`, and publishes [GitHub release notes](https://github.com/antongulin/robin/releases).
-4. Floating tags `v1` and `v1.0` (major.minor) are updated so `@v1` stays current within the major version.
+4. The workflow moves floating `v<major>` and `v<major>.<minor>` tags to the new release. For v2 and later, it also keeps `v1` at the latest `1.x` tag.
 
-Maintainers: do not tag releases by hand unless the workflow failed; fix or rerun the workflow instead.
+Maintainers: do not create tags or releases by hand. Recover a failed release by fixing or rerunning the established workflow.
 
 ## Low-cost and free setups
 
