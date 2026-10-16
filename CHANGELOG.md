@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.1](https://github.com/antongulin/robin/compare/v2.11.0...v2.11.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* unify Robin branding across GitHub output ([cf27bbb](https://github.com/antongulin/robin/commit/cf27bbb26594c006f7f0ade703baae3dba4dd827))
+
 ## [2.11.0](https://github.com/antongulin/robin/compare/v2.10.4...v2.11.0) (2026-10-16)
 
 
