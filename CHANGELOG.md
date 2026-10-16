@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.0](https://github.com/antongulin/robin/compare/v2.10.4...v2.11.0) (2026-10-16)
+
+
+### Features
+
+* add Robin artwork to reviews and documentation ([8abb2e2](https://github.com/antongulin/robin/commit/8abb2e2ddd1652dc12ff5993784bcdb1302db867))
+
 ## [2.10.4](https://github.com/antongulin/robin/compare/v2.10.3...v2.10.4) (2026-10-16)
 
 
