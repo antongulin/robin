@@ -220,7 +220,7 @@ async function run(): Promise<void> {
       throw new Error("Input required and not supplied: model");
     }
 
-    const gitUtils = new GitUtils(octokit as any);
+    const gitUtils = new GitUtils(octokit as any, token);
     const baseRef = payload.pull_request?.base?.sha;
     const repoConfig = await loadRepoConfig(
       octokit,

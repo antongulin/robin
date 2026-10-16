@@ -632,3 +632,71 @@ No daily quota from this action. Real limits:
 - Provider presets
 - Large PR chunking by file
 - GitHub App install flow
+
+
+## Large pull requests: acquisition and coverage
+
+Robin first requests the complete diff from GitHub's pull request API. If GitHub
+returns its structured `406` / `PullRequest.diff: too_large` rejection, Robin uses
+native Git to acquire the patch. Authentication, rate-limit, network, and other API
+failures remain failures; they do not activate this fallback.
+
+The native fallback supports Linux and macOS runners with Git and `ps` on `PATH`,
+HTTPS access to the repository, and the same explicit `github-token` used by the
+action with permission to fetch its Git objects. This also applies to self-hosted runners. GitHub Enterprise uses the
+runner's `GITHUB_SERVER_URL`. Robin does not retry with an anonymous or alternate
+identity. Fetch authentication is supplied through a private child environment;
+no token is placed in command arguments, repository URLs, or saved Git config.
+Inherited Git configuration, credentials helpers, tracing, hooks, external diff
+commands, and text conversion helpers are disabled. The temporary repository is
+bare and has a private directory. No PR code is checked out or executed. Other
+platforms fail before native acquisition creates storage or starts Git; the
+ordinary API diff path remains available.
+
+Robin captures the PR base SHA, head SHA, and changed-file count, fetches those
+objects with history, and compares their unique common merge base to the captured
+head. It verifies the object identities and NUL-delimited path count, then checks
+the PR metadata again before returning the patch. Renames count as one change.
+The patch includes full object IDs, binary patches, deletions, and mode changes.
+Missing history, ambiguous ancestry, changed metadata, invalid encoding, failed
+cleanup, or incomplete acquisition aborts the review. Each Git command has a
+120-second execution deadline and independent 32 MiB byte limits for stdout and
+stderr; exceeding either fails rather than returning a patch prefix. Git runs
+without a shell in its own POSIX process group. On failure or leader exit Robin
+sends SIGKILL to that owned group, waits for the direct child's `close` event,
+and confirms that no live group members remain before returning or removing
+storage. Inactive zombies do not use the repository; reaping nonchild descendants
+belongs to their OS parent, rather than Robin.
+
+Shutdown confirmation has a separate five-second bound. When signal-based
+existence checks still see a group, Robin uses `ps -A -o pgid= -o stat=` to
+check for live members. The runner must permit process-group signals and process
+status visibility; Linux needs a compatible procps-style `ps`, and macOS's system
+`ps` is supported. Each status probe has a one-second deadline, a 1 MiB stdout
+bound, a stripped environment, and fixed arguments without credentials or command
+lines. A missing, restricted, or unusable probe cannot establish shutdown.
+
+If child closure or group shutdown cannot be confirmed, acquisition fails with
+`NATIVE_DIFF_LIFECYCLE_FAILED` and preserves its private `robin-diff-*` directory
+under the OS temporary directory. An operator may remove that exceptional residue
+after independently confirming its processes have stopped. A directory removal
+failure instead reports `NATIVE_DIFF_CLEANUP_FAILED` and also leaves recovery to
+the operator. Git, process, and cleanup diagnostics are replaced with fixed error
+codes without raw causes.
+
+Acquiring the complete patch does not raise the review's `max-diff-size` or
+`agent-max-diff-size`. Repository configuration is loaded from the PR base, so a
+configuration added only in the PR cannot enlarge that PR's review. Existing
+`skip-paths` and generated-file exclusions still apply, including lockfiles and
+`dist/`. Set a suitable base-branch cap and narrowly scoped exclusions when a
+large patch must reach the model. Account for line annotations, prompt overhead,
+and output reserve when checking the provider's context capacity. A changed-file
+list does not prove that all file contents reached the outgoing request.
+
+Generated lockfiles and rebuilt bundles need separate verification when filtered
+out; do not describe them as model-reviewed. Verify dependency pins and resolved
+versions with the package manager's reproducible install and CI. Rebuild committed
+`dist/index.js` from the reviewed source and compare the artifact. Binary patches
+preserve bytes, but do not establish semantic review of binary assets. Local Git
+and loopback-provider tests do not prove private GitHub fetch permissions or a
+live provider's acceptance of a particular large request.

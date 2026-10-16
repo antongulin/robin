@@ -69,6 +69,7 @@ jobs:
           llm-api-key: ${{ secrets.LLM_API_KEY }}
           llm-base-url: ${{ secrets.LLM_BASE_URL }}
           model: ${{ secrets.LLM_MODEL }}
+          max-diff-size: "100000"
           fail-on-high: "false"
           # This repository dogfoods Robin on every push; consumers opt in the same way.
           review-on-synchronize: "true"

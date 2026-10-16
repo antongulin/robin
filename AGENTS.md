@@ -97,6 +97,7 @@ user documentation; `skills/robin/` is the companion chat skill shipped for codi
 | Path | Owns |
 | --- | --- |
 | `src/main.ts` | Entry point: event/trigger policy, input parsing, orchestration |
+| `src/git-utils.ts`, `src/native-diff.ts`, `src/native-process.ts` | PR diff API, authenticated native Git fallback, and owned process-group lifecycle; see runner and coverage limits in `docs/ADVANCED.md` |
 | `src/llm-client.ts`, `src/llm-retry.ts`, `src/llm-provider.ts` | LLM request shape, retries, provider detection |
 | `src/repo-config.ts` | `.github/robin.yml` parsing and input-vs-config resolvers |
 | `src/agent-review.ts`, `src/review-tools.ts`, `src/repo-snapshot.ts` | Multi-turn agent review and its read-only tools |
