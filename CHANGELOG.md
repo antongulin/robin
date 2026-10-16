@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.0](https://github.com/antongulin/robin/compare/v2.11.1...v2.12.0) (2026-10-16)
+
+
+### Features
+
+* add bot review controls and resumable releases ([#110](https://github.com/antongulin/robin/issues/110)) ([87d113f](https://github.com/antongulin/robin/commit/87d113fd0daf7d5cd96a9b152d2b2213cc97f03f))
+
 ## [2.11.1](https://github.com/antongulin/robin/compare/v2.11.0...v2.11.1) (2026-10-16)
 
 
