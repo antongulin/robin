@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://www.robinreview.dev/"><img src="https://www.robinreview.dev/brand/repository.png" width="100%" alt="Robin Review — AI code reviews on your terms" /></a>
+  <a href="https://www.robinreview.dev/"><img src="https://www.robinreview.dev/brand/repository.png?v=feee03b10ca6" width="100%" alt="Robin — The Robin Hood of code review. Free AI code reviews for every pull request." /></a>
 </p>
 
 # Robin
