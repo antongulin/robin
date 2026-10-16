@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.4](https://github.com/antongulin/robin/compare/v2.10.3...v2.10.4) (2026-10-16)
+
+
+### Documentation
+
+* clarify floating release tag updates ([641f731](https://github.com/antongulin/robin/commit/641f7318b77a45a7155a108da38c03e9957b07d7))
+
 ## [2.10.3](https://github.com/antongulin/robin/compare/v2.10.2...v2.10.3) (2026-10-16)
 
 
