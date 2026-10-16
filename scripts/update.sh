@@ -15,8 +15,8 @@ set -euo pipefail
 
 REPO_URL="https://github.com/antongulin/robin"
 
-info() { printf '\033[0;32m🏹 %s\033[0m\n' "$1"; }
-die()  { printf '\033[0;31m🏹 %s\033[0m\n' "$1" >&2; exit 1; }
+info() { printf '\033[0;32mRobin: %s\033[0m\n' "$1"; }
+die()  { printf '\033[0;31mRobin: %s\033[0m\n' "$1" >&2; exit 1; }
 
 command -v npx >/dev/null 2>&1 \
   || die "npx (Node.js) not found — install Node, then re-run, or: npx -y skills add $REPO_URL --skill robin --agent '*' --global --yes"

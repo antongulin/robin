@@ -10,8 +10,6 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node 24](https://img.shields.io/badge/runtime-node24-brightgreen.svg)](action.yml)
 
-![A Robin review on a pull request — summary, severity-tiered findings, and a teammate-style note](docs/assets/robin-review.png)
-
 ## What you get
 
 - A review when you open a pull request (or when someone comments `/robin`)
@@ -19,9 +17,7 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 - Optional reviews that check the rest of your repo (callers, definitions) when you enable agent mode and your model supports tool calling
 - Your choice of AI provider — including **free** options
 
-When there's nothing worth flagging, Robin says so instead of inventing nitpicks:
-
-![A clean Robin pass on a pull request — no issues found](docs/assets/robin-review-clean.png)
+When there's nothing worth flagging, Robin reports **No issues found**.
 
 You are **not** signing up for a separate review bot service. The workflow runs in your repo and calls the AI URL you configure.
 
@@ -241,7 +237,11 @@ workflows stay intact when you rerun either installer; update their refs manuall
 The bot posts a status comment, then a review with severity counts:
 
 ```md
-## 🏹 Robin
+## <img src="https://www.robinreview.dev/brand/favicon-48.png" width="24" height="24" alt="" /> The <a href="https://www.robinreview.dev/">Robin</a> Hood of code review
+
+<!-- :bow_and_arrow: Robin -->
+
+> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass.
 
 🚨 **1 High** | ⚠️ **1 Medium** | 💡 **2 Suggestions**
 

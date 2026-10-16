@@ -29,7 +29,7 @@ describe("StatusReporter", () => {
     jest.useRealTimers();
   });
 
-  it("renders agent turn, tool count, current activity, provider state, and version", () => {
+  it("renders agent turn, tool count, current activity, provider state, and version", async () => {
     const reporter = makeReporter();
     reporter.setMode("code review (agent)");
     reporter.setAgentProgress({
@@ -45,8 +45,7 @@ describe("StatusReporter", () => {
     clock = 134_000;
 
     const body = reporter.render();
-    expect(body).toContain(":bow_and_arrow: Robin");
-    expect(body).not.toMatch(/<img\b|!\[/);
+    expectBrandedStatus(body);
     expect(body).toContain("Still working on this pull request · 2m 14s elapsed");
     expect(body).toContain("**Agent:** turn 3 of 40 · 7 tool calls · 1 compaction");
     expect(body).toContain("**Now:** Thinking about the next step (2m 14s)");
@@ -54,7 +53,11 @@ describe("StatusReporter", () => {
     expect(body).toContain("Mode: code review (agent)");
     expect(body).toContain("Model: gpt-6-astra");
     expect(body).toContain("Robin: v2.8.0 · antongulin/robin@main (9e6bb3d)");
-    void reporter.close();
+    await jest.advanceTimersByTimeAsync(3000);
+    expectBrandedStatus(writes[writes.length - 1]);
+    expect(writes[writes.length - 1]).toContain("**Agent:** turn 3 of 40 · 7 tool calls · 1 compaction");
+    expect(writes[writes.length - 1]).toContain("**Provider:** Waiting for provider (attempt 1/3)…");
+    await reporter.close();
   });
 
   it("drops the provider line while a tool runs", () => {
@@ -89,6 +92,7 @@ describe("StatusReporter", () => {
     await jest.advanceTimersByTimeAsync(3000);
     expect(writes).toHaveLength(2);
     expect(writes[1]).toContain("**Now:** third");
+    writes.forEach(expectBrandedStatus);
     await reporter.close();
   });
 
@@ -102,6 +106,9 @@ describe("StatusReporter", () => {
     await jest.advanceTimersByTimeAsync(30_000);
     expect(writes).toHaveLength(2);
     expect(writes[1]).toContain("30s elapsed");
+    expect(writes[1]).toContain("**Now:** Waiting on the model");
+    expect(writes[1]).toContain("Model: gpt-6-astra");
+    writes.forEach(expectBrandedStatus);
     await reporter.close();
   });
 
@@ -126,3 +133,12 @@ describe("formatDuration", () => {
     expect(formatDuration(-5)).toBe("0s");
   });
 });
+
+function expectBrandedStatus(body: string): void {
+  expect(body).toMatch(/^## <img\b/);
+  expect(body).toContain('alt="" /> The <a href="https://www.robinreview.dev/">Robin</a> Hood of code review');
+  expect(body.match(/<img\b/g)).toHaveLength(1);
+  expect(body.match(/<a\b/g)).toHaveLength(1);
+  expect(body.match(/<!-- :bow_and_arrow: Robin -->/g)).toHaveLength(1);
+  expect(body.replace(/<!--[\s\S]*?-->/g, "")).not.toMatch(/:bow_and_arrow:|🏹/);
+}

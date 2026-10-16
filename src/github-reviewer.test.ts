@@ -1,4 +1,4 @@
-import { GitHubReviewer } from "./github-reviewer";
+import { GitHubReviewer, ROBIN_SIGNATURE } from "./github-reviewer";
 import { StructuredReview } from "./review-parser";
 
 describe("GitHubReviewer", () => {
@@ -35,8 +35,12 @@ describe("GitHubReviewer", () => {
     for (const [request] of createReview.mock.calls) {
       expect(request).toMatchObject({ owner: "o", repo: "r", pull_number: 7, event: "COMMENT" });
       expect(request.body.match(/<img\b/g)).toHaveLength(1);
-      expect(request.body).toMatch(/<img [^>]*width="24" height="24" alt=""/);
-      expect(request.body).toContain(":bow_and_arrow: Robin");
+      expect(request.body.match(/<a\b/g)).toHaveLength(1);
+      expect(request.body).toMatch(/^## <img [^>]*width="24" height="24" alt="" \/> The <a href="https:\/\/www\.robinreview\.dev\/">Robin<\/a> Hood of code review/);
+      expect(request.body.match(/<!-- :bow_and_arrow: Robin -->/g)).toHaveLength(1);
+      expect(request.body.match(/Hood of code review/g)).toHaveLength(1);
+      expect(request.body).not.toContain("Free for every PR.");
+      expect(request.body.replace(/<!--[\s\S]*?-->/g, "")).not.toContain(":bow_and_arrow:");
       expect(request.body).toContain(findings.summary);
       expect(request.body).toContain("**1 Medium**");
       expect(request.body).toContain("**1 Low**");
@@ -48,7 +52,8 @@ describe("GitHubReviewer", () => {
     expect(inline[0]).toMatchObject({ path: "src/value.ts", line: 2, side: "RIGHT" });
     expect(inline[0].body).toContain("The value needs validation.");
     expect(inline[0].body).toContain("```suggestion\nconst value = validate(input);\n```");
-    expect(inline[0].body).not.toMatch(/<img\b|!\[/);
+    expect(inline[0].body).toContain("**Robin**");
+    expect(inline[0].body).not.toMatch(/<img\b|!\[|Hood of code review|:bow_and_arrow:/);
     expect(createReview.mock.calls[0][0].body).not.toContain("The value needs validation.");
     if (fallback) {
       const retry = createReview.mock.calls[1][0];
@@ -85,6 +90,7 @@ describe("GitHubReviewer", () => {
     });
 
     expect(createReview).toHaveBeenCalledTimes(1);
+    expect(decoratedBody).toContain(ROBIN_SIGNATURE);
     expect(dismissReview.mock.calls.map(([request]) => request.review_id)).toEqual([10, 11]);
     for (const [request] of dismissReview.mock.calls) {
       expect(request).toMatchObject({ owner: "o", repo: "r", pull_number: 7 });

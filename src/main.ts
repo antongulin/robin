@@ -13,8 +13,8 @@ import {
 import { GitUtils } from "./git-utils";
 import { ReviewParser, StructuredReview } from "./review-parser";
 import { shouldRetryStructuredReview } from "./review-retry";
-import { GitHubReviewer, ROBIN_SIGNATURE } from "./github-reviewer";
-import { ROBIN_MARK } from "./brand";
+import { GitHubReviewer } from "./github-reviewer";
+import { buildRobinHeader } from "./brand";
 import {
   DEFAULT_LLM_TEMPERATURE,
   DEFAULT_LLM_TIMEOUT_MS,
@@ -361,7 +361,7 @@ async function run(): Promise<void> {
         owner,
         repo,
         issue_number: prNumber,
-        body: ["## " + ROBIN_MARK + " " + ROBIN_SIGNATURE + " · Summary", "", reviewText].join("\n"),
+        body: [buildRobinHeader(" · Summary"), "", reviewText].join("\n"),
       });
       await reporter.close();
       await updateStatusComment(
@@ -460,7 +460,7 @@ async function postStatusComment(
       repo,
       issue_number: issueNumber,
       body: [
-        "## " + ROBIN_SIGNATURE,
+        buildRobinHeader(),
         "",
         ":eyes: On it — taking a look at this pull request.",
         "",
@@ -506,7 +506,7 @@ function buildCompletedStatusBody(
   const fallbackNotice = buildReasoningFallbackNotice(reasoningFallbackReason);
   if (command === "summary") {
     return [
-      "## " + ROBIN_SIGNATURE,
+      buildRobinHeader(),
       "",
       ":white_check_mark: Summary's ready above.",
       ...(fallbackNotice ? ["", fallbackNotice] : []),
@@ -524,7 +524,7 @@ function buildCompletedStatusBody(
     : `I flagged ${totalFindings} thing${totalFindings === 1 ? "" : "s"} worth a look.`;
 
   return [
-    "## " + ROBIN_SIGNATURE,
+    buildRobinHeader(),
     "",
     `:white_check_mark: Review done. ${result}`,
     ...(fallbackNotice ? ["", fallbackNotice] : []),
@@ -539,7 +539,7 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
   const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
 
   return [
-    "## " + ROBIN_SIGNATURE,
+    buildRobinHeader(),
     "",
     ":white_check_mark: Nothing to review here — only ignored paths changed.",
     "",
@@ -552,7 +552,7 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
 
 function buildFailedStatusBody(errorMessage: string, command: "review" | "summary"): string {
   return [
-    "## " + ROBIN_SIGNATURE,
+    buildRobinHeader(),
     "",
     `:warning: I couldn't finish the ${command === "summary" ? "summary" : "review"} this time.`,
     "",
@@ -612,7 +612,7 @@ async function isSupersededByNewerRun(octokit: any, owner: string, repo: string)
 
 function buildSupersededStatusBody(command: "review" | "summary"): string {
   return [
-    "## " + ROBIN_SIGNATURE,
+    buildRobinHeader(),
     "",
     `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run.`,
     "",
@@ -623,7 +623,7 @@ function buildSupersededStatusBody(command: "review" | "summary"): string {
 
 function buildCancelledStatusBody(command: "review" | "summary"): string {
   return [
-    "## " + ROBIN_SIGNATURE,
+    buildRobinHeader(),
     "",
     `:warning: The ${command === "summary" ? "summary" : "review"} was interrupted before it finished.`,
     "",

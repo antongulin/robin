@@ -12,10 +12,10 @@ const fs = require("fs");
 const path = require("path");
 const cp = require("child_process");
 
-const info = (msg) => console.log("\x1b[0;32m🏹 " + msg + "\x1b[0m");
-const warn = (msg) => console.log("\x1b[0;33m🏹 " + msg + "\x1b[0m");
+const info = (msg) => console.log("\x1b[0;32mRobin: " + msg + "\x1b[0m");
+const warn = (msg) => console.log("\x1b[0;33mRobin: " + msg + "\x1b[0m");
 const die = (msg) => {
-  console.error("\x1b[0;31m🏹 " + msg + "\x1b[0m");
+  console.error("\x1b[0;31mRobin: " + msg + "\x1b[0m");
   process.exit(1);
 };
 

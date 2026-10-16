@@ -17,9 +17,9 @@ WORKFLOW_PATH=".github/workflows/robin.yml"
 WORKFLOW_DIR=".github/workflows"
 ARCHIVE_DIR=".github/robin-workflow-archive"
 
-info() { printf '\033[0;32m🏹 %s\033[0m\n' "$1"; }
-warn() { printf '\033[0;33m🏹 %s\033[0m\n' "$1"; }
-die()  { printf '\033[0;31m🏹 %s\033[0m\n' "$1" >&2; exit 1; }
+info() { printf '\033[0;32mRobin: %s\033[0m\n' "$1"; }
+warn() { printf '\033[0;33mRobin: %s\033[0m\n' "$1"; }
+die()  { printf '\033[0;31mRobin: %s\033[0m\n' "$1" >&2; exit 1; }
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
   || die "Not a git repository. cd into your repo and run this again."
