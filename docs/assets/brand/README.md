@@ -16,8 +16,9 @@ descriptive alt text for standalone artwork and empty alt text for decorative ma
 beside a label. Fixed-size marks should use explicit pixel dimensions; responsive
 banners should fill their container while preserving intrinsic proportions, without
 a forced height. All action-authored top-level GitHub bodies, including progress,
-final statuses and help, share one decorative bird beside accessible linked
-`The Robin`, followed by ` Hood of code review`. The link points to
+final statuses and help, share one decorative bird followed by plain ` The `,
+linked `Robin`, and plain ` Hood of code review`. Only `Robin` is clickable;
+the decorative image stays outside the link with empty alt text. The link points to
 `https://www.robinreview.dev/`; a summary may add its suffix. Each body keeps
 `:bow_and_arrow: Robin` once in a hidden HTML comment for legacy recognition.
 Inline findings use plain labels without images or taglines. Terminal prefixes use

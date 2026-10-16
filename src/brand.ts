@@ -3,7 +3,7 @@ export const ROBIN_MARK = '<img src="https://www.robinreview.dev/brand/favicon-4
 
 /** Accessible linked heading shared by top-level GitHub bodies. */
 export const ROBIN_HEADER =
-  '<a href="https://www.robinreview.dev/">' + ROBIN_MARK + ' The Robin</a> Hood of code review';
+  ROBIN_MARK + ' The <a href="https://www.robinreview.dev/">Robin</a> Hood of code review';
 
 /** Compatibility marker for recognizing Robin reviews, including legacy visible signatures. */
 export const ROBIN_SIGNATURE = ":bow_and_arrow: Robin";

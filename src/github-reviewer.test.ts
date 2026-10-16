@@ -36,7 +36,7 @@ describe("GitHubReviewer", () => {
       expect(request).toMatchObject({ owner: "o", repo: "r", pull_number: 7, event: "COMMENT" });
       expect(request.body.match(/<img\b/g)).toHaveLength(1);
       expect(request.body.match(/<a\b/g)).toHaveLength(1);
-      expect(request.body).toMatch(/<a href="https:\/\/www\.robinreview\.dev\/">\s*<img [^>]*width="24" height="24" alt="" \/> The Robin<\/a> Hood of code review/);
+      expect(request.body).toMatch(/^## <img [^>]*width="24" height="24" alt="" \/> The <a href="https:\/\/www\.robinreview\.dev\/">Robin<\/a> Hood of code review/);
       expect(request.body.match(/<!-- :bow_and_arrow: Robin -->/g)).toHaveLength(1);
       expect(request.body.match(/Hood of code review/g)).toHaveLength(1);
       expect(request.body).not.toContain("Free for every PR.");

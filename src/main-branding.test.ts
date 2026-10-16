@@ -20,8 +20,8 @@ const finding = {
 };
 
 function expectBrandedBody(body: string, suffix = ""): void {
-  expect(body).toMatch(/^## <a href="https:\/\/www\.robinreview\.dev\/">/);
-  expect(body).toContain('width="24" height="24" alt="" /> The Robin</a> Hood of code review' + suffix + "\n\n");
+  expect(body).toMatch(/^## <img\b/);
+  expect(body).toContain('width="24" height="24" alt="" /> The <a href="https://www.robinreview.dev/">Robin</a> Hood of code review' + suffix + "\n\n");
   expect(body.match(/<img\b/g)).toHaveLength(1);
   expect(body.match(/<a\b/g)).toHaveLength(1);
   expect(body.match(/<!-- :bow_and_arrow: Robin -->/g)).toHaveLength(1);

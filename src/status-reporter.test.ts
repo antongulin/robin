@@ -135,9 +135,10 @@ describe("formatDuration", () => {
 });
 
 function expectBrandedStatus(body: string): void {
-  expect(body).toMatch(/^## <a href="https:\/\/www\.robinreview\.dev\/">/);
-  expect(body).toContain('alt="" /> The Robin</a> Hood of code review');
+  expect(body).toMatch(/^## <img\b/);
+  expect(body).toContain('alt="" /> The <a href="https://www.robinreview.dev/">Robin</a> Hood of code review');
   expect(body.match(/<img\b/g)).toHaveLength(1);
+  expect(body.match(/<a\b/g)).toHaveLength(1);
   expect(body.match(/<!-- :bow_and_arrow: Robin -->/g)).toHaveLength(1);
   expect(body.replace(/<!--[\s\S]*?-->/g, "")).not.toMatch(/:bow_and_arrow:|🏹/);
 }
