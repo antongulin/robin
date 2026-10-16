@@ -45,6 +45,8 @@ describe("robin-review CLI", () => {
     const output = run();
 
     expect(output).toContain("is already current");
+    expect(output).toContain("Robin:");
+    expect(output).not.toMatch(/🏹|:bow_and_arrow:|<img|Hood of code review/);
     expect(fs.readFileSync(workflowPath, "utf8")).toBe(before);
     expect(fs.existsSync(path.join(dir, ".github", "robin-workflow-archive"))).toBe(false);
   });
@@ -129,7 +131,17 @@ describe("robin-review CLI", () => {
     fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
     fs.writeFileSync(workflowPath, "name: Unrelated automation\n");
 
-    expect(() => run()).toThrow();
+    let failure: { stderr: Buffer; status: number } | undefined;
+    try {
+      run();
+    } catch (error) {
+      failure = error as typeof failure;
+    }
+    expect(failure?.status).toBe(1);
+    const stderr = failure!.stderr.toString();
+    expect(stderr).toContain("Robin:");
+    expect(stderr).toContain("exists but is not a Robin workflow.");
+    expect(stderr).not.toMatch(/🏹|:bow_and_arrow:|<img|Hood of code review/);
     expect(fs.readFileSync(workflowPath, "utf8")).toBe("name: Unrelated automation\n");
   });
 

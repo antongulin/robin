@@ -1,4 +1,4 @@
-import { ROBIN_MARK } from "../brand";
+import { buildRobinHeader } from "../brand";
 
 const REVIEWER_ROLE = [
   "You are a Senior Code Reviewer with deep expertise in software architecture, design patterns, and best practices.",
@@ -180,7 +180,9 @@ export function getSummaryPrompt(): string {
 
 export function getHelpMessage(): string {
   return [
-    ROBIN_MARK + " Available commands for **Robin**:",
+    buildRobinHeader(),
+    "",
+    "Available commands for **Robin**:",
     "",
     "| Command | Description |",
     "|---|---|",

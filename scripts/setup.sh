@@ -4,5 +4,5 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-printf '\033[0;33m🏹 scripts/setup.sh now delegates to scripts/install.sh.\033[0m\n'
+printf '\033[0;33mRobin: scripts/setup.sh now delegates to scripts/install.sh.\033[0m\n'
 exec "$SCRIPT_DIR/install.sh"

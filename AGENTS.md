@@ -104,15 +104,21 @@ user documentation; `skills/robin/` is the companion chat skill shipped for codi
 | `src/prompts/`, `src/review-parser.ts` | Review prompts, JSON schema, response parsing |
 | `action.yml`, `.github/workflows/review.yml` | Action inputs and reusable-workflow schema (forwarded 1:1) |
 | `docs/`, `README.md`, `llms.txt` | User-facing setup, behavior, and troubleshooting |
-| `docs/assets/brand/`, `src/brand.ts` | Compact artwork copies/provenance and decorative review/help mark |
+| `docs/assets/brand/`, `src/brand.ts` | Compact artwork copies/provenance and shared GitHub heading |
 
 **Brand ownership.** The website owns artwork masters and deterministic exports at
 `https://www.robinreview.dev/brand/`. Core keeps exact lightweight copies and source
 credits in `docs/assets/brand/`; refresh them from the website build rather than adding
 an image generator here. Use the full bird for introductory artwork and the head for
-small marks. Review and summary bodies and help use at most one decorative mark;
-inline findings, progress comments and terminal output stay text-only. Preserve the
-exact `ROBIN_SIGNATURE` text and recognition logic independently of presentation.
+small marks. Every action-authored top-level GitHub body (initial, progress, completed,
+failed, skipped, cancelled, superseded, review, summary and help) uses the shared
+`buildRobinHeader`: one decorative bird beside accessible linked `The Robin`,
+followed by ` Hood of code review`, pointing to `https://www.robinreview.dev/`.
+A summary suffix may follow the heading. Include the exact `ROBIN_SIGNATURE`
+(`:bow_and_arrow: Robin`) once in a hidden HTML comment for compatibility; keep
+recognition behavior and the reviewer re-export unchanged. Inline finding labels
+stay plain, with no decorative image or tagline. CLI/install/setup/update prefixes
+use plain `Robin:`, with no HTML, image or tagline.
 
 **Documentation ownership.** This root `AGENTS.md` is the documentation contract for the whole
 repository: the source, workflow, docs, and skill surfaces above share this single ownership

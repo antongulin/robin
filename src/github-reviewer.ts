@@ -1,10 +1,9 @@
 import { Octokit } from "@octokit/rest";
 import * as core from "@actions/core";
 import { StructuredReview, ReviewFinding } from "./review-parser";
-import { ROBIN_HEADER } from "./brand";
+import { buildRobinHeader, ROBIN_SIGNATURE } from "./brand";
 
-/** Marker present in every Robin review body; used to recognize Robin's own reviews. */
-export const ROBIN_SIGNATURE = ":bow_and_arrow: Robin";
+export { ROBIN_SIGNATURE } from "./brand";
 
 export class GitHubReviewer {
   private octokit: Octokit;
@@ -281,9 +280,7 @@ export class GitHubReviewer {
   private buildReviewBody(findings: StructuredReview, postedFindings: Set<ReviewFinding>): string {
     const parts: string[] = [];
 
-    parts.push("## " + ROBIN_HEADER);
-    parts.push("");
-    parts.push("<!-- " + ROBIN_SIGNATURE + " -->");
+    parts.push(buildRobinHeader());
     parts.push("");
     parts.push(
       "> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass."
@@ -334,12 +331,6 @@ export class GitHubReviewer {
         parts.push(this.formatUnpostedFinding(i + 1, unpostedFindings[i]));
       }
     }
-
-    parts.push("");
-    parts.push("---");
-    parts.push(
-      "*[Robin](https://robinreview.dev) — the Robin Hood of code review. Free for every PR.*"
-    );
 
     return parts.join("\n");
   }

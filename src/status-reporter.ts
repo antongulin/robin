@@ -1,4 +1,4 @@
-import { ROBIN_SIGNATURE } from "./github-reviewer";
+import { buildRobinHeader } from "./brand";
 
 export interface AgentProgress {
   turn: number;
@@ -94,7 +94,7 @@ export class StatusReporter {
   render(): string {
     const now = this.options.now();
     const lines = [
-      "## " + ROBIN_SIGNATURE,
+      buildRobinHeader(),
       "",
       `:hourglass_flowing_sand: Still working on this pull request · ${formatDuration(now - this.startedAt)} elapsed`,
       "",

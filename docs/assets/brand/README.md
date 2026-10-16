@@ -10,14 +10,18 @@ byte for byte from the website build; core needs no image-generation dependency.
 | [`mascot-320.webp`](mascot-320.webp) | 320×320 | 15,770 | Full-bird introductory artwork; display around 160–200px |
 | [`favicon-48.png`](favicon-48.png) | 48×48 | 4,941 | Compact head beside a text label; display at 24–32px |
 
-README and review/help images use stable absolute URLs under
+README and GitHub body images use stable absolute URLs under
 `https://www.robinreview.dev/brand/`, so GitHub and npm can resolve them. Keep
 descriptive alt text for standalone artwork and empty alt text for decorative marks
 beside a label. Fixed-size marks should use explicit pixel dimensions; responsive
 banners should fill their container while preserving intrinsic proportions, without
-a forced height. Review and summary headers keep the readable `:bow_and_arrow: Robin`
-signature. Inline findings and progress stay text-only; the image does not change the
-GitHub account posting a review.
+a forced height. All action-authored top-level GitHub bodies, including progress,
+final statuses and help, share one decorative bird beside accessible linked
+`The Robin`, followed by ` Hood of code review`. The link points to
+`https://www.robinreview.dev/`; a summary may add its suffix. Each body keeps
+`:bow_and_arrow: Robin` once in a hidden HTML comment for legacy recognition.
+Inline findings use plain labels without images or taglines. Terminal prefixes use
+plain `Robin:`. This presentation does not change the GitHub account posting a review.
 
 To refresh these copies, take the same-named files from the website's generated
 `dist/brand/` after a successful build and delivery. Copy the creative prompt from
@@ -27,6 +31,19 @@ its source assets, then verify dimensions, byte equality and these SHA256 values
 2c21d627f5168b197583853856f50e2b5c0fbd456e9773837a990a094896e02c  mascot-320.webp
 d0ecb628005d556054a098f9b4e1ae489a8b0b566f42b127dc8b75e0fe0377d6  favicon-48.png
 33ef165c14c4e71a965659556bbd972a3ee51e9eb089d38b0400fbfc16a8bb1c  mascot-head-prompt.txt
+```
+
+## Historical screenshots
+
+[`../robin-review.png`](../robin-review.png) and
+[`../robin-review-clean.png`](../robin-review-clean.png) preserve earlier GitHub
+output with visible bow headings and the former promotional footer. They are
+historical captures, not examples of current output, and their original bytes
+remain unchanged. The current README uses a Markdown output sample instead.
+
+```text
+8a082b9108903fbf3b6c8f0e86789029eebcad8767c296c55ac5a291e0a11ae7  robin-review.png
+a14d9dc76dce8c0b79a5aa02c7b3e0e7543d4a0e22a08c6dfa6a48384a39f3a0  robin-review-clean.png
 ```
 
 ## Source credits

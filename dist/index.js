@@ -343,11 +343,18 @@ function assistantToolMessage(content, calls) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ROBIN_HEADER = exports.ROBIN_MARK = void 0;
+exports.ROBIN_SIGNATURE = exports.ROBIN_HEADER = exports.ROBIN_MARK = void 0;
+exports.buildRobinHeader = buildRobinHeader;
 /** Decorative presentation only; keep Robin's text signature independent of this image. */
 exports.ROBIN_MARK = '<img src="https://www.robinreview.dev/brand/favicon-48.png" width="24" height="24" alt="" />';
-/** Decorative review and summary header; help keeps its compact mark-only format. */
+/** Accessible linked heading shared by top-level GitHub bodies. */
 exports.ROBIN_HEADER = '<a href="https://www.robinreview.dev/">' + exports.ROBIN_MARK + ' The Robin</a> Hood of code review';
+/** Compatibility marker for recognizing Robin reviews, including legacy visible signatures. */
+exports.ROBIN_SIGNATURE = ":bow_and_arrow: Robin";
+/** One heading and hidden recognition marker per top-level GitHub body. */
+function buildRobinHeader(suffix = "") {
+    return "## " + exports.ROBIN_HEADER + suffix + "\n\n<!-- " + exports.ROBIN_SIGNATURE + " -->";
+}
 //# sourceMappingURL=brand.js.map
 
 /***/ }),
@@ -701,8 +708,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GitHubReviewer = exports.ROBIN_SIGNATURE = void 0;
 const core = __importStar(__nccwpck_require__(7484));
 const brand_1 = __nccwpck_require__(4444);
-/** Marker present in every Robin review body; used to recognize Robin's own reviews. */
-exports.ROBIN_SIGNATURE = ":bow_and_arrow: Robin";
+var brand_2 = __nccwpck_require__(4444);
+Object.defineProperty(exports, "ROBIN_SIGNATURE", ({ enumerable: true, get: function () { return brand_2.ROBIN_SIGNATURE; } }));
 class GitHubReviewer {
     octokit;
     maxComments;
@@ -719,7 +726,7 @@ class GitHubReviewer {
         return (review.id !== newReviewId &&
             review.state === "CHANGES_REQUESTED" &&
             review.user?.type === "Bot" &&
-            (review.body || "").includes(exports.ROBIN_SIGNATURE));
+            (review.body || "").includes(brand_1.ROBIN_SIGNATURE));
     }
     /**
      * Dismiss earlier Robin CHANGES_REQUESTED reviews so a stale blocking review
@@ -915,9 +922,7 @@ class GitHubReviewer {
      */
     buildReviewBody(findings, postedFindings) {
         const parts = [];
-        parts.push("## " + brand_1.ROBIN_HEADER);
-        parts.push("");
-        parts.push("<!-- " + exports.ROBIN_SIGNATURE + " -->");
+        parts.push((0, brand_1.buildRobinHeader)());
         parts.push("");
         parts.push("> **Heads up:** this is a point-in-time review. Push fixes freely, then comment `/robin` whenever you want another pass.");
         parts.push("");
@@ -962,9 +967,6 @@ class GitHubReviewer {
                 parts.push(this.formatUnpostedFinding(i + 1, unpostedFindings[i]));
             }
         }
-        parts.push("");
-        parts.push("---");
-        parts.push("*[Robin](https://robinreview.dev) — the Robin Hood of code review. Free for every PR.*");
         return parts.join("\n");
     }
     formatUnpostedFinding(index, finding) {
@@ -2266,7 +2268,7 @@ async function run() {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: ["## " + brand_1.ROBIN_HEADER + " · Summary", "", "<!-- " + github_reviewer_1.ROBIN_SIGNATURE + " -->", "", reviewText].join("\n"),
+                body: [(0, brand_1.buildRobinHeader)(" · Summary"), "", reviewText].join("\n"),
             });
             await reporter.close();
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildCompletedStatusBody("summary", undefined, reasoningNoticeReason()));
@@ -2330,7 +2332,7 @@ async function postStatusComment(octokit, owner, repo, issueNumber, command, mod
             repo,
             issue_number: issueNumber,
             body: [
-                "## " + github_reviewer_1.ROBIN_SIGNATURE,
+                (0, brand_1.buildRobinHeader)(),
                 "",
                 ":eyes: On it — taking a look at this pull request.",
                 "",
@@ -2365,7 +2367,7 @@ function buildCompletedStatusBody(command, findings, reasoningFallbackReason, re
     const fallbackNotice = (0, reasoning_fallback_1.buildReasoningFallbackNotice)(reasoningFallbackReason);
     if (command === "summary") {
         return [
-            "## " + github_reviewer_1.ROBIN_SIGNATURE,
+            (0, brand_1.buildRobinHeader)(),
             "",
             ":white_check_mark: Summary's ready above.",
             ...(fallbackNotice ? ["", fallbackNotice] : []),
@@ -2381,7 +2383,7 @@ function buildCompletedStatusBody(command, findings, reasoningFallbackReason, re
         ? "Nothing worth flagging — looks clean to me."
         : `I flagged ${totalFindings} thing${totalFindings === 1 ? "" : "s"} worth a look.`;
     return [
-        "## " + github_reviewer_1.ROBIN_SIGNATURE,
+        (0, brand_1.buildRobinHeader)(),
         "",
         `:white_check_mark: Review done. ${result}`,
         ...(fallbackNotice ? ["", fallbackNotice] : []),
@@ -2394,7 +2396,7 @@ function buildSkippedFilterStatusBody(removedFiles) {
     const preview = removedFiles.slice(0, 8).join(", ");
     const suffix = removedFiles.length > 8 ? `, and ${removedFiles.length - 8} more` : "";
     return [
-        "## " + github_reviewer_1.ROBIN_SIGNATURE,
+        (0, brand_1.buildRobinHeader)(),
         "",
         ":white_check_mark: Nothing to review here — only ignored paths changed.",
         "",
@@ -2406,7 +2408,7 @@ function buildSkippedFilterStatusBody(removedFiles) {
 }
 function buildFailedStatusBody(errorMessage, command) {
     return [
-        "## " + github_reviewer_1.ROBIN_SIGNATURE,
+        (0, brand_1.buildRobinHeader)(),
         "",
         `:warning: I couldn't finish the ${command === "summary" ? "summary" : "review"} this time.`,
         "",
@@ -2457,7 +2459,7 @@ async function isSupersededByNewerRun(octokit, owner, repo) {
 }
 function buildSupersededStatusBody(command) {
     return [
-        "## " + github_reviewer_1.ROBIN_SIGNATURE,
+        (0, brand_1.buildRobinHeader)(),
         "",
         `:arrows_counterclockwise: This ${command === "summary" ? "summary" : "review"} run was replaced by a newer Robin run.`,
         "",
@@ -2467,7 +2469,7 @@ function buildSupersededStatusBody(command) {
 }
 function buildCancelledStatusBody(command) {
     return [
-        "## " + github_reviewer_1.ROBIN_SIGNATURE,
+        (0, brand_1.buildRobinHeader)(),
         "",
         `:warning: The ${command === "summary" ? "summary" : "review"} was interrupted before it finished.`,
         "",
@@ -3228,7 +3230,9 @@ function getSummaryPrompt() {
 }
 function getHelpMessage() {
     return [
-        brand_1.ROBIN_MARK + " Available commands for **Robin**:",
+        (0, brand_1.buildRobinHeader)(),
+        "",
+        "Available commands for **Robin**:",
         "",
         "| Command | Description |",
         "|---|---|",
@@ -4326,7 +4330,7 @@ function clampInt(value, min, max, fallback) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.StatusReporter = void 0;
 exports.formatDuration = formatDuration;
-const github_reviewer_1 = __nccwpck_require__(268);
+const brand_1 = __nccwpck_require__(4444);
 /**
  * Owns the in-progress status comment. Updates are coalesced (at most one edit per interval,
  * with a trailing edit so the latest state always lands) and a heartbeat keeps elapsed times
@@ -4397,7 +4401,7 @@ class StatusReporter {
     render() {
         const now = this.options.now();
         const lines = [
-            "## " + github_reviewer_1.ROBIN_SIGNATURE,
+            (0, brand_1.buildRobinHeader)(),
             "",
             `:hourglass_flowing_sand: Still working on this pull request · ${formatDuration(now - this.startedAt)} elapsed`,
             "",
