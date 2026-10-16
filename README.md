@@ -237,7 +237,7 @@ workflows stay intact when you rerun either installer; update their refs manuall
 The bot posts a status comment, then a review with severity counts:
 
 ```md
-## <a href="https://www.robinreview.dev/"><img src="https://www.robinreview.dev/brand/favicon-48.png" width="24" height="24" alt="" /> The Robin</a> Hood of code review
+## <img src="https://www.robinreview.dev/brand/favicon-48.png" width="24" height="24" alt="" /> The <a href="https://www.robinreview.dev/">Robin</a> Hood of code review
 
 <!-- :bow_and_arrow: Robin -->
 

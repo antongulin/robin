@@ -112,8 +112,9 @@ credits in `docs/assets/brand/`; refresh them from the website build rather than
 an image generator here. Use the full bird for introductory artwork and the head for
 small marks. Every action-authored top-level GitHub body (initial, progress, completed,
 failed, skipped, cancelled, superseded, review, summary and help) uses the shared
-`buildRobinHeader`: one decorative bird beside accessible linked `The Robin`,
-followed by ` Hood of code review`, pointing to `https://www.robinreview.dev/`.
+`buildRobinHeader`: one decorative bird followed by plain ` The `, linked `Robin`,
+and plain ` Hood of code review`. Only `Robin` links to `https://www.robinreview.dev/`;
+the decorative image stays outside the link with empty alt text.
 A summary suffix may follow the heading. Include the exact `ROBIN_SIGNATURE`
 (`:bow_and_arrow: Robin`) once in a hidden HTML comment for compatibility; keep
 recognition behavior and the reviewer re-export unchanged. Inline finding labels
