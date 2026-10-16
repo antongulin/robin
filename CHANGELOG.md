@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.3](https://github.com/antongulin/robin/compare/v2.10.2...v2.10.3) (2026-10-16)
+
+
+### Bug Fixes
+
+* acquire oversized pull request diffs with bounded native Git ([#102](https://github.com/antongulin/robin/issues/102)) ([25856e2](https://github.com/antongulin/robin/commit/25856e2cff491eb76f20c2a01953e892eb643d54))
+
 ## [2.10.2](https://github.com/antongulin/robin/compare/v2.10.1...v2.10.2) (2026-10-09)
 
 
