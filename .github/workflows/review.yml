@@ -30,7 +30,7 @@ on:
         type: string
         default: ""
       reasoning-effort:
-        description: "Reasoning effort for providers/models that accept it; empty defers to .github/robin.yml. When both are unset no reasoning control is sent. off sends no reasoning configuration explicitly. Rejected controls or values retry once without the override."
+        description: "Reasoning effort for providers/models that accept it; empty defers to .github/robin.yml. When both are unset no reasoning control is sent. off sends no reasoning configuration explicitly. OpenCode Go sends native reasoning_effort and surfaces rejection without dropping the effort; other providers retry rejected controls or values once without the override."
         required: false
         type: string
         default: ""

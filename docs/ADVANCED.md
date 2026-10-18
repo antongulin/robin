@@ -425,7 +425,7 @@ for the hosts below. Self-hosted and proxy URLs are passed through unchanged.
 | OpenAI | `https://api.openai.com/v1` | `reasoning-effort` is sent as OpenAI-native `reasoning_effort`. Reasoning models (`o1`, `o3`, `o4-mini`, `gpt-5*`, `codex-*`) are sent without `temperature` and with `max_completion_tokens` instead of `max_tokens`, because they reject both |
 | Anthropic (Claude) | `https://api.anthropic.com/v1` | Uses Anthropic's [OpenAI SDK compatibility](https://docs.anthropic.com/en/api/openai-sdk) endpoint with your regular Anthropic API key (`LLM_API_KEY`). `https://api.anthropic.com` without `/v1` is accepted. JSON mode sends Robin's review schema as a best-effort `response_format: json_schema`, but Anthropic's compatibility endpoint ignores `response_format` (guaranteed structured output requires the native Claude API), so the review relies on the prompt plus the markdown fallback parser. If a model rejects the field, Robin drops it and falls back the same way. Anthropic ignores reasoning controls — Robin sends none there and Claude picks its own thinking depth. `temperature` above `1` is capped by Anthropic |
 | OpenRouter | `https://openrouter.ai/api/v1` | `reasoning-effort` uses the OpenRouter `reasoning: { effort, exclude }` object; router models get stall detection and provider fallbacks |
-| OpenCode Go | `https://opencode.ai/zen/go/v1` | Keep your existing `LLM_API_KEY` and provider settings; Robin supplies the required User-Agent and one UUID `x-opencode-session` per client run, reusing it across retries and turns. This is automatic only for the official Go endpoint. See [OpenCode Go](https://opencode.ai/docs/go/#where-can-i-use-it) |
+| OpenCode Go | `https://opencode.ai/zen/go/v1` | Keep your existing `LLM_API_KEY` and provider settings; Robin supplies the required User-Agent and one UUID `x-opencode-session` per client run, reusing it across retries and turns. This is automatic only for the official Go endpoint. Configured effort uses top-level `reasoning_effort`; rejections surface without dropping it. See [OpenCode Go](https://opencode.ai/docs/go/#where-can-i-use-it) |
 | Anything else (Groq, Ollama, vLLM, gateways) | provider URL | Default request shape; unsupported parameters are recovered as described below |
 
 ### Models that reject request parameters
@@ -479,9 +479,9 @@ overrides in your workflow.
 Some providers and models accept a reasoning-effort control. Robin sends none unless you
 ask for one: when `reasoning-effort` is unset or whitespace everywhere, the request carries
 no reasoning control and the provider/model default applies. Set a value to send it in the
-provider's shape (below); set `off` to be explicit about sending nothing. Providers that do
-not understand the control reject it and Robin falls back quietly (see the end of this
-section).
+provider's shape (below); set `off` to be explicit about sending nothing. On the official
+OpenCode Go endpoint, Robin surfaces rejected efforts without dropping them. Other
+providers use the compatibility fallback described below.
 
 Set it per repository in `.github/robin.yml` — the normal location, because reasoning is
 configuration, not a credential:
@@ -508,9 +508,21 @@ jobs:
 
 Common values are `low`, `medium`, and `high`; exact names are provider-dependent (some
 providers also use `minimal`, `xhigh`, or `max`). Robin forwards the trimmed value
-unchanged. The request shape depends on the host in `LLM_BASE_URL`:
+unchanged. For OpenCode Go with `deepseek-v4.1-flash`, use:
+
+```yaml
+# .github/robin.yml
+reasoning-effort: max
+```
+
+The request shape depends on `LLM_BASE_URL`:
 
 - `api.openai.com`: OpenAI-native `reasoning_effort: "<value>"`.
+- Official `https://opencode.ai/zen/go/v1` endpoint (including normalized trailing slashes
+  and `/chat/completions` suffixes): top-level `reasoning_effort: "<value>"`, with no nested
+  `reasoning` object. Robin retains any configured effort across retries. If Go rejects it,
+  the error surfaces instead of retrying without effort. Main Zen, other hosts, HTTP URLs,
+  and nondefault ports use the generic shape below.
 - `api.anthropic.com`: nothing is sent — Anthropic's compatibility endpoint ignores
   reasoning controls and Claude decides its own thinking depth. Robin logs this once.
 - Everything else: OpenRouter-style `reasoning: { effort: "<value>", exclude: true }` —
@@ -518,10 +530,10 @@ unchanged. The request shape depends on the host in `LLM_BASE_URL`:
   used. Providers that expect a different native parameter reject it, and the fallback
   below then runs the review without reasoning controls.
 
-If a provider rejects the parameter itself as unknown or unsupported, or clearly rejects
-the configured effort value (a 400/422 response such as `Unsupported parameter: reasoning`
+For providers other than OpenCode Go, if a provider rejects the parameter itself as unknown
+or unsupported, or clearly rejects the configured effort value (a 400/422 response such as `Unsupported parameter: reasoning`
 or `reasoning effort must be one of low, medium, high`), Robin logs a warning and retries
-that completion once without the `reasoning` property. It then keeps running without a
+that completion once without the reasoning control. It then keeps running without a
 reasoning override for the rest of the run. When the retry succeeds, the review completes
 normally. If you set the value yourself (input or `.github/robin.yml`), the final status
 comment also keeps a visible warning telling you to update `reasoning-effort`. With no value
@@ -723,7 +735,7 @@ No daily quota from this action. Real limits:
 | `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
 | `temperature` / `max_tokens` / `response_format` rejected | Newer model refuses an optional parameter (OpenAI reasoning models, Kimi) | Action warns, retries once with the parameter renamed or omitted (`max_tokens` ↔ `max_completion_tokens`, `temperature` dropped), and keeps that shape for the run. If the endpoint rejects both token-cap spellings, the provider error surfaces instead of running uncapped. Set `llm-temperature` only to pin a specific value (Kimi: `1`) |
 | `404` on `https://api.anthropic.com` | Base URL missing `/v1` on an older Robin | Use `https://api.anthropic.com/v1`; `@v2`/`@main` normalize it automatically |
-| `reasoning-effort` rejected as unsupported or invalid | Provider/model does not accept the reasoning control or configured value | The action warns and retries once with no reasoning override. If that succeeds, the review completes; a user-set value also gets a status-comment notice to update `.github/robin.yml` or the workflow `with:` block. Set `reasoning-effort: off` to stop sending it |
+| `reasoning-effort` rejected as unsupported or invalid | Provider/model does not accept the reasoning control or configured value | On official OpenCode Go, the error surfaces without dropping the configured effort. For other providers, the action warns and retries once with no reasoning override. If that succeeds, the review completes; a user-set value also gets a status-comment notice to update `.github/robin.yml` or the workflow `with:` block. Set `reasoning-effort: off` to stop sending it |
 | `Resource not accessible by integration` | Missing permissions | Add `pull-requests: write` |
 | Slash command ignored | Wrong format or permission | `/robin` or `/review` as first line; need write access |
 | `/robin` does nothing on `@v1` | Stale `v1` tag before v1.4.0 | Use `/review`, pin `@v1.4.0`+, or `@v2`; floating `v1` tracks latest `1.x` on release |

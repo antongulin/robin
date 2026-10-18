@@ -37,7 +37,7 @@ inputs:
     required: false
     default: ""
   reasoning-effort:
-    description: "Reasoning effort for providers/models that accept it (for example low, medium, high, xhigh, or max). Leave empty to defer to .github/robin.yml; when both are unset no reasoning control is sent and the provider/model decides. Set to off to send no reasoning configuration explicitly. Unsupported or invalid values retry once with no reasoning override; a user-configured value that is rejected also leaves a status warning."
+    description: "Reasoning effort for providers/models that accept it (for example low, medium, high, xhigh, or max). Leave empty to defer to .github/robin.yml; when both are unset no reasoning control is sent and the provider/model decides. Set to off to send no reasoning configuration explicitly. OpenCode Go sends native reasoning_effort and surfaces rejected values without dropping the configured effort. Other providers retry unsupported or invalid values once with no reasoning override and leave a status warning."
     required: false
     default: ""
   llm-timeout-ms:

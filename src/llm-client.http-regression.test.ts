@@ -10,7 +10,7 @@ import { IncomingHttpHeaders } from "http";
 import { LLMClient } from "./llm-client";
 
 /**
- * Real local HTTP regressions for the max-output-tokens compatibility contract.
+ * Real local HTTP regressions for token caps and reasoning-effort compatibility.
  *
  * These deliberately use a real socket and the real OpenAI SDK: the failure being
  * guarded against is the *emitted body* losing a configured cap (by being renamed or
@@ -89,9 +89,9 @@ function unsupportedField(param: string, hint: string) {
   };
 }
 
-function makeClient(baseUrl: string, model: string, maxOutputTokens: number): LLMClient {
+function makeClient(baseUrl: string, model: string, maxOutputTokens: number, reasoningEffort?: string): LLMClient {
   // maxAttempts:1 isolates the in-request parameter fallback from the outer retry loop.
-  return new LLMClient(baseUrl, "test-key", model, maxOutputTokens, undefined, 1);
+  return new LLMClient(baseUrl, "test-key", model, maxOutputTokens, undefined, 1, undefined, undefined, reasoningEffort);
 }
 
 const hasAnyTokenField = (body: Body) =>
@@ -369,6 +369,120 @@ describe("OpenCode Go session headers (real OpenAI SDK and local endpoint)", () 
       expect(otherGateway.headers[0]["user-agent"]).not.toBe("robin-review/2");
     } finally {
       await otherGateway.close();
+    }
+  });
+});
+
+describe("OpenCode Go max effort (real OpenAI SDK and local endpoint)", () => {
+  const model = "deepseek-v4.1-flash";
+  const endpoint = "https://opencode.ai/zen/go/v1/chat/completions/";
+
+  function expectStableHeaders(gateway: Gateway): void {
+    const sessions = gateway.headers.map((headers) => headers["x-opencode-session"]);
+    expect(sessions[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(new Set(sessions).size).toBe(1);
+    expect(gateway.headers.every((headers) => headers["user-agent"] === "robin-review/2")).toBe(true);
+  }
+
+  it("MAX-01 emits flat trimmed max for JSON review, tool turns, and non-JSON summaries", async () => {
+    const gateway = await startGateway((body) =>
+      body.reasoning_effort === "max" && body.reasoning === undefined
+        ? completion(model)
+        : unsupportedField("reasoning", "Expected flat reasoning_effort: max."),
+    );
+    const client = makeClient(endpoint, model, 1234, " max ");
+    const restore = redirectSdkClientToGateway(client, gateway);
+    try {
+      expect((await client.chatCompletion("system", "review", true)).content).toBe("review text");
+      const tools = [{ type: "function" as const, function: { name: "read_file", parameters: { type: "object" } } }];
+      expect((await client.chatWithTools([{ role: "user", content: "inspect" }], tools)).content).toBe("review text");
+      expect((await client.chatCompletion("system", "summarize", false)).content).toBe("review text");
+      expect(gateway.requests).toHaveLength(3);
+      for (const body of gateway.requests) {
+        expect(body).toHaveProperty("reasoning_effort", "max");
+        expect(body).not.toHaveProperty("reasoning");
+      }
+      expect(gateway.requests[0]).toHaveProperty("response_format.type", "json_schema");
+      expect(gateway.requests[1]).toHaveProperty("tools", tools);
+      expect(gateway.requests[1]).not.toHaveProperty("response_format");
+      expect(gateway.requests[2]).not.toHaveProperty("response_format");
+      expectStableHeaders(gateway);
+    } finally {
+      restore();
+      await gateway.close();
+    }
+  });
+
+  it.each([
+    [400, "unsupported_parameter", "Unsupported parameter: reasoning_effort", "max"],
+    [422, "invalid_value", "Invalid value for reasoning_effort: max is not supported", "max"],
+    [400, "unsupported_parameter", "Unsupported parameter: reasoning_effort", "high"],
+  ])("MAX-02 surfaces HTTP %i %s (%s), preserving explicit effort %s", async (status, code, message, effort) => {
+    // The gateway would succeed after omission, exposing both an immediate downgrade and
+    // a persistent disable flag on the next call. Reject the old nested shape too.
+    const gateway = await startGateway((body) =>
+      body.reasoning_effort !== undefined || body.reasoning !== undefined
+        ? { status, body: { error: { message, type: "invalid_request_error", param: "reasoning_effort", code } } }
+        : completion(model, "unwanted downgrade"),
+    );
+    const client = makeClient(endpoint, model, 1234, effort);
+    const restore = redirectSdkClientToGateway(client, gateway);
+    try {
+      for (const user of ["first", "second"]) {
+        await expect(client.chatCompletion("system", user)).rejects.toThrow(/reasoning_effort/);
+      }
+      expect(gateway.requests).toHaveLength(2);
+      for (const body of gateway.requests) {
+        expect(body).toHaveProperty("reasoning_effort", effort);
+        expect(body).not.toHaveProperty("reasoning");
+      }
+      expect(client.getReasoningFallbackReason()).toBeUndefined();
+      expectStableHeaders(gateway);
+    } finally {
+      restore();
+      await gateway.close();
+    }
+  });
+
+  it("MAX-03 retains max while retrying an unrelated rejected temperature", async () => {
+    const gateway = await startGateway((body) =>
+      body.temperature !== undefined
+        ? unsupportedField("temperature", "Use the model default.")
+        : completion(model),
+    );
+    const client = makeClient(endpoint, model, 1234, "max");
+    const restore = redirectSdkClientToGateway(client, gateway);
+    try {
+      expect((await client.chatCompletion("system", "review")).content).toBe("review text");
+      expect(gateway.requests).toHaveLength(2);
+      expect(gateway.requests[0]).toHaveProperty("temperature");
+      expect(gateway.requests[1]).not.toHaveProperty("temperature");
+      for (const body of gateway.requests) {
+        expect(body).toHaveProperty("reasoning_effort", "max");
+        expect(body).not.toHaveProperty("reasoning");
+      }
+      expectStableHeaders(gateway);
+    } finally {
+      restore();
+      await gateway.close();
+    }
+  });
+
+  it.each([undefined, "", "   "])("MAX-04 leaves effort unset for %p", async (effort) => {
+    const gateway = await startGateway(() => completion(model));
+    const client = makeClient(endpoint, model, 1234, effort);
+    const restore = redirectSdkClientToGateway(client, gateway);
+    try {
+      expect((await client.chatCompletion("system", "review")).content).toBe("review text");
+      expect(gateway.requests).toHaveLength(1);
+      expect(gateway.requests[0]).not.toHaveProperty("reasoning_effort");
+      expect(gateway.requests[0]).not.toHaveProperty("reasoning");
+      expectStableHeaders(gateway);
+    } finally {
+      restore();
+      await gateway.close();
     }
   });
 });

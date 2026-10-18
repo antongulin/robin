@@ -1109,6 +1109,7 @@ class LLMClient {
     client;
     model;
     provider;
+    openCodeGo;
     maxOutputTokens;
     maxAttempts;
     routerModel;
@@ -1137,12 +1138,13 @@ class LLMClient {
         const effectiveTimeoutMs = (0, llm_retry_1.resolveLlmTimeoutMs)(model, timeoutMs);
         const normalizedBaseUrl = (0, llm_provider_1.normalizeLlmBaseUrl)(baseUrl);
         this.provider = (0, llm_provider_1.detectLlmProvider)(normalizedBaseUrl);
+        this.openCodeGo = (0, llm_provider_1.isOpenCodeGoEndpoint)(normalizedBaseUrl);
         if (normalizedBaseUrl !== baseUrl.trim()) {
             core.info(`Normalized LLM base URL: ${baseUrl} -> ${normalizedBaseUrl}`);
         }
         core.info(`Initializing LLM client: baseUrl=${normalizedBaseUrl}, provider=${this.provider}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}, temperature=${this.temperature}`);
         // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
-        const defaultHeaders = (0, llm_provider_1.isOpenCodeGoEndpoint)(normalizedBaseUrl)
+        const defaultHeaders = this.openCodeGo
             ? { "x-opencode-session": (0, node_crypto_1.randomUUID)(), "user-agent": "robin-review/2" }
             : undefined;
         this.client = new openai_1.OpenAI({
@@ -1312,8 +1314,9 @@ class LLMClient {
      * One completion request. If the provider rejects an optional part of the request —
      * the reasoning control (unsupported or invalid value) or a parameter such as
      * `temperature` / `max_tokens` that newer models refuse — warn, adjust the request
-     * shape once, and re-send. Every adjustment is one-shot and sticks for the rest of
-     * the run, so the loop is bounded and normal retry attempts are not multiplied.
+     * shape once, and re-send. OpenCode Go keeps every configured effort and surfaces
+     * its rejection instead of omitting it. Every adjustment is one-shot and sticks for
+     * the rest of the run, so the loop is bounded and normal retries are not multiplied.
      */
     async performRequest(messages, options) {
         for (;;) {
@@ -1331,7 +1334,7 @@ class LLMClient {
         }
     }
     async applyReasoningFallback(error) {
-        if (this.reasoningFallbackActive || !this.reasoningEffort || this.provider === "anthropic") {
+        if (this.openCodeGo || this.reasoningFallbackActive || !this.reasoningEffort || this.provider === "anthropic") {
             return false;
         }
         const fallbackReason = (0, llm_retry_1.isUnsupportedReasoningEffortError)(error, this.reasoningEffort)
@@ -1491,8 +1494,8 @@ class LLMClient {
                     : { type: "json_object" };
         }
         if (this.reasoningEffort && !this.reasoningFallbackActive) {
-            if (this.provider === "openai") {
-                // OpenAI-native control; the OpenRouter object is rejected as an unknown argument.
+            if (this.provider === "openai" || this.openCodeGo) {
+                // OpenAI and OpenCode Go use the native top-level field.
                 request.reasoning_effort = this.reasoningEffort;
             }
             else if (this.provider !== "anthropic") {
