@@ -2,6 +2,7 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { CompletionLengthError, LLMClient, ToolsUnsupportedError } from "./llm-client";
 import { runAgentReview } from "./agent-review";
+import { isContextLengthError } from "./llm-retry";
 import { createRepoSnapshot } from "./repo-snapshot";
 import { ReviewToolbox } from "./review-tools";
 import { StatusReporter } from "./status-reporter";
@@ -424,7 +425,7 @@ async function run(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     await reporter?.close();
     if (octokit && statusOwner && statusRepo && statusCommentId) {
-      await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(message, statusCommand));
+      await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(error, statusCommand));
     }
     core.setFailed(message);
   } finally {
@@ -557,7 +558,20 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
   ].join("\n");
 }
 
-function buildFailedStatusBody(errorMessage: string, command: "review" | "summary"): string {
+function buildFailedStatusBody(error: unknown, command: "review" | "summary"): string {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const providerError = error instanceof Error && error.cause !== undefined ? error.cause : error;
+  let advice = "Check the provider error above and resolve its cause, then comment `/robin` to try again.";
+  if (error instanceof CompletionLengthError) {
+    advice = "Check the model/provider's output and reasoning generation limits and reduce the review scope. " +
+      "If the input is too large, split the change into smaller logically complete PRs " +
+      "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
+      "After adjusting the cause, comment `/robin` to try again.";
+  } else if (isContextLengthError(providerError)) {
+    advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +
+      "or select a model/provider with larger effective context capacity. " +
+      "After adjusting the input or capacity, comment `/robin` to try again.";
+  }
   return [
     buildRobinHeader(),
     "",
@@ -565,7 +579,7 @@ function buildFailedStatusBody(errorMessage: string, command: "review" | "summar
     "",
     `Reason: ${errorMessage}`,
     "",
-    "Free model routes drop sometimes — comment `/robin` to try again. (No secrets are included in this message.)",
+    `${advice} (No secrets are included in this message.)`,
     ...versionFooter(),
   ].join("\n");
 }

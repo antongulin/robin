@@ -1334,7 +1334,7 @@ class LLMClient {
                 core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${error}`);
                 if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt === this.maxAttempts) {
                     core.error(`LLM API error: ${error}`);
-                    throw new Error(`Failed to get response from LLM: ${error}`);
+                    throw new Error(`Failed to get response from LLM: ${error}`, { cause: error });
                 }
             }
             if (attempt < this.maxAttempts) {
@@ -1347,7 +1347,7 @@ class LLMClient {
         }
         if (lastError && (0, llm_retry_1.isRetriableLlmError)(lastError, this.retryContext())) {
             core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
-            throw new Error(`Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`);
+            throw new Error(`Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`, { cause: lastError });
         }
         throw new Error(`Empty response from LLM after ${this.maxAttempts} attempts (finish_reason=${lastFinishReason})`);
     }
@@ -2088,6 +2088,7 @@ const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const llm_client_1 = __nccwpck_require__(3316);
 const agent_review_1 = __nccwpck_require__(3265);
+const llm_retry_1 = __nccwpck_require__(4069);
 const repo_snapshot_1 = __nccwpck_require__(6330);
 const review_tools_1 = __nccwpck_require__(7635);
 const status_reporter_1 = __nccwpck_require__(7001);
@@ -2366,7 +2367,7 @@ async function run() {
         const message = error instanceof Error ? error.message : String(error);
         await reporter?.close();
         if (octokit && statusOwner && statusRepo && statusCommentId) {
-            await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(message, statusCommand));
+            await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(error, statusCommand));
         }
         core.setFailed(message);
     }
@@ -2471,7 +2472,21 @@ function buildSkippedFilterStatusBody(removedFiles) {
         ...versionFooter(),
     ].join("\n");
 }
-function buildFailedStatusBody(errorMessage, command) {
+function buildFailedStatusBody(error, command) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const providerError = error instanceof Error && error.cause !== undefined ? error.cause : error;
+    let advice = "Check the provider error above and resolve its cause, then comment `/robin` to try again.";
+    if (error instanceof llm_client_1.CompletionLengthError) {
+        advice = "Check the model/provider's output and reasoning generation limits and reduce the review scope. " +
+            "If the input is too large, split the change into smaller logically complete PRs " +
+            "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
+            "After adjusting the cause, comment `/robin` to try again.";
+    }
+    else if ((0, llm_retry_1.isContextLengthError)(providerError)) {
+        advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +
+            "or select a model/provider with larger effective context capacity. " +
+            "After adjusting the input or capacity, comment `/robin` to try again.";
+    }
     return [
         (0, brand_1.buildRobinHeader)(),
         "",
@@ -2479,7 +2494,7 @@ function buildFailedStatusBody(errorMessage, command) {
         "",
         `Reason: ${errorMessage}`,
         "",
-        "Free model routes drop sometimes — comment `/robin` to try again. (No secrets are included in this message.)",
+        `${advice} (No secrets are included in this message.)`,
         ...versionFooter(),
     ].join("\n");
 }

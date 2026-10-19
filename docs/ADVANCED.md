@@ -272,7 +272,11 @@ Explicit `finish_reason=length` is an exception: the output is incomplete, even 
 contains text or tool calls. Robin discards that partial output and fails the review
 without retrying the same request or starting a single-shot fallback. The error includes
 available token counts (including reasoning tokens when returned); these counts do not
-establish which limit caused the truncation. Missing finish metadata remains compatible.
+establish which limit caused the truncation. Check the model/provider's output and
+reasoning generation limits and reduce the review scope. If the input is too large,
+split the change into smaller logically complete PRs, keeping related implementation
+and tests together, or select a model/provider with larger effective context capacity.
+After adjusting the cause, comment `/robin` to try again. Missing finish metadata remains compatible.
 If a compaction summary fails, the mechanical recovery described above still drops old
 tool results and continues with changed context.
 
@@ -737,7 +741,8 @@ No daily quota from this action. Real limits:
 | `Input required: model` | Missing secret | Add `LLM_MODEL` |
 | `Input required: llm-base-url` | Missing secret | Add `LLM_BASE_URL` |
 | `Empty response from LLM` | Provider returned no usable text or tool calls without an explicit length stop | Action retries with bounded backoff and retains the finish reason (`unknown` if absent) |
-| `Incomplete LLM output (finish_reason=length...)` | Provider explicitly reported truncated generation; the reason alone does not identify the responsible limit | Robin discards partial text/tools and stops without unchanged retries or a diff-only fallback. Inspect available token counts and provider diagnostics before adjusting the review scope or generation settings |
+| `Incomplete LLM output (finish_reason=length...)` | Provider explicitly reported truncated generation; the reason alone does not identify the responsible limit | Robin discards partial text/tools and stops without unchanged retries or a diff-only fallback. Check output/reasoning generation limits and reduce scope. If input is too large, use smaller logically complete PRs (keep implementation/tests together) or larger effective context capacity; retry `/robin` after adjusting the cause |
+| Provider context/input-limit error | Review input exceeds the model/provider’s effective capacity | Use smaller logically complete PRs (keep related implementation/tests together) or a model/provider with larger effective context capacity; retry `/robin` after adjusting input or capacity |
 | `OpenRouter stall: no first response` | Auto-router hung before picking a provider | Action retries every 45s (up to 5×); PR status comment updates each attempt |
 | Job cancelled / 45 min with no review | Hung LLM or concurrency cancel while waiting | Status comment should say interrupted — comment `/robin` again; pin `@v2.0.4`+ for stall detect |
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |

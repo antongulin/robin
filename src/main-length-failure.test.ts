@@ -105,6 +105,15 @@ test.each(["initial", "forced final"])("L5 %s agent length failure stops review 
   expect(octokit.rest.issues.updateComment).toHaveBeenLastCalledWith(expect.objectContaining({
     body: expect.stringContaining("finish_reason=length"),
   }));
+  const body = octokit.rest.issues.updateComment.mock.calls.at(-1)![0].body;
+  expect(body).toContain("Check the model/provider's output and reasoning generation limits");
+  expect(body).toContain("reduce the review scope");
+  expect(body).toContain("If the input is too large");
+  expect(body).toContain("smaller logically complete PRs");
+  expect(body).toContain("After adjusting");
+  expect(body).toContain("`/robin`");
+  expect(body).not.toContain("Free model routes drop");
+  expect(body).not.toContain("The review input exceeds");
   expect(cleanup).toHaveBeenCalledTimes(1);
 });
 
@@ -121,3 +130,42 @@ test.each([
   expect(octokit.rest.pulls.createReview).toHaveBeenCalledTimes(1);
   expect(cleanup).toHaveBeenCalledTimes(1);
 });
+
+
+test.each([
+  [400, "maximum context length exceeded"],
+  [413, "Request rejected"],
+])("A2 context/input failure (%s) gives scope and capacity advice through the client wrapper", async (status, message) => {
+  const create = jest.fn().mockRejectedValue(Object.assign(new Error(message), { status }));
+  const { octokit, cleanup, executeTool } = await execute(create);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(message));
+  expect(octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+  expect(executeTool).not.toHaveBeenCalled();
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  const body = octokit.rest.issues.updateComment.mock.calls.at(-1)![0].body;
+  expect(body).toContain(message);
+  expect(body).toContain("smaller logically complete PRs");
+  expect(body).toContain("keep related implementation and tests together");
+  expect(body).toContain("model/provider with larger effective context capacity");
+  expect(body).toContain("After adjusting");
+  expect(body).toContain("`/robin`");
+  expect(body).not.toContain("Free model routes drop");
+});
+
+test.each(["Unauthorized", "Unauthorized: context window access denied"])(
+  "A3 ordinary provider failure retains generic guidance: %s", async message => {
+    const create = jest.fn().mockRejectedValue(Object.assign(new Error(message), { status: 401 }));
+    const { octokit, cleanup } = await execute(create);
+    expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(message));
+    expect(octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    const body = octokit.rest.issues.updateComment.mock.calls.at(-1)![0].body;
+    expect(body).toContain(message);
+    expect(body).toContain("Check the provider error above and resolve its cause, then comment `/robin` to try again.");
+    expect(body).not.toContain("Free model routes drop");
+    expect(body).not.toContain("smaller logically complete PRs");
+    expect(body).not.toContain("output and reasoning generation limits");
+    expect(body).not.toContain("The review input exceeds");
+  }
+);

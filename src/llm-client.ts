@@ -375,7 +375,7 @@ export class LLMClient {
 
         if (!isRetriableLlmError(error, this.retryContext()) || attempt === this.maxAttempts) {
           core.error(`LLM API error: ${error}`);
-          throw new Error(`Failed to get response from LLM: ${error}`);
+          throw new Error(`Failed to get response from LLM: ${error}`, { cause: error });
         }
       }
 
@@ -393,7 +393,8 @@ export class LLMClient {
     if (lastError && isRetriableLlmError(lastError, this.retryContext())) {
       core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
       throw new Error(
-        `Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`
+        `Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`,
+        { cause: lastError }
       );
     }
 
