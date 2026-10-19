@@ -1,6 +1,6 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
-import { LLMClient, ToolsUnsupportedError } from "./llm-client";
+import { CompletionLengthError, LLMClient, ToolsUnsupportedError } from "./llm-client";
 import { runAgentReview } from "./agent-review";
 import { createRepoSnapshot } from "./repo-snapshot";
 import { ReviewToolbox } from "./review-tools";
@@ -808,9 +808,9 @@ interface AgentOrSingleShotParams {
 }
 
 /**
- * Multi-turn review with repository tools when possible; any failure to set it up or run it
- * (no tool support, snapshot download error, provider error mid-loop) falls back to the
- * single-shot diff review so a PR always gets a review. `stats` describes how the review ran.
+ * Multi-turn review with repository tools when possible; failures to set it up or run it
+ * (no tool support, snapshot download error, provider error mid-loop) fall back to the
+ * single-shot diff review, except explicit completion truncation. `stats` describes how the review ran.
  */
 async function runAgentOrSingleShotReview(
   params: AgentOrSingleShotParams
@@ -857,6 +857,7 @@ async function runAgentOrSingleShotReview(
       stats: `agent review: ${plural(result.turns, "turn")} · ${plural(result.toolCalls, "tool call")}${compactions}`,
     };
   } catch (error) {
+    if (error instanceof CompletionLengthError) throw error;
     if (error instanceof ToolsUnsupportedError) {
       core.warning(`${error.message}. Running single-shot diff review instead.`);
       reporter.setStep("Model doesn't support tool calling — running a diff-only review…");

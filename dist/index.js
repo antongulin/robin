@@ -1089,7 +1089,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.LLMClient = exports.ToolsUnsupportedError = void 0;
+exports.LLMClient = exports.ToolsUnsupportedError = exports.CompletionLengthError = void 0;
 const node_crypto_1 = __nccwpck_require__(7598);
 const openai_1 = __nccwpck_require__(2583);
 const review_schema_1 = __nccwpck_require__(665);
@@ -1097,6 +1097,42 @@ const config_1 = __nccwpck_require__(4008);
 const llm_retry_1 = __nccwpck_require__(4069);
 const llm_provider_1 = __nccwpck_require__(710);
 const core = __importStar(__nccwpck_require__(7484));
+/** An explicitly truncated completion must not be accepted or retried unchanged. */
+class CompletionLengthError extends Error {
+    usage;
+    finishReason = "length";
+    constructor(usage) {
+        const counts = usage
+            ? Object.entries(usage).map(([key, value]) => `${key}=${value}`).join(", ")
+            : "";
+        super(`Incomplete LLM output (finish_reason=length${counts ? `; ${counts}` : ""}). Partial text and tool calls were discarded.`);
+        this.usage = usage;
+        this.name = "CompletionLengthError";
+    }
+}
+exports.CompletionLengthError = CompletionLengthError;
+function extractUsage(value) {
+    if (!value || typeof value !== "object")
+        return undefined;
+    const raw = value;
+    const details = raw.completion_tokens_details;
+    const counts = {
+        prompt_tokens: raw.prompt_tokens,
+        completion_tokens: raw.completion_tokens,
+        total_tokens: raw.total_tokens,
+        reasoning_tokens: details && typeof details === "object"
+            ? details.reasoning_tokens
+            : undefined,
+    };
+    const usage = {};
+    for (const key of Object.keys(counts)) {
+        const count = counts[key];
+        if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) {
+            usage[key] = count;
+        }
+    }
+    return Object.keys(usage).length > 0 ? usage : undefined;
+}
 /** The provider or model cannot take `tools`; callers should fall back to a plain completion. */
 class ToolsUnsupportedError extends Error {
     constructor(cause) {
@@ -1276,16 +1312,21 @@ class LLMClient {
                 core.info(`LLM attempt ${attempt}/${this.maxAttempts}: waiting for provider...`);
                 await this.progress(`Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`);
                 const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson });
+                if (result.finishReason === "length") {
+                    throw new CompletionLengthError(result.usage);
+                }
                 if (result.content || result.toolCalls?.length) {
                     if (!this.routerModel) {
                         this.logResolvedModel(result.model || this.model);
                     }
                     return result;
                 }
-                lastFinishReason = "empty";
+                lastFinishReason = result.finishReason || "unknown";
                 core.warning(`LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`);
             }
             catch (error) {
+                if (error instanceof CompletionLengthError)
+                    throw error;
                 lastError = error;
                 if (options.tools && (0, llm_retry_1.isToolsUnsupportedError)(error)) {
                     throw new ToolsUnsupportedError(error);
@@ -1367,6 +1408,8 @@ class LLMClient {
         return {
             content: this.extractMessageContent(response, toolCalls.length > 0),
             model: response.model || this.model,
+            finishReason: response.choices?.[0]?.finish_reason ?? undefined,
+            usage: extractUsage(response.usage),
             ...(toolCalls.length > 0 ? { toolCalls } : {}),
         };
     }
@@ -1375,6 +1418,8 @@ class LLMClient {
         const firstChunkMs = config_1.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
         const controller = new AbortController();
         let gotFirstChunk = false;
+        let finishReason;
+        let usage;
         // ponytail: timer starts before create() so a hung TCP/connect also fails at firstChunkMs
         let stallTimer = setTimeout(() => {
             controller.abort();
@@ -1404,7 +1449,11 @@ class LLMClient {
                         await this.progress("Provider accepted the request — generating review…");
                     }
                 }
-                const delta = chunk.choices?.[0]?.delta;
+                const choice = chunk.choices?.[0];
+                if (choice?.finish_reason)
+                    finishReason = choice.finish_reason;
+                usage = extractUsage(chunk.usage) ?? usage;
+                const delta = choice?.delta;
                 if (typeof delta?.content === "string" && delta.content) {
                     parts.push(delta.content);
                 }
@@ -1430,11 +1479,15 @@ class LLMClient {
             return {
                 content: parts.join(""),
                 model: resolvedModel,
+                finishReason,
+                usage,
                 ...(toolCalls.length > 0 ? { toolCalls } : {}),
             };
         }
         catch (error) {
             clearStallTimer();
+            if (finishReason === "length")
+                throw new CompletionLengthError(usage);
             if (!gotFirstChunk) {
                 if ((request.tools && (0, llm_retry_1.isToolsUnsupportedError)(error)) || (0, llm_retry_1.isContextLengthError)(error)) {
                     throw error;
@@ -2600,9 +2653,9 @@ function truncateDiff(diff, limit) {
     return diff.length > limit ? diff.slice(0, limit) + "\n\n[... Diff truncated due to size limit]" : diff;
 }
 /**
- * Multi-turn review with repository tools when possible; any failure to set it up or run it
- * (no tool support, snapshot download error, provider error mid-loop) falls back to the
- * single-shot diff review so a PR always gets a review. `stats` describes how the review ran.
+ * Multi-turn review with repository tools when possible; failures to set it up or run it
+ * (no tool support, snapshot download error, provider error mid-loop) fall back to the
+ * single-shot diff review, except explicit completion truncation. `stats` describes how the review ran.
  */
 async function runAgentOrSingleShotReview(params) {
     const { reporter } = params;
@@ -2646,6 +2699,8 @@ async function runAgentOrSingleShotReview(params) {
         };
     }
     catch (error) {
+        if (error instanceof llm_client_1.CompletionLengthError)
+            throw error;
         if (error instanceof llm_client_1.ToolsUnsupportedError) {
             core.warning(`${error.message}. Running single-shot diff review instead.`);
             reporter.setStep("Model doesn't support tool calling — running a diff-only review…");

@@ -5,7 +5,7 @@ jest.mock("@actions/core", () => ({
 }));
 
 import * as core from "@actions/core";
-import { LLMClient, ToolsUnsupportedError } from "./llm-client";
+import { CompletionLengthError, LLMClient, ToolsUnsupportedError } from "./llm-client";
 
 const warningMock = core.warning as unknown as jest.Mock;
 
@@ -86,6 +86,139 @@ function makeClient(baseUrl: string, model: string, options: { maxOutputTokens?:
     options.effort,
   );
 }
+
+describe.each([false, true])("completion metadata (streaming: %s)", streaming => {
+  const tools = [{ type: "function" as const, function: { name: "read_file", parameters: { type: "object" } } }];
+  const messages = [{ role: "user" as const, content: "review" }];
+
+  function setup(maxAttempts = 3) {
+    const client = new LLMClient("https://provider.invalid/v1", "test-key", streaming ? "openrouter/free" : "test-model", undefined, undefined, maxAttempts);
+    const create = stubOpenAI(client);
+    return { client, create };
+  }
+
+  function response(content: string, finishReason?: string, tool = false, usage?: unknown) {
+    const functionCall = { name: "read_file", arguments: '{"path":' };
+    if (!streaming) return {
+      choices: [{ message: { content, ...(tool ? { tool_calls: [{ id: "call_1", type: "function", function: functionCall }] } : {}) }, finish_reason: finishReason }],
+      usage,
+    };
+    return streamOf([
+      { choices: [{ delta: { content, ...(tool ? { tool_calls: [{ index: 0, id: "call_1", function: functionCall }] } : {}) }, finish_reason: null }] },
+      { choices: [{ delta: {}, finish_reason: finishReason }] },
+      { choices: [{ delta: {}, finish_reason: null }] },
+      { choices: [], usage },
+    ]);
+  }
+
+  beforeEach(() => { jest.clearAllMocks(); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  it.each(["empty", "text", "tool"])("L1 rejects length with %s after one request", async kind => {
+    jest.useFakeTimers();
+    const { client, create } = setup();
+    create.mockImplementation(async () => response(kind === "text" ? "partial review" : "", "length", kind === "tool"));
+    const completion = kind === "tool" ? client.chatWithTools(messages, tools) : client.chatCompletion("system", "user");
+    const assertion = expect(completion).rejects.toMatchObject({ name: "CompletionLengthError", finishReason: "length" });
+    await Promise.all([assertion, jest.runAllTimersAsync()]);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("L2 retains terminal metadata and only safe usage counts", async () => {
+    const { client, create } = setup();
+    create.mockResolvedValue(response("partial review", "length", false, {
+      prompt_tokens: 0, completion_tokens: 12, total_tokens: 12,
+      completion_tokens_details: { reasoning_tokens: 10, reasoning: "private reasoning" },
+      provider_payload: "private payload",
+    }));
+    await expect(client.chatCompletion("system", "user")).rejects.toMatchObject({
+      name: "CompletionLengthError", finishReason: "length",
+      usage: { prompt_tokens: 0, completion_tokens: 12, total_tokens: 12, reasoning_tokens: 10 },
+      message: expect.stringContaining("reasoning_tokens=10"),
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, null, "12", -1, 1.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1])("L2 omits invalid counts (%s)", async invalid => {
+    const { client, create } = setup();
+    create.mockResolvedValue(response("complete", "stop", false, {
+      prompt_tokens: invalid, completion_tokens: 4, total_tokens: invalid,
+      completion_tokens_details: { reasoning_tokens: invalid },
+      provider_payload: "private payload",
+    }));
+    const result = await client.chatCompletion("system", "user");
+    expect(result).toMatchObject({ finishReason: "stop", usage: { completion_tokens: 4 } });
+    expect(result.usage).toEqual({ completion_tokens: 4 });
+  });
+
+  it("L2 accepts null or absent usage without fabricating counts", async () => {
+    const { client, create } = setup();
+    for (const usage of [undefined, null, {}]) {
+      create.mockResolvedValueOnce(response("complete", "stop", false, usage));
+      expect((await client.chatCompletion("system", "user")).usage).toBeUndefined();
+    }
+  });
+
+  it.each([false, true])("L3 accepts missing metadata (tools: %s)", async tool => {
+    const { client, create } = setup();
+    create.mockResolvedValue(response(tool ? "" : "complete", undefined, tool));
+    const result = tool ? await client.chatWithTools(messages, tools) : await client.chatCompletion("system", "user");
+    expect(tool ? result.toolCalls?.[0].name : result.content).toBe(tool ? "read_file" : "complete");
+    expect(result.finishReason).toBeUndefined();
+    expect(result.usage).toBeUndefined();
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("L3 still retries an empty response without metadata", async () => {
+    jest.useFakeTimers();
+    const { client, create } = setup();
+    create.mockResolvedValueOnce(response("")).mockResolvedValueOnce(response("complete"));
+    const completion = client.chatCompletion("system", "user");
+    await jest.runAllTimersAsync();
+    await expect(completion).resolves.toMatchObject({ content: "complete" });
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["stop", undefined])("L4 retains the real empty-response reason (%s)", async finishReason => {
+    jest.useFakeTimers();
+    const { client, create } = setup();
+    create.mockImplementation(async () => response("", finishReason));
+    const assertion = expect(client.chatCompletion("system", "user")).rejects.toThrow(`finish_reason=${finishReason ?? "unknown"}`);
+    await Promise.all([assertion, jest.runAllTimersAsync()]);
+    expect(create).toHaveBeenCalledTimes(streaming ? 5 : 3);
+  });
+});
+
+it("L7 retains known length and usage when the stream then throws a retriable error", async () => {
+  jest.useFakeTimers();
+  try {
+    const client = makeClient("https://provider.invalid/v1", "openrouter/free");
+    const create = stubOpenAI(client);
+    create.mockImplementation(async () => ({
+      [Symbol.asyncIterator]: async function* () {
+        yield { choices: [{ delta: { content: "partial review" }, finish_reason: null }] };
+        yield { choices: [{ delta: {}, finish_reason: "length" }] };
+        yield { choices: [], usage: {
+          prompt_tokens: 0, completion_tokens: 12, total_tokens: 12,
+          completion_tokens_details: { reasoning_tokens: 10 },
+        } };
+        throw Object.assign(new Error("Connection failed after terminal chunk"), { status: 500 });
+      },
+    }));
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toBeInstanceOf(CompletionLengthError),
+      expect(completion).rejects.toMatchObject({
+        finishReason: "length",
+        usage: { prompt_tokens: 0, completion_tokens: 12, total_tokens: 12, reasoning_tokens: 10 },
+      }),
+      jest.runAllTimersAsync(),
+    ]);
+    expect(create).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+  }
+});
 
 describe("LLMClient provider-aware request shape", () => {
   beforeEach(() => {

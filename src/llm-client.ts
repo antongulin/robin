@@ -47,6 +47,51 @@ export interface ChatCompletionResult {
   content: string;
   model?: string;
   toolCalls?: ToolCall[];
+  finishReason?: string;
+  usage?: CompletionUsage;
+}
+
+/** Safe token counts only; reasoning_tokens comes from completion_tokens_details. */
+export interface CompletionUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  reasoning_tokens?: number;
+}
+
+/** An explicitly truncated completion must not be accepted or retried unchanged. */
+export class CompletionLengthError extends Error {
+  readonly finishReason = "length";
+
+  constructor(readonly usage?: CompletionUsage) {
+    const counts = usage
+      ? Object.entries(usage).map(([key, value]) => `${key}=${value}`).join(", ")
+      : "";
+    super(`Incomplete LLM output (finish_reason=length${counts ? `; ${counts}` : ""}). Partial text and tool calls were discarded.`);
+    this.name = "CompletionLengthError";
+  }
+}
+
+function extractUsage(value: unknown): CompletionUsage | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const details = raw.completion_tokens_details;
+  const counts: Record<keyof CompletionUsage, unknown> = {
+    prompt_tokens: raw.prompt_tokens,
+    completion_tokens: raw.completion_tokens,
+    total_tokens: raw.total_tokens,
+    reasoning_tokens: details && typeof details === "object"
+      ? (details as Record<string, unknown>).reasoning_tokens
+      : undefined,
+  };
+  const usage: CompletionUsage = {};
+  for (const key of Object.keys(counts) as (keyof CompletionUsage)[]) {
+    const count = counts[key];
+    if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) {
+      usage[key] = count;
+    }
+  }
+  return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
 export interface ToolChatOptions {
@@ -306,6 +351,9 @@ export class LLMClient {
         );
         const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson });
 
+        if (result.finishReason === "length") {
+          throw new CompletionLengthError(result.usage);
+        }
         if (result.content || result.toolCalls?.length) {
           if (!this.routerModel) {
             this.logResolvedModel(result.model || this.model);
@@ -313,11 +361,12 @@ export class LLMClient {
           return result;
         }
 
-        lastFinishReason = "empty";
+        lastFinishReason = result.finishReason || "unknown";
         core.warning(
           `LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`
         );
       } catch (error) {
+        if (error instanceof CompletionLengthError) throw error;
         lastError = error;
         if (options.tools && isToolsUnsupportedError(error)) {
           throw new ToolsUnsupportedError(error);
@@ -418,6 +467,8 @@ export class LLMClient {
     return {
       content: this.extractMessageContent(response, toolCalls.length > 0),
       model: response.model || this.model,
+      finishReason: response.choices?.[0]?.finish_reason ?? undefined,
+      usage: extractUsage(response.usage),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   }
@@ -427,6 +478,8 @@ export class LLMClient {
     const firstChunkMs = DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
     const controller = new AbortController();
     let gotFirstChunk = false;
+    let finishReason: string | undefined;
+    let usage: CompletionUsage | undefined;
     // ponytail: timer starts before create() so a hung TCP/connect also fails at firstChunkMs
     let stallTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
       controller.abort();
@@ -463,7 +516,10 @@ export class LLMClient {
           }
         }
 
-        const delta = chunk.choices?.[0]?.delta;
+        const choice = chunk.choices?.[0];
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
+        usage = extractUsage(chunk.usage) ?? usage;
+        const delta = choice?.delta;
         if (typeof delta?.content === "string" && delta.content) {
           parts.push(delta.content);
         }
@@ -487,10 +543,13 @@ export class LLMClient {
       return {
         content: parts.join(""),
         model: resolvedModel,
+        finishReason,
+        usage,
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
       };
     } catch (error) {
       clearStallTimer();
+      if (finishReason === "length") throw new CompletionLengthError(usage);
       if (!gotFirstChunk) {
         if ((request.tools && isToolsUnsupportedError(error)) || isContextLengthError(error)) {
           throw error;
