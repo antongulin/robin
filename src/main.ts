@@ -1,7 +1,8 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
-import { LLMClient, ToolsUnsupportedError } from "./llm-client";
+import { CompletionLengthError, LLMClient, LLMRequestError, ToolsUnsupportedError } from "./llm-client";
 import { runAgentReview } from "./agent-review";
+import { isContextLengthError } from "./llm-retry";
 import { createRepoSnapshot } from "./repo-snapshot";
 import { ReviewToolbox } from "./review-tools";
 import { StatusReporter } from "./status-reporter";
@@ -424,7 +425,7 @@ async function run(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     await reporter?.close();
     if (octokit && statusOwner && statusRepo && statusCommentId) {
-      await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(message, statusCommand));
+      await updateStatusComment(octokit, statusOwner, statusRepo, statusCommentId, buildFailedStatusBody(error, statusCommand));
     }
     core.setFailed(message);
   } finally {
@@ -557,7 +558,19 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
   ].join("\n");
 }
 
-function buildFailedStatusBody(errorMessage: string, command: "review" | "summary"): string {
+function buildFailedStatusBody(error: unknown, command: "review" | "summary"): string {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  let advice = "Check the error above and resolve its cause, then comment `/robin` to try again.";
+  if (error instanceof CompletionLengthError) {
+    advice = "Check the model/provider's output and reasoning generation limits and reduce the review scope. " +
+      "If the input is too large, split the change into smaller logically complete PRs " +
+      "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
+      "After adjusting the cause, comment `/robin` to try again.";
+  } else if (error instanceof LLMRequestError && isContextLengthError(error.cause)) {
+    advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +
+      "or select a model/provider with larger effective context capacity. " +
+      "After adjusting the input or capacity, comment `/robin` to try again.";
+  }
   return [
     buildRobinHeader(),
     "",
@@ -565,7 +578,7 @@ function buildFailedStatusBody(errorMessage: string, command: "review" | "summar
     "",
     `Reason: ${errorMessage}`,
     "",
-    "Free model routes drop sometimes — comment `/robin` to try again. (No secrets are included in this message.)",
+    `${advice} (No secrets are included in this message.)`,
     ...versionFooter(),
   ].join("\n");
 }
@@ -808,9 +821,9 @@ interface AgentOrSingleShotParams {
 }
 
 /**
- * Multi-turn review with repository tools when possible; any failure to set it up or run it
- * (no tool support, snapshot download error, provider error mid-loop) falls back to the
- * single-shot diff review so a PR always gets a review. `stats` describes how the review ran.
+ * Multi-turn review with repository tools when possible; failures to set it up or run it
+ * (no tool support, snapshot download error, provider error mid-loop) fall back to the
+ * single-shot diff review, except explicit completion truncation. `stats` describes how the review ran.
  */
 async function runAgentOrSingleShotReview(
   params: AgentOrSingleShotParams
@@ -857,6 +870,7 @@ async function runAgentOrSingleShotReview(
       stats: `agent review: ${plural(result.turns, "turn")} · ${plural(result.toolCalls, "tool call")}${compactions}`,
     };
   } catch (error) {
+    if (error instanceof CompletionLengthError) throw error;
     if (error instanceof ToolsUnsupportedError) {
       core.warning(`${error.message}. Running single-shot diff review instead.`);
       reporter.setStep("Model doesn't support tool calling — running a diff-only review…");
