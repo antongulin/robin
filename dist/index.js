@@ -1089,7 +1089,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.LLMClient = exports.ToolsUnsupportedError = exports.CompletionLengthError = void 0;
+exports.LLMClient = exports.ToolsUnsupportedError = exports.LLMRequestError = exports.CompletionLengthError = void 0;
 const node_crypto_1 = __nccwpck_require__(7598);
 const openai_1 = __nccwpck_require__(2583);
 const review_schema_1 = __nccwpck_require__(665);
@@ -1111,6 +1111,14 @@ class CompletionLengthError extends Error {
     }
 }
 exports.CompletionLengthError = CompletionLengthError;
+/** Identifies an LLM request failure while retaining its native provider cause. */
+class LLMRequestError extends Error {
+    constructor(message, options) {
+        super(message, options);
+        this.name = "LLMRequestError";
+    }
+}
+exports.LLMRequestError = LLMRequestError;
 function extractUsage(value) {
     if (!value || typeof value !== "object")
         return undefined;
@@ -1334,7 +1342,7 @@ class LLMClient {
                 core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${error}`);
                 if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt === this.maxAttempts) {
                     core.error(`LLM API error: ${error}`);
-                    throw new Error(`Failed to get response from LLM: ${error}`, { cause: error });
+                    throw new LLMRequestError(`Failed to get response from LLM: ${error}`, { cause: error });
                 }
             }
             if (attempt < this.maxAttempts) {
@@ -1347,7 +1355,7 @@ class LLMClient {
         }
         if (lastError && (0, llm_retry_1.isRetriableLlmError)(lastError, this.retryContext())) {
             core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
-            throw new Error(`Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`, { cause: lastError });
+            throw new LLMRequestError(`Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`, { cause: lastError });
         }
         throw new Error(`Empty response from LLM after ${this.maxAttempts} attempts (finish_reason=${lastFinishReason})`);
     }
@@ -2474,15 +2482,14 @@ function buildSkippedFilterStatusBody(removedFiles) {
 }
 function buildFailedStatusBody(error, command) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const providerError = error instanceof Error && error.cause !== undefined ? error.cause : error;
-    let advice = "Check the provider error above and resolve its cause, then comment `/robin` to try again.";
+    let advice = "Check the error above and resolve its cause, then comment `/robin` to try again.";
     if (error instanceof llm_client_1.CompletionLengthError) {
         advice = "Check the model/provider's output and reasoning generation limits and reduce the review scope. " +
             "If the input is too large, split the change into smaller logically complete PRs " +
             "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
             "After adjusting the cause, comment `/robin` to try again.";
     }
-    else if ((0, llm_retry_1.isContextLengthError)(providerError)) {
+    else if (error instanceof llm_client_1.LLMRequestError && (0, llm_retry_1.isContextLengthError)(error.cause)) {
         advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +
             "or select a model/provider with larger effective context capacity. " +
             "After adjusting the input or capacity, comment `/robin` to try again.";

@@ -1,6 +1,6 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
-import { CompletionLengthError, LLMClient, ToolsUnsupportedError } from "./llm-client";
+import { CompletionLengthError, LLMClient, LLMRequestError, ToolsUnsupportedError } from "./llm-client";
 import { runAgentReview } from "./agent-review";
 import { isContextLengthError } from "./llm-retry";
 import { createRepoSnapshot } from "./repo-snapshot";
@@ -560,14 +560,13 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
 
 function buildFailedStatusBody(error: unknown, command: "review" | "summary"): string {
   const errorMessage = error instanceof Error ? error.message : String(error);
-  const providerError = error instanceof Error && error.cause !== undefined ? error.cause : error;
-  let advice = "Check the provider error above and resolve its cause, then comment `/robin` to try again.";
+  let advice = "Check the error above and resolve its cause, then comment `/robin` to try again.";
   if (error instanceof CompletionLengthError) {
     advice = "Check the model/provider's output and reasoning generation limits and reduce the review scope. " +
       "If the input is too large, split the change into smaller logically complete PRs " +
       "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
       "After adjusting the cause, comment `/robin` to try again.";
-  } else if (isContextLengthError(providerError)) {
+  } else if (error instanceof LLMRequestError && isContextLengthError(error.cause)) {
     advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +
       "or select a model/provider with larger effective context capacity. " +
       "After adjusting the input or capacity, comment `/robin` to try again.";

@@ -23,7 +23,7 @@ function completion(finishReason = "stop") {
   return { choices: [{ message: { content: JSON.stringify(clean) }, finish_reason: finishReason }] };
 }
 
-async function execute(create: jest.Mock) {
+async function execute(create: jest.Mock, diffError?: Error) {
   (github.context as any).payload = {
     action: "opened",
     pull_request: { number: 7, base: { sha: "a".repeat(40) }, head: { sha: "b".repeat(40) } },
@@ -36,7 +36,7 @@ async function execute(create: jest.Mock) {
     execute: executeTool, describe: () => "read_file src/value.ts",
   }) as any);
   const octokit = {
-    request: jest.fn().mockResolvedValue({ data: diff }),
+    request: diffError ? jest.fn().mockRejectedValue(diffError) : jest.fn().mockResolvedValue({ data: diff }),
     paginate: jest.fn().mockResolvedValue([]),
     rest: {
       repos: { getContent: jest.fn().mockRejectedValue(Object.assign(new Error("Not found"), { status: 404 })) },
@@ -152,6 +152,21 @@ test.each([
   expect(body).not.toContain("Free model routes drop");
 });
 
+test("R2.1 GitHub diff rejection gets generic advice without LLM capacity diagnosis", async () => {
+  const create = jest.fn();
+  const error = Object.assign(new Error("GitHub diff acquisition rejected"), { status: 413 });
+  const { octokit } = await execute(create, error);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(error.message));
+  expect(create).not.toHaveBeenCalled();
+  expect(octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+  const body = octokit.rest.issues.updateComment.mock.calls.at(-1)![0].body;
+  expect(body).toContain(error.message);
+  expect(body).toContain("Check the error above and resolve its cause, then comment `/robin` to try again.");
+  expect(body).not.toContain("smaller logically complete PRs");
+  expect(body).not.toContain("larger effective context capacity");
+  expect(body).not.toContain("output and reasoning generation limits");
+});
+
 test.each(["Unauthorized", "Unauthorized: context window access denied"])(
   "A3 ordinary provider failure retains generic guidance: %s", async message => {
     const create = jest.fn().mockRejectedValue(Object.assign(new Error(message), { status: 401 }));
@@ -162,7 +177,7 @@ test.each(["Unauthorized", "Unauthorized: context window access denied"])(
     expect(cleanup).toHaveBeenCalledTimes(1);
     const body = octokit.rest.issues.updateComment.mock.calls.at(-1)![0].body;
     expect(body).toContain(message);
-    expect(body).toContain("Check the provider error above and resolve its cause, then comment `/robin` to try again.");
+    expect(body).toContain("Check the error above and resolve its cause, then comment `/robin` to try again.");
     expect(body).not.toContain("Free model routes drop");
     expect(body).not.toContain("smaller logically complete PRs");
     expect(body).not.toContain("output and reasoning generation limits");

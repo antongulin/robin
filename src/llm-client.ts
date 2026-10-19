@@ -72,6 +72,14 @@ export class CompletionLengthError extends Error {
   }
 }
 
+/** Identifies an LLM request failure while retaining its native provider cause. */
+export class LLMRequestError extends Error {
+  constructor(message: string, options: ErrorOptions) {
+    super(message, options);
+    this.name = "LLMRequestError";
+  }
+}
+
 function extractUsage(value: unknown): CompletionUsage | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Record<string, unknown>;
@@ -375,7 +383,7 @@ export class LLMClient {
 
         if (!isRetriableLlmError(error, this.retryContext()) || attempt === this.maxAttempts) {
           core.error(`LLM API error: ${error}`);
-          throw new Error(`Failed to get response from LLM: ${error}`, { cause: error });
+          throw new LLMRequestError(`Failed to get response from LLM: ${error}`, { cause: error });
         }
       }
 
@@ -392,7 +400,7 @@ export class LLMClient {
 
     if (lastError && isRetriableLlmError(lastError, this.retryContext())) {
       core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
-      throw new Error(
+      throw new LLMRequestError(
         `Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`,
         { cause: lastError }
       );

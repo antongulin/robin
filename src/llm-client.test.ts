@@ -131,11 +131,15 @@ describe.each([false, true])("completion metadata (streaming: %s)", streaming =>
       completion_tokens_details: { reasoning_tokens: 10, reasoning: "private reasoning" },
       provider_payload: "private payload",
     }));
-    await expect(client.chatCompletion("system", "user")).rejects.toMatchObject({
+    const completion = client.chatCompletion("system", "user");
+    await expect(completion).rejects.toMatchObject({
       name: "CompletionLengthError", finishReason: "length",
-      usage: { prompt_tokens: 0, completion_tokens: 12, total_tokens: 12, reasoning_tokens: 10 },
       message: expect.stringContaining("reasoning_tokens=10"),
     });
+    const error = await completion.catch(error => error);
+    expect(error.usage).toEqual({ prompt_tokens: 0, completion_tokens: 12, total_tokens: 12, reasoning_tokens: 10 });
+    expect(error.message).not.toContain("private reasoning");
+    expect(error.message).not.toContain("private payload");
     expect(create).toHaveBeenCalledTimes(1);
   });
 
