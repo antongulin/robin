@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.12.1](https://github.com/antongulin/robin/compare/v2.12.0...v2.12.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **llm:** enforce configured OpenCode Go effort [skip ci] ([5b34917](https://github.com/antongulin/robin/commit/5b3491731a3eca2236a79860d1ead4cc40333887))
+* **llm:** reject truncated output and guide failure recovery ([#112](https://github.com/antongulin/robin/issues/112)) ([13ae851](https://github.com/antongulin/robin/commit/13ae85154a417b5294c21f31f73135cb5a032b59))
+
 ## [2.12.0](https://github.com/antongulin/robin/compare/v2.11.1...v2.12.0) (2026-10-16)
 
 
