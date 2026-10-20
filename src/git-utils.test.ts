@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync
 import { tmpdir } from "os";
 import { join } from "path";
 import { GitUtils } from "./git-utils";
+import { nativeProcessLimits } from "./native-process";
 
 const TOKEN = "synthetic-github-token-never-real";
 const limit = { status: 406, response: { data: { errors: [{ resource: "PullRequest", field: "diff", code: "too_large" }] } } };
@@ -19,8 +20,8 @@ let temporary: string[];
 let commands: { args: string[]; env: NodeJS.ProcessEnv }[];
 let savedServerUrl: string | undefined;
 
-function localGit(args: string[], input?: string): string {
-  return childProcess.execFileSync("git", ["-C", fixture, ...args], {
+function localGit(args: string[], input?: string, directory = fixture): string {
+  return childProcess.execFileSync("git", ["-C", directory, ...args], {
     encoding: "utf8", input, maxBuffer: 40 * 1024 * 1024, stdio: ["pipe", "pipe", "ignore"],
     env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid",
@@ -38,7 +39,7 @@ function api(files = 379) {
 
 // Intercept only the network boundary. Every object, merge-base and diff operation
 // is real Git; production receives no local transport override.
-function redirectFetch() {
+function redirectFetch(source = fixture) {
   return jest.spyOn(childProcess, "spawn").mockImplementation(((file: string, args: string[], options: any) => {
     if (file !== "git") return realSpawn(file, args, options);
     commands.push({ args: [...args], env: { ...options.env } });
@@ -62,7 +63,7 @@ function redirectFetch() {
     }
     if (args.includes("fetch")) {
       expect(args[args.indexOf("--") + 1]).toBe("https://github.com/fixture/repository.git");
-      const rewritten = args.map(arg => arg === "https://github.com/fixture/repository.git" ? fixture : arg);
+      const rewritten = args.map(arg => arg === "https://github.com/fixture/repository.git" ? source : arg);
       return realSpawn(file, ["-c", "protocol.file.allow=always", ...rewritten], options);
     }
     return realSpawn(file, args, options);
@@ -140,26 +141,26 @@ test.each([401, 403, 404, 429, 500, 502, 422, 406, undefined])("A1: status %s wi
   expect(get).not.toHaveBeenCalled();
 });
 
-test("A2: real 379-path divergent-base binary/full-index patch reconstructs exact head including modes", async () => {
+test("A2: real 379-path divergent-base patch preserves binary markers and reconstructs text including modes", async () => {
   redirectFetch();
   const { utils } = api();
   const patch = await utils.getPullRequestDiff("fixture", "repository", 1);
   expect(Buffer.byteLength(patch)).toBeGreaterThan(1024 * 1024);
   expect(patch).toContain("FINAL_LARGE_PATCH_MARKER");
-  expect(patch).toContain("GIT binary patch");
+  expect(patch).toContain("Binary files a/blob.bin and b/blob.bin differ");
+  expect(patch).not.toContain("GIT binary patch");
   expect(patch).toContain("rename from rename-before.txt");
   expect(patch).toContain("deleted file mode");
   expect(patch).toContain("old mode 100644\nnew mode 100755");
   expect(patch).not.toContain("base-only.txt");
   localGit(["read-tree", ancestor]);
-  localGit(["apply", "--cached", "--binary", "-"], patch);
-  const actualTree = localGit(["write-tree"]);
-  const expectedTree = localGit(["rev-parse", `${head}^{tree}`]);
-  expect(actualTree).toBe(expectedTree);
+  localGit(["apply", "--cached", "--exclude=blob.bin", "-"], patch);
+  // Only the binary content is unavailable for reconstruction from a review patch.
+  expect(localGit(["diff", "--cached", "--name-only", head])).toBe("blob.bin");
   const paths = localGit(["diff", "--name-only", "-z", "--find-renames", ancestor, head]).split("\0").filter(Boolean);
   expect(paths).toHaveLength(379);
   console.info("A2_TREE_EVIDENCE", JSON.stringify({
-    paths: paths.length, base, head, mergeBase: ancestor, actualTree, expectedTree,
+    paths: paths.length, base, head, mergeBase: ancestor, nonTextPaths: ["blob.bin"],
     patchBytes: Buffer.byteLength(patch), sha256: createHash("sha256").update(patch).digest("hex"),
     modeOnly: true, binary: true, rename: true, deletion: true, divergentBaseExcluded: true,
   }));
@@ -168,6 +169,64 @@ test("A2: real 379-path divergent-base binary/full-index patch reconstructs exac
   expect(commands.filter(command => command.env.GIT_CONFIG_VALUE_0)).toHaveLength(1);
   expect(commands.every(command => !command.args.includes("checkout"))).toBe(true);
 });
+
+test("BIN01: binary-heavy native acquisition preserves text and binary path statuses within the unchanged cap", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "robin-binary-fixture-"));
+  const git = (args: string[]) => localGit(args, undefined, directory);
+  try {
+    git(["init", "--template=", "."]);
+    writeFileSync(join(directory, "edit.txt"), "before\n");
+    writeFileSync(join(directory, "modify.bin"), Buffer.from("before\0binary modification"));
+    writeFileSync(join(directory, "delete.bin"), Buffer.from("delete\0unique binary"));
+    writeFileSync(join(directory, "rename-before.bin"), Buffer.from("rename\0unique binary"));
+    git(["add", "."]); git(["commit", "-m", "binary fixture base"]);
+    const binaryBase = git(["rev-parse", "HEAD"]);
+    // A deterministic xorshift stream resists Git's binary-patch compression.
+    const binary = Buffer.alloc(28 * 1024 * 1024);
+    let state = 0x12345678;
+    for (let offset = 0; offset < binary.length; offset += 4) {
+      state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
+      binary.writeUInt32LE(state >>> 0, offset);
+    }
+    binary[0] = 0;
+    writeFileSync(join(directory, "added.bin"), binary);
+    writeFileSync(join(directory, "edit.txt"), "after é\nBIN01_FINAL_TEXT_MARKER\n");
+    writeFileSync(join(directory, "modify.bin"), Buffer.from("after\0binary modification"));
+    unlinkSync(join(directory, "delete.bin"));
+    renameSync(join(directory, "rename-before.bin"), join(directory, "rename-after.bin"));
+    git(["add", "."]); git(["commit", "-m", "binary fixture head"]);
+    const binaryHead = git(["rev-parse", "HEAD"]);
+    const range = [binaryBase, binaryHead, "--"];
+    const oldPatch = git(["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--full-index", "--binary", "--no-color", ...range]);
+    expect(Buffer.byteLength(oldPatch)).toBeGreaterThan(32 * 1024 * 1024);
+    expect(oldPatch).toContain("GIT binary patch");
+    const expectedPatch = git(["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--full-index", "--no-color", ...range]);
+    expect(git(["diff", "--find-renames", "--name-status", ...range]).split("\n")).toEqual([
+      "A\tadded.bin", "D\tdelete.bin", "M\tedit.txt", "M\tmodify.bin", "R100\trename-before.bin\trename-after.bin",
+    ]);
+    redirectFetch(directory);
+    const { utils, get, metadata } = api(5);
+    metadata.base.sha = binaryBase; metadata.head.sha = binaryHead;
+    const patch = await utils.getPullRequestDiff("fixture", "repository", 1);
+    expect(nativeProcessLimits.maxOutput).toBe(32 * 1024 * 1024);
+    expect(Buffer.byteLength(patch)).toBeLessThan(nativeProcessLimits.maxOutput);
+    expect(patch.trim()).toBe(expectedPatch);
+    expect(patch.match(/^diff --git /gm)).toHaveLength(5);
+    expect(patch).toContain("new file mode 100644");
+    expect(patch).toContain("deleted file mode 100644");
+    expect(patch).toContain("Binary files /dev/null and b/added.bin differ");
+    expect(patch).toContain("Binary files a/delete.bin and /dev/null differ");
+    expect(patch).toContain("Binary files a/modify.bin and b/modify.bin differ");
+    expect(patch).toContain("rename from rename-before.bin\nrename to rename-after.bin");
+    expect(patch).toContain("-before\n+after é\n+BIN01_FINAL_TEXT_MARKER");
+    expect(patch).not.toContain("GIT binary patch");
+    expect(get).toHaveBeenCalledTimes(2);
+    console.info("BIN01_PATCH_EVIDENCE", JSON.stringify({ oldBytes: Buffer.byteLength(oldPatch),
+      patchBytes: Buffer.byteLength(patch), files: 5, cap: nativeProcessLimits.maxOutput, snapshotReads: get.mock.calls.length }));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test.each(["base", "head", "changed_files"])("A3: changing captured %s fails closed after acquisition", async field => {
   redirectFetch(); const { utils, get, metadata } = api();

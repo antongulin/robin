@@ -795,7 +795,10 @@ Robin captures the PR base SHA, head SHA, and changed-file count, fetches those
 objects with history, and compares their unique common merge base to the captured
 head. It verifies the object identities and NUL-delimited path count, then checks
 the PR metadata again before returning the patch. Renames count as one change.
-The patch includes full object IDs, binary patches, deletions, and mode changes.
+The patch includes full object IDs, all text hunks, binary-file markers, deletions,
+and mode changes. Robin omits encoded binary payloads from native patches so large
+binary assets do not consume the patch output limit. Binary additions, changes,
+deletions, and renames still contribute to the verified path count and patch metadata.
 Missing history, ambiguous ancestry, changed metadata, invalid encoding, failed
 cleanup, or incomplete acquisition aborts the review. Each Git command has a
 120-second execution deadline and independent 32 MiB byte limits for stdout and
@@ -834,7 +837,8 @@ list does not prove that all file contents reached the outgoing request.
 Generated lockfiles and rebuilt bundles need separate verification when filtered
 out; do not describe them as model-reviewed. Verify dependency pins and resolved
 versions with the package manager's reproducible install and CI. Rebuild committed
-`dist/index.js` from the reviewed source and compare the artifact. Binary patches
-preserve bytes, but do not establish semantic review of binary assets. Local Git
+`dist/index.js` from the reviewed source and compare the artifact. Robin does not
+visually review image contents through binary-file markers; inspect binary assets
+with a separate visual or asset validation check. Local Git
 and loopback-provider tests do not prove private GitHub fetch permissions or a
 live provider's acceptance of a particular large request.
