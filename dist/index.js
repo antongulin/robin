@@ -2870,7 +2870,7 @@ async function nativePullRequestDiff(owner, repo, token, snapshot, verifySnapsho
         const inventory = await git([...at, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--name-status", "-z", ...range]);
         if (countPaths(inventory) !== snapshot.files)
             throw new Error("NATIVE_DIFF_PATH_COUNT_MISMATCH");
-        const patch = await git([...at, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--full-index", "--binary", "--no-color", ...range]);
+        const patch = await git([...at, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--full-index", "--no-color", ...range]);
         const text = patch.toString("utf8");
         if (!Buffer.from(text, "utf8").equals(patch))
             throw new Error("NATIVE_DIFF_INVALID_ENCODING");
