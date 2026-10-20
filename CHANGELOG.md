@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.2](https://github.com/antongulin/robin/compare/v2.12.1...v2.12.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* **diff:** omit encoded binary payloads from native patches ([#115](https://github.com/antongulin/robin/issues/115)) ([b017344](https://github.com/antongulin/robin/commit/b0173443618c9aa350544a3220792d1678ffc9c0))
+
 ## [2.12.1](https://github.com/antongulin/robin/compare/v2.12.0...v2.12.1) (2026-10-19)
 
 
