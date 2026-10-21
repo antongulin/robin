@@ -34,7 +34,12 @@ import {
 import { ReasoningFallbackReason } from "./reasoning-fallback";
 import * as core from "@actions/core";
 
-export type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+export type ChatMessage =
+  | Exclude<OpenAI.Chat.Completions.ChatCompletionMessageParam, OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam>
+  | (OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam & {
+      /** Private provider metadata, replayed only on its original assistant tool turn. */
+      reasoning_content?: string;
+    });
 export type ToolDefinition = OpenAI.Chat.Completions.ChatCompletionTool;
 
 export interface ToolCall {
@@ -45,6 +50,8 @@ export interface ToolCall {
 
 export interface ChatCompletionResult {
   content: string;
+  /** Private assistant replay metadata; never use as visible review or summary text. */
+  reasoningContent?: string;
   model?: string;
   toolCalls?: ToolCall[];
   finishReason?: string;
@@ -100,6 +107,12 @@ function extractUsage(value: unknown): CompletionUsage | undefined {
     }
   }
   return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+function extractReasoningContent(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const content = (value as { reasoning_content?: unknown }).reasoning_content;
+  return typeof content === "string" ? content : undefined;
 }
 
 export interface ToolChatOptions {
@@ -473,8 +486,10 @@ export class LLMClient {
       stream: false,
     });
     const toolCalls = this.extractToolCalls(response);
+    const reasoningContent = extractReasoningContent(response.choices?.[0]?.message);
     return {
       content: this.extractMessageContent(response, toolCalls.length > 0),
+      ...(reasoningContent !== undefined ? { reasoningContent } : {}),
       model: response.model || this.model,
       finishReason: response.choices?.[0]?.finish_reason ?? undefined,
       usage: extractUsage(response.usage),
@@ -508,6 +523,7 @@ export class LLMClient {
       );
 
       const parts: string[] = [];
+      const reasoningParts: string[] = [];
       const toolCallParts = new Map<number, ToolCall>();
       let resolvedModel = this.model;
 
@@ -529,6 +545,8 @@ export class LLMClient {
         if (choice?.finish_reason) finishReason = choice.finish_reason;
         usage = extractUsage(chunk.usage) ?? usage;
         const delta = choice?.delta;
+        const reasoningDelta = extractReasoningContent(delta);
+        if (reasoningDelta !== undefined) reasoningParts.push(reasoningDelta);
         if (typeof delta?.content === "string" && delta.content) {
           parts.push(delta.content);
         }
@@ -551,6 +569,7 @@ export class LLMClient {
         .filter((call) => call.name);
       return {
         content: parts.join(""),
+        ...(reasoningParts.length > 0 ? { reasoningContent: reasoningParts.join("") } : {}),
         model: resolvedModel,
         finishReason,
         usage,

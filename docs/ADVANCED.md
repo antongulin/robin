@@ -538,9 +538,15 @@ The request shape depends on `LLM_BASE_URL`:
 - `api.anthropic.com`: nothing is sent — Anthropic's compatibility endpoint ignores
   reasoning controls and Claude decides its own thinking depth. Robin logs this once.
 - Everything else: OpenRouter-style `reasoning: { effort: "<value>", exclude: true }` —
-  hidden reasoning is excluded from the response and never parsed; only the review text is
-  used. Providers that expect a different native parameter reject it, and the fallback
-  below then runs the review without reasoning controls.
+  Robin requests exclusion of hidden reasoning. Providers that expect a different native
+  parameter reject it, and the fallback below then runs the review without reasoning controls.
+
+If a provider supplies a string `reasoning_content`, Robin preserves it as private metadata
+and replays it unchanged on that assistant's tool turn in later requests. This includes
+streamed string deltas, retained compaction tails, and the final request with tool choice
+`none`. Robin keeps this metadata out of summaries, progress updates, logs, and visible
+reviews; only `content` supplies review text. Explicit low-level SDK debug logging can
+still expose raw payloads.
 
 For providers other than OpenCode Go, if a provider rejects the parameter itself as unknown
 or unsupported, or clearly rejects the configured effort value (a 400/422 response such as `Unsupported parameter: reasoning`
