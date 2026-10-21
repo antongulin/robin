@@ -4,6 +4,7 @@ jest.mock("@actions/core", () => ({
   error: jest.fn(),
 }));
 
+import * as core from "@actions/core";
 import { runAgentReview } from "./agent-review";
 import type { ChatCompletionResult, ChatMessage } from "./llm-client";
 import { ToolsUnsupportedError } from "./llm-client";
@@ -308,4 +309,44 @@ describe("runAgentReview", () => {
       })
     ).rejects.toThrow(/no final answer/);
   });
+});
+
+it("RC04 retains private replay in the compaction tail and forced final, outside summaries and reporting", async () => {
+  const removed = "PRIVATE_REMOVED \n Ω ";
+  const retained = "PRIVATE_RETAINED \t 🐦 ";
+  const { llm, calls, chatCompletion } = makeLlm([
+    { content: "Inspecting a", reasoningContent: removed, toolCalls: [toolCall("c1", "read_file", { path: "a" })] },
+    { content: "Inspecting b", reasoningContent: retained, toolCalls: [toolCall("c2", "read_file", { path: "b" })] },
+    { content: FINAL_JSON, reasoningContent: "PRIVATE_FINAL" },
+  ]);
+  const toolbox = makeToolbox();
+  toolbox.execute.mockImplementation(async (_name, args) => args.includes('"a"') ? "a".repeat(900) : "b".repeat(200));
+  const progress = jest.fn();
+  jest.clearAllMocks();
+  const result = await runAgentReview({
+    llm, toolbox, annotatedDiff: "diff", changedFiles: [], instructions: "",
+    budgets: { maxTurns: 2, maxContextChars: 1000 }, onProgress: progress,
+  });
+  expect(result).toEqual({ content: FINAL_JSON, turns: 3, toolCalls: 2, compactions: 1 });
+  expect(chatCompletion).toHaveBeenCalledTimes(1);
+  const summary = chatCompletion.mock.calls[0][1];
+  expect(summary).toContain("Inspecting a");
+  expect(summary).not.toContain("PRIVATE_");
+  expect(summary).not.toContain("Inspecting b");
+  expect(calls[1].messages.find(message => message.role === "assistant")).toHaveProperty("reasoning_content", removed);
+  const final = calls[2];
+  expect(final.options).toEqual({ toolChoice: "none" });
+  expect(String(final.messages[1].content)).toContain("CONTEXT WAS COMPACTED");
+  expect(final.messages.slice(2)).toEqual([
+    expect.objectContaining({ role: "assistant", reasoning_content: retained, tool_calls: [expect.objectContaining({ id: "c2" })] }),
+    expect.objectContaining({ role: "tool", tool_call_id: "c2", content: "b".repeat(200) }),
+    expect.objectContaining({ role: "user", content: expect.stringContaining("Do not call any more tools") }),
+  ]);
+  for (const { messages } of calls) {
+    for (const message of messages.filter(message => message.role !== "assistant")) {
+      expect(message).not.toHaveProperty("reasoning_content");
+    }
+  }
+  expect(JSON.stringify([result, progress.mock.calls, (core.info as jest.Mock).mock.calls,
+    (core.warning as jest.Mock).mock.calls, (core.error as jest.Mock).mock.calls])).not.toContain("PRIVATE_");
 });

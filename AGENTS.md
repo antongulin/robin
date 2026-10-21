@@ -147,6 +147,13 @@ Keep action inputs, reusable-workflow `workflow_call` inputs, the `with:` forwar
 that parity. Behavior changes that touch optional request parameters should not silently
 drop a user-configured control; surface the provider error instead.
 
+**Private assistant replay.** Preserve a provider-supplied string `reasoning_content`
+as private completion metadata, including empty strings and streamed string deltas.
+Replay it unchanged only on its original assistant tool message, including retained
+compaction tails and forced-final requests. Omit absent or invalid values. Keep it out
+of summary prompts, progress/status updates, Robin logs, and visible reviews; use
+`content` for review text. Low-level SDK debug logging can expose raw payloads.
+
 Installers preserve complete custom identity workflows (explicit token mappings, App
 token steps, or inherited secrets), including their refs, rather than reconstructing
 them. Keep the shell and npm preservation tests in sync. The website's `public/install.sh`

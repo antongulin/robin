@@ -148,7 +148,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
       return { content: result.content, turns, toolCalls: toolCallCount, compactions };
     }
 
-    messages.push(assistantToolMessage(result.content, calls));
+    messages.push(assistantToolMessage(result.content, calls, result.reasoningContent));
     for (const [index, call] of calls.entries()) {
       let output: string;
       if (index >= MAX_TOOL_CALLS_PER_TURN) {
@@ -332,10 +332,11 @@ function textOf(content: unknown): string {
   return "";
 }
 
-function assistantToolMessage(content: string, calls: ToolCall[]): ChatMessage {
+function assistantToolMessage(content: string, calls: ToolCall[], reasoningContent?: string): ChatMessage {
   return {
     role: "assistant",
     content: content || null,
+    ...(typeof reasoningContent === "string" ? { reasoning_content: reasoningContent } : {}),
     tool_calls: calls.map((call) => ({
       id: call.id,
       type: "function" as const,

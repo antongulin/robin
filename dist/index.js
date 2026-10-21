@@ -157,7 +157,7 @@ async function runAgentReview(options) {
             core.info(`Agent finished after ${turns} turn(s), ${toolCallCount} tool call(s), ${compactions} compaction(s).`);
             return { content: result.content, turns, toolCalls: toolCallCount, compactions };
         }
-        messages.push(assistantToolMessage(result.content, calls));
+        messages.push(assistantToolMessage(result.content, calls, result.reasoningContent));
         for (const [index, call] of calls.entries()) {
             let output;
             if (index >= MAX_TOOL_CALLS_PER_TURN) {
@@ -322,10 +322,11 @@ function textOf(content) {
     }
     return "";
 }
-function assistantToolMessage(content, calls) {
+function assistantToolMessage(content, calls, reasoningContent) {
     return {
         role: "assistant",
         content: content || null,
+        ...(typeof reasoningContent === "string" ? { reasoning_content: reasoningContent } : {}),
         tool_calls: calls.map((call) => ({
             id: call.id,
             type: "function",
@@ -1141,6 +1142,12 @@ function extractUsage(value) {
     }
     return Object.keys(usage).length > 0 ? usage : undefined;
 }
+function extractReasoningContent(value) {
+    if (!value || typeof value !== "object")
+        return undefined;
+    const content = value.reasoning_content;
+    return typeof content === "string" ? content : undefined;
+}
 /** The provider or model cannot take `tools`; callers should fall back to a plain completion. */
 class ToolsUnsupportedError extends Error {
     constructor(cause) {
@@ -1413,8 +1420,10 @@ class LLMClient {
             stream: false,
         });
         const toolCalls = this.extractToolCalls(response);
+        const reasoningContent = extractReasoningContent(response.choices?.[0]?.message);
         return {
             content: this.extractMessageContent(response, toolCalls.length > 0),
+            ...(reasoningContent !== undefined ? { reasoningContent } : {}),
             model: response.model || this.model,
             finishReason: response.choices?.[0]?.finish_reason ?? undefined,
             usage: extractUsage(response.usage),
@@ -1441,6 +1450,7 @@ class LLMClient {
         try {
             const stream = await this.client.chat.completions.create({ ...request, stream: true }, { signal: controller.signal });
             const parts = [];
+            const reasoningParts = [];
             const toolCallParts = new Map();
             let resolvedModel = this.model;
             for await (const chunk of stream) {
@@ -1462,6 +1472,9 @@ class LLMClient {
                     finishReason = choice.finish_reason;
                 usage = extractUsage(chunk.usage) ?? usage;
                 const delta = choice?.delta;
+                const reasoningDelta = extractReasoningContent(delta);
+                if (reasoningDelta !== undefined)
+                    reasoningParts.push(reasoningDelta);
                 if (typeof delta?.content === "string" && delta.content) {
                     parts.push(delta.content);
                 }
@@ -1486,6 +1499,7 @@ class LLMClient {
                 .filter((call) => call.name);
             return {
                 content: parts.join(""),
+                ...(reasoningParts.length > 0 ? { reasoningContent: reasoningParts.join("") } : {}),
                 model: resolvedModel,
                 finishReason,
                 usage,
