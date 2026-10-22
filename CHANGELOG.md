@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.3](https://github.com/antongulin/robin/compare/v2.12.2...v2.12.3) (2026-10-21)
+
+
+### Bug Fixes
+
+* **agent:** preserve private reasoning metadata during replay ([#117](https://github.com/antongulin/robin/issues/117)) ([67cdcb5](https://github.com/antongulin/robin/commit/67cdcb5c932131f82c5a39d56c417257a84b7a4c))
+
 ## [2.12.2](https://github.com/antongulin/robin/compare/v2.12.1...v2.12.2) (2026-10-20)
 
 
