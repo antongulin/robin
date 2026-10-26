@@ -73,7 +73,10 @@ jobs:
 
 The current reusable workflow forces Ubicloud for `antongulin`-owned callers before
 parsing `runner`; external callers retain the hosted default and JSON label/array input.
-Installers add the owner-aware input above only when no explicit runner exists. Preserve
+Installers add the owner-aware input above only when the effective ref is `main` and no
+explicit runner exists. Other refs, including explicit `ROBIN_REF` values, keep their
+inputs without a new runner; omit empty `with:` and warn for manual pin/routing repair.
+Do not infer input compatibility from tags or SHAs or fetch schemas at runtime. Preserve
 existing runners and pins, including hosted overrides on old refs; repair those callers
 separately. Unsupported customization or ambiguous modern donors must warn and leave all
 workflow/archive files unchanged. Custom identity and source-repository guards take priority.
@@ -166,7 +169,9 @@ of summary prompts, progress/status updates, Robin logs, and visible reviews; us
 Installers preserve ordinary block-form job-level `with:` inputs and the ref from the
 same canonical or sole donor. Keep npm generation self-contained (the package ships only
 `bin/`); do not add a runtime YAML dependency or require the Bash installer from the CLI.
-Missing runners get owner-aware JSON input; existing explicit runners win in generation.
+Only effective `main` gets a missing owner-aware JSON runner input; other refs keep their
+inputs/ref, omit empty `with:`, and warn for manual repair. Select the ref before adding
+inputs. Existing explicit runners win in generation.
 Unsupported flow/anchor/alias forms or ambiguous modern donors fail closed before any
 workflow/archive mutation. Multiple legacy-only files may migrate without a settings donor.
 

@@ -131,7 +131,8 @@ DEFAULT_RUNNER=$(cat <<'YAML'
 YAML
 )
 extract_with_overrides() {
-  awk -v runner="$DEFAULT_RUNNER" -v detect_only="${2:-0}" '
+  # mode 1 detects modern calls; mode 2 checks an explicit runner after validation.
+  awk -v runner="$DEFAULT_RUNNER" -v ref="$REF" -v mode="${2:-0}" '
     function ind(s) { match(s, /[^ ]/); return RSTART ? RSTART - 1 : length(s) }
     function content(s) { return s !~ /^[[:space:]]*(#|$)/ }
     function pads(n, s) { s = ""; while (n-- > 0) s = s " "; return s }
@@ -155,8 +156,12 @@ extract_with_overrides() {
           if (found) { u = i; refs++ }
         }
       }
-      if (detect_only) exit !refs
-      if (!refs) { print "    with:"; print runner; exit }
+      if (mode == 1) exit !refs
+      if (!refs) {
+        if (mode == 2) exit 1
+        if (ref == "main") { print "    with:"; print runner }
+        exit
+      }
       if (bad || refs != 1 || lines[u] !~ /^ +uses: *antongulin\/robin\/\.github\/workflows\/review\.ya?ml@[A-Za-z0-9._\/-]+ *(#.*)?$/) exit 2
       base = ind(lines[u])
       start = u - 1
@@ -173,7 +178,11 @@ extract_with_overrides() {
         if (lines[i] ~ /^ *with:/) { w = i; nw++ }
       }
       if (nw > 1 || (w && lines[w] !~ /^ *with: *(#.*)?$/)) exit 2
-      if (!w) { print "    with:"; print runner; exit }
+      if (!w) {
+        if (mode == 2) exit 1
+        if (ref == "main") { print "    with:"; print runner }
+        exit
+      }
       stop = w + 1
       while (stop < end && (!content(structure[stop]) || ind(structure[stop]) > base)) stop++
       last = stop - 1
@@ -191,14 +200,17 @@ extract_with_overrides() {
         if (seen[key]++) exit 2
         value = entry; sub(/^[^:]+:[[:space:]]*/, "", value)
         if (value ~ /^[&*!{[]/) exit 2
+        keys++
       }
+      if (mode == 2) exit !seen["runner"]
+      if (!keys && ref != "main") exit
       print "    " substr(lines[w], base + 1)
       for (i = w + 1; i <= last; i++) {
         if (lines[i] == "") { print ""; continue }
         d = ind(lines[i]); p = 4 + d - base; if (p < 0) p = 0
         print pads(p) substr(lines[i], d + 1)
       }
-      if (!seen["runner"]) print pads(4 + entry_indent - base) substr(runner, 7)
+      if (!seen["runner"] && ref == "main") print pads(4 + entry_indent - base) substr(runner, 7)
     }' <(workflow_structure "$1") "$1"
 }
 
@@ -255,11 +267,11 @@ trap 'rm -f "$tmp_workflow" "$tmp_rendered" "$tmp_with" ${tmp_spliced:+"$tmp_spl
 sed "s|@__REF__|@${REF}|" "$tmp_workflow" > "$tmp_rendered"
 
 # Merge into one with mapping. The template has no with key here; this splice
-# supplies either preserved entries plus a missing runner, or just the default runner.
+# supplies preserved entries, adding a missing runner only for effective main.
 if [ "$PRESERVATION_ERROR" -eq 0 ]; then
   if [ -n "$ROBIN_WF_SOURCE" ]; then
     extract_with_overrides "$ROBIN_WF_SOURCE" > "$tmp_with"
-  else
+  elif [ "$REF" = "main" ]; then
     printf '    with:\n%s\n' "$DEFAULT_RUNNER" > "$tmp_with"
   fi
   tmp_spliced="$(mktemp)"
@@ -309,6 +321,9 @@ elif [ "$CUSTOM_IDENTITY" -eq 1 ]; then
 elif [ "$PRESERVATION_ERROR" -eq 1 ]; then
   warn "Preserved workflows: unsupported customization or ambiguous modern donors; no workflow files were changed or archived. Update settings manually."
 else
+  if [ "$REF" != "main" ] && { [ -z "$ROBIN_WF_SOURCE" ] || ! extract_with_overrides "$ROBIN_WF_SOURCE" 2 >/dev/null; }; then
+    warn "Ref $REF was not given a runner input; check its declared inputs and repair the pin/runner routing manually."
+  fi
   if [ -f "$WORKFLOW_PATH" ] && ! is_robin_workflow "$WORKFLOW_PATH"; then
     die "$WORKFLOW_PATH exists but is not a Robin workflow. Move or rename it, then run again."
   fi

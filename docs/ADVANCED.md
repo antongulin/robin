@@ -675,9 +675,13 @@ workflows yourself.
 
 For ordinary block-form reusable callers, the canonical `robin.yml` supplies both the
 preserved pin and `with:` settings; otherwise a single recognized workflow supplies them.
-The installer adds a runner only when absent, using a JSON string expression that selects
-Ubicloud for `antongulin` and hosted `ubuntu-latest` for other owners. Existing explicit
-runners, including hosted values on old pins, stay unchanged. Only the current reusable
+After selecting the effective ref, the installers add a missing runner only for `main`,
+using a JSON string expression that selects Ubicloud for `antongulin` and hosted
+`ubuntu-latest` for other owners. For any other ref, including an explicit `ROBIN_REF`,
+they preserve the inputs without adding a missing runner, omit an empty `with:`, and
+warn you to check the declared inputs and repair pin/runner routing manually. They do
+not fetch a schema or infer input support from a tag or SHA. Existing explicit runners,
+including hosted values on old pins, stay unchanged. Only the current reusable
 workflow enforces the owned policy regardless of that input; update old pinned callers
 and direct-action job routing manually when needed.
 

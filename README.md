@@ -63,10 +63,13 @@ canonical workflow. Inspect the archived copy, then remove it after confirming t
 migration. An unrelated file already using the canonical path is never overwritten.
 Run an installer separately in every repository that should use Robin. Re-running it is
 idempotent for ordinary block-form reusable-workflow settings: existing pins and `with:`
-inputs (including an explicit `runner`) are preserved. When no runner is configured, new
-and migrated workflows add an owner-aware JSON input: Ubicloud for `antongulin`, hosted
-`ubuntu-latest` for other owners. This does not replace a hosted override on an old pin;
-update those callers manually. Unsupported customization (such as flow/anchored `with:`)
+inputs (including an explicit `runner`) are preserved. When the selected ref is `main`,
+the installers add a missing owner-aware JSON runner input: Ubicloud for `antongulin`,
+hosted `ubuntu-latest` for other owners. For any other retained or `ROBIN_REF`-selected
+ref, they keep the inputs without adding a missing runner, omit an empty `with:`, and
+warn you to check the ref's declared inputs and repair pin/routing settings manually.
+They do not infer input support from a tag or SHA. Explicit runners stay unchanged.
+Unsupported customization (such as flow/anchored `with:`)
 or ambiguous modern donors without a canonical workflow causes a warning and leaves all
 workflow and archive files unchanged. Custom identity workflows stay intact.
 You still need to add the three secrets — do **Steps 1 and 2** below, then commit and push.
