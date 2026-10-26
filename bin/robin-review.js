@@ -141,7 +141,7 @@ function preservedInputs(source) {
   const content = line => !/^\s*(?:#|$)/.test(line);
   const refs = modernCallerLines(source, structure);
   if (!refs.length) return null; // Legacy action inputs use a different schema.
-  if (refs.length !== 1 || structure.some(line => /^ *\t/.test(line))) throw new Error("unsupported YAML");
+  if (refs.length !== 1 || structure.some(line => content(line) && /^ *\t/.test(line))) throw new Error("unsupported YAML");
   const u = refs[0];
   const use = lines[u].match(/^ +uses: *antongulin\/robin\/\.github\/workflows\/review\.ya?ml@([A-Za-z0-9._/-]+) *(?:#.*)?$/);
   if (!use) throw new Error("unsupported reusable job");

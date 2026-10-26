@@ -104,10 +104,16 @@ function workflowCallInputBlock(source: string, name: string): string | undefine
 
 /** Job-scoped source inspection; actionlint checks YAML/expression grammar. */
 function workflowJobs(source: string): Array<{ name: string; body: string }> {
-  const jobs = source.split(/^jobs:\n/m)[1] ?? "";
-  return [...jobs.matchAll(/^ {2}([a-z0-9-]+):\n((?: {4}[^\n]*\n|[ \t]*\n)*)/gm)].map(
-    (match) => ({ name: match[1], body: match[2] }),
-  );
+  const jobs = (source.split(/^jobs:\n/m)[1] ?? "").split(/^[A-Za-z_][^\n]*:/m)[0];
+  const headers = [...jobs.matchAll(/^ {2}([^\s#][^\n]*)(?:\n|$)/gm)];
+  return headers.map((header, index) => {
+    const key = header[1].match(/^(?:([A-Za-z_][A-Za-z0-9_-]*)|"([A-Za-z_][A-Za-z0-9_-]*)"|'([A-Za-z_][A-Za-z0-9_-]*)'): *(?:#.*)?$/);
+    if (!key) throw new Error(`Unsupported workflow job header: ${header[1]}`);
+    return {
+      name: key[1] ?? key[2] ?? key[3],
+      body: jobs.slice(header.index! + header[0].length, headers[index + 1]?.index ?? jobs.length),
+    };
+  });
 }
 
 function reviewRunnerBranches(): { guard: string; ownedJson: string; external: string } {

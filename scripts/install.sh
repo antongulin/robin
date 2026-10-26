@@ -140,7 +140,7 @@ extract_with_overrides() {
     { sub(/\r$/, ""); lines[FNR] = $0; count = FNR }
     END {
       for (i = 1; i <= count; i++) {
-        if (structure[i] ~ /^ *\t/) bad = 1
+        if (content(structure[i]) && structure[i] ~ /^ *\t/) bad = 1
         if (match(structure[i], /(^|[{},])[ \t]*(-[ \t]*)?["\047]?uses["\047]?[ \t]*:/)) {
           value = substr(structure[i], RSTART + RLENGTH); sub(/^[ \t]*/, "", value)
           found = value ~ /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/

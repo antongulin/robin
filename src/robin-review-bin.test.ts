@@ -377,6 +377,29 @@ describe.each([
     expectStable();
   };
 
+  it.each(["main", "v1.1.0"])("R3-TAB-COMMENT regenerates a supported caller with a root tab-comment (%s)", ref => {
+    const inputs = '    with:\n      max-comments: "7"' +
+      (ref === "main" ? '\n      llm-temperature: "1"' : "");
+    const original = "# source note\n\t# tabbed comment\n" + consumer(inputs, ref);
+    write("workflows/historical.yaml", original);
+    write("robin-workflow-archive/existing.disabled", "recovery sentinel\n");
+    const output = run();
+    expect(output).not.toMatch(/unsupported|ambiguous/i);
+    expect(read()).toContain(`review.yml@${ref}`);
+    expect(read()).toContain(inputs);
+    if (ref === "main") {
+      expectOneInputBlock(read());
+      expect(read()).toContain(policy);
+    } else {
+      expect(read()).not.toMatch(/^\s+runner:/m);
+      expect(output).toMatch(/runner.*manually/i);
+    }
+    expect(fs.existsSync(path.join(dir, ".github/workflows/historical.yaml"))).toBe(false);
+    expect(fs.readFileSync(path.join(dir, ".github/robin-workflow-archive/historical.yaml.disabled"), "utf8")).toBe(original);
+    expect(fs.readFileSync(path.join(dir, ".github/robin-workflow-archive/existing.disabled"), "utf8")).toBe("recovery sentinel\n");
+    expectStable();
+  });
+
   it.each(["|", ">", "|+"])("R1-SCALAR preserves marker text and chomping (%s)", header => {
     const inputs = ["    with:", "      runner: '\"ubuntu-latest\"'", "      llm-temperature: '1'",
       `      review-instructions: ${header}`, "        * check errors", "        **keep bold**",
@@ -484,6 +507,7 @@ describe.each([
     "    with:\n      runner:\n        *label",
     "    with:\n      runner: !!str &label '\"ubuntu-latest\"'",
     "    with:\n      runner: '\"ubuntu-latest\"'\n      runner: '\"other\"'",
+    "    with:\n\tmax-comments: 7",
   ])("I06 refuses unsupported customization without any workflow/archive changes (%s)", inputs => {
     write("workflows/robin.yml", "# settings anchor may live elsewhere\n" + consumer(inputs));
     write("workflows/legacy.yml", "jobs:\n  review:\n    uses: antongulin/universal-code-reviewer@v0\n");
