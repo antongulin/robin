@@ -141,16 +141,16 @@ extract_with_overrides() {
     END {
       for (i = 1; i <= count; i++) {
         if (content(structure[i]) && structure[i] ~ /^ *\t/) bad = 1
-        if (match(structure[i], /(^|[{},])[ \t]*(-[ \t]*)?["\047]?uses["\047]?[ \t]*:/)) {
+        if (match(tolower(structure[i]), /(^|[{,])[ \t]*(-[ \t]*)?["\047]?uses["\047]?[ \t]*:/)) {
           value = substr(structure[i], RSTART + RLENGTH); sub(/^[ \t]*/, "", value)
-          found = value ~ /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/
+          found = tolower(value) ~ /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/
           # Check only continuations of an unsupported uses value, not siblings.
           if (!found && (value == "" || value ~ /^["\047|>&*!]/)) {
             for (j = i + 1; j <= count; j++) {
               continuation = value ~ /^[|>]/ ? lines[j] : structure[j]
               if (continuation ~ /^[[:space:]]*$/) continue
               if (ind(lines[j]) <= ind(lines[i])) break
-              if (continuation ~ /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/) { found = 1; break }
+              if (tolower(continuation) ~ /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/) { found = 1; break }
             }
           }
           if (found) { u = i; refs++ }

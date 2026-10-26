@@ -272,7 +272,7 @@ if (isRobinSourceRepository) {
   if (missingRunner && selectedRef !== "main") {
     warn(`Ref ${selectedRef} was not given a runner input; check its declared inputs and repair the pin/runner routing manually.`);
   }
-  if (fs.existsSync(workflowPath) && !robinReference.test(fs.readFileSync(workflowPath, "utf8"))) {
+  if (fs.existsSync(workflowPath) && !robinWorkflows.includes(workflowPath)) {
     die(`${relative(workflowPath)} exists but is not a Robin workflow. Move or rename it, then run again.`);
   }
 

@@ -448,6 +448,61 @@ describe.each([
     }
   });
 
+  it.each(["robin.yml", "ci.yml"])("R4-CANONICAL-SCALAR protects an unrelated scalar-only workflow (%s)", donor => {
+    const original = ["name: Document", "on: [push]", "jobs:", "  build:",
+      "    runs-on: ubuntu-latest", "    steps:", "      - name: Document a workflow", "        run: |",
+      "          cat <<'YAML'", "          uses: antongulin/robin/.github/workflows/review.yml@main",
+      "          YAML", ""].join("\n");
+    write(`workflows/${donor}`, original);
+    write("workflows/unrelated.yml", "name: CI\non: [push]\njobs: {}\n");
+    write("robin-workflow-archive/existing.disabled", "recovery sentinel\r\n");
+    const before = tree();
+    if (donor === "robin.yml") {
+      for (let i = 0; i < 2; i++) {
+        const result = cp.spawnSync(command, [script], { cwd: dir, encoding: "utf8",
+          env: { ...process.env, ROBIN_REF: undefined, ROBIN_SKILL: "0" } });
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("exists but is not a Robin workflow");
+        expect(tree()).toEqual(before);
+      }
+    } else {
+      run();
+      expect(read()).toContain("uses: antongulin/robin/.github/workflows/review.yml@main");
+      const after = tree();
+      delete after[".github/workflows/robin.yml"];
+      expect(after).toEqual(before);
+      expectStable();
+    }
+  });
+
+  it.each(["robin.yml", "historical.yaml"].flatMap(donor =>
+    ["Antongulin/Robin", "antongulin/robin"].map(repository => ({ donor, repository }))))(
+    "R4-CASE-PRESERVATION retains pin/settings or refuses unchanged ($donor, $repository)", ({ donor, repository }) => {
+      const inputs = '    with:\n      max-comments: "7"';
+      const original = consumer(inputs, "v1.1.0").replace("antongulin/robin/", `${repository}/`)
+        .replace("    secrets:\n", "    secrets:\n      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}\n      LLM_MODEL: ${{ secrets.LLM_MODEL }}\n");
+      write(`workflows/${donor}`, original);
+      write("workflows/unrelated.yml", "name: CI\non: [push]\njobs: {}\n");
+      write("robin-workflow-archive/existing.disabled", "recovery sentinel\r\n");
+      const before = tree();
+      if (repository === "Antongulin/Robin") {
+        for (let i = 0; i < 2; i++) {
+          expect(run()).toMatch(/unsupported|ambiguous/i);
+          expect(tree()).toEqual(before);
+        }
+      } else {
+        run();
+        expect(read()).toContain("review.yml@v1.1.0");
+        expect(read()).toContain(inputs);
+        expect(read()).not.toMatch(/^\s+runner:/m);
+        expect(fs.readFileSync(path.join(dir, ".github/robin-workflow-archive", `${donor}.disabled`), "utf8")).toBe(original);
+        expect(fs.readFileSync(path.join(dir, ".github/workflows/unrelated.yml"), "utf8")).toBe("name: CI\non: [push]\njobs: {}\n");
+        expect(fs.readFileSync(path.join(dir, ".github/robin-workflow-archive/existing.disabled"), "utf8")).toBe("recovery sentinel\r\n");
+        expectStable();
+      }
+    },
+  );
+
   // R2 refines I04: retain unknown pins without injection; main still receives one runner.
   it.each(["main", pin].flatMap(ref =>
     ["    with:", '    with:\n      llm-temperature: "1"\n\n    # keep this comment\n      max-comments: "7"'].map(inputs => ({ ref, inputs }))))(
