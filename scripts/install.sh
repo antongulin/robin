@@ -26,8 +26,44 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
 
 cd "$(git rev-parse --show-toplevel)"
 
+# Line-aligned structural view, matching the standalone npm reader. Hide comments
+# and literal/folded scalar payload, including explicitly indented data tabs.
+workflow_structure() {
+  sed $'s/\r$//' "$1" | awk '
+    function ind(s) { match(s, /[^ ]/); return RSTART ? RSTART - 1 : length(s) }
+    BEGIN { scalar_base = -1; single = sprintf("%c", 39) }
+    {
+      d = ind($0)
+      if (scalar_base >= 0) {
+        if ($0 ~ /^[[:space:]]*$/) { print ""; next }
+        if (!scalar_indent && d > scalar_base) scalar_indent = d
+        if (scalar_indent && d >= scalar_indent) { print ""; next }
+        scalar_base = -1
+      }
+      quote = ""; code = $0
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (quote != "") {
+          if (quote == "\"" && c == "\\") i++
+          else if (c == quote) {
+            if (quote == single && substr($0, i + 1, 1) == single) i++
+            else quote = ""
+          }
+        } else if (c == "\"" || c == single) quote = c
+        else if (c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[[:space:]]/)) { code = substr($0, 1, i - 1); break }
+      }
+      if (code ~ /: *[|>]([1-9][+-]?|[+-][1-9]?)? *$/) {
+        scalar_base = d
+        if (match(code, /^ *- +/)) scalar_base = RLENGTH
+        header = code; sub(/^.*[|>]/, "", header)
+        scalar_indent = match(header, /[1-9]/) ? scalar_base + substr(header, RSTART, 1) : 0
+      }
+      print code
+    }'
+}
+
 is_robin_workflow() {
-  grep -Eiq '^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/(robin|universal-code-reviewer)(/\.github/workflows/review\.ya?ml)?@[^[:space:]#]+' "$1"
+  workflow_structure "$1" | grep -Ei '^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/(robin|universal-code-reviewer)(/\.github/workflows/review\.ya?ml)?@[^[:space:]#]+' >/dev/null
 }
 
 is_robin_source_repository() {
@@ -83,7 +119,7 @@ if [ -z "${ROBIN_REF+x}" ]; then
   elif [ -n "$ROBIN_WF_SOURCE" ]; then
     # Preserve refs only from modern Robin workflows. Legacy Universal Code Reviewer
     # refs (including obsolete v0 tags) intentionally migrate to the current default.
-    existing_ref="$(sed -nE 's|^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/robin/\.github/workflows/review\.ya?ml@([A-Za-z0-9._/-]+).*|\2|p' "$ROBIN_WF_SOURCE" | head -n 1)"
+    existing_ref="$(workflow_structure "$ROBIN_WF_SOURCE" | sed -nE 's|^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*antongulin/robin/\.github/workflows/review\.ya?ml@([A-Za-z0-9._/-]+).*|\2|p' | head -n 1)"
     if [ -n "$existing_ref" ] && [ "$existing_ref" != "v0" ]; then REF="$existing_ref"; fi
   fi
 fi
@@ -95,23 +131,38 @@ DEFAULT_RUNNER=$(cat <<'YAML'
 YAML
 )
 extract_with_overrides() {
-  sed $'s/\r$//' "$1" | awk -v runner="$DEFAULT_RUNNER" '
+  awk -v runner="$DEFAULT_RUNNER" -v detect_only="${2:-0}" '
     function ind(s) { match(s, /[^ ]/); return RSTART ? RSTART - 1 : length(s) }
     function content(s) { return s !~ /^[[:space:]]*(#|$)/ }
     function pads(n, s) { s = ""; while (n-- > 0) s = s " "; return s }
-    { lines[NR] = $0 }
+    NR == FNR { structure[FNR] = $0; next }
+    { sub(/\r$/, ""); lines[FNR] = $0; count = FNR }
     END {
-      for (i = 1; i <= NR; i++) {
-        if (lines[i] ~ /^ *\t/) bad = 1
-        if (content(lines[i]) && lines[i] ~ /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/) { u = i; refs++ }
+      for (i = 1; i <= count; i++) {
+        if (structure[i] ~ /^ *\t/) bad = 1
+        if (match(structure[i], /(^|[{},])[ \t]*(-[ \t]*)?["\047]?uses["\047]?[ \t]*:/)) {
+          value = substr(structure[i], RSTART + RLENGTH); sub(/^[ \t]*/, "", value)
+          found = value ~ /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/
+          # Check only continuations of an unsupported uses value, not siblings.
+          if (!found && (value == "" || value ~ /^["\047|>&*!]/)) {
+            for (j = i + 1; j <= count; j++) {
+              continuation = value ~ /^[|>]/ ? lines[j] : structure[j]
+              if (continuation ~ /^[[:space:]]*$/) continue
+              if (ind(lines[j]) <= ind(lines[i])) break
+              if (continuation ~ /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/) { found = 1; break }
+            }
+          }
+          if (found) { u = i; refs++ }
+        }
       }
+      if (detect_only) exit !refs
       if (!refs) { print "    with:"; print runner; exit }
       if (bad || refs != 1 || lines[u] !~ /^ +uses: *antongulin\/robin\/\.github\/workflows\/review\.ya?ml@[A-Za-z0-9._\/-]+ *(#.*)?$/) exit 2
       base = ind(lines[u])
       start = u - 1
       while (start > 0 && (!content(lines[start]) || ind(lines[start]) >= base)) start--
       end = u + 1
-      while (end <= NR && (!content(lines[end]) || ind(lines[end]) >= base)) end++
+      while (end <= count && (!content(lines[end]) || ind(lines[end]) >= base)) end++
       if (!start || lines[start] !~ /^ +[A-Za-z0-9_-]+: *(#.*)?$/) exit 2
       parent = start - 1
       while (parent > 0 && (!content(lines[parent]) || ind(lines[parent]) >= ind(lines[start]))) parent--
@@ -124,17 +175,17 @@ extract_with_overrides() {
       if (nw > 1 || (w && lines[w] !~ /^ *with: *(#.*)?$/)) exit 2
       if (!w) { print "    with:"; print runner; exit }
       stop = w + 1
-      while (stop < end && (!content(lines[stop]) || ind(lines[stop]) > base)) stop++
+      while (stop < end && (!content(structure[stop]) || ind(structure[stop]) > base)) stop++
       last = stop - 1
       # Do not trim trailing blanks/comments: they can be literal |+ scalar data.
       entry_indent = 999999
       for (i = w + 1; i <= last; i++)
-        if (content(lines[i]) && ind(lines[i]) < entry_indent) entry_indent = ind(lines[i])
+        if (content(structure[i]) && ind(structure[i]) < entry_indent) entry_indent = ind(structure[i])
       if (entry_indent == 999999) entry_indent = base + 2
       for (i = w + 1; i <= last; i++) {
-        if (content(lines[i]) && substr(lines[i], ind(lines[i]) + 1) ~ /^[&*!]/) exit 2
-        if (!content(lines[i]) || ind(lines[i]) != entry_indent) continue
-        entry = substr(lines[i], entry_indent + 1)
+        if (content(structure[i]) && substr(structure[i], ind(structure[i]) + 1) ~ /^[&*!]/) exit 2
+        if (!content(structure[i]) || ind(structure[i]) != entry_indent) continue
+        entry = substr(structure[i], entry_indent + 1)
         if (entry !~ /^[A-Za-z0-9_-]+:([[:space:]]|$)/) exit 2
         key = entry; sub(/:.*/, "", key)
         if (seen[key]++) exit 2
@@ -148,15 +199,17 @@ extract_with_overrides() {
         print pads(p) substr(lines[i], d + 1)
       }
       if (!seen["runner"]) print pads(4 + entry_indent - base) substr(runner, 7)
-    }'
+    }' <(workflow_structure "$1") "$1"
 }
+
+has_modern_caller() { extract_with_overrides "$1" 1 >/dev/null; }
 
 # Preflight the complete workflow set before any rename/write. A canonical donor wins;
 # without one, multiple modern candidates are ambiguous even with ROBIN_REF specified.
 PRESERVATION_ERROR=0
 if [ -d "$WORKFLOW_DIR" ]; then
   while IFS= read -r candidate; do
-    if grep -Eiq 'antongulin/robin/\.github/workflows/review\.ya?ml@' "$candidate"; then
+    if has_modern_caller "$candidate"; then
       if ! is_robin_workflow "$candidate" || ! extract_with_overrides "$candidate" >/dev/null; then
         PRESERVATION_ERROR=1
       fi

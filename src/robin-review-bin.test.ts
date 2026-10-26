@@ -301,6 +301,67 @@ describe.each([
     expectStable();
   });
 
+  const checkRegeneration = (original: string, donor: string, inputs: string) => {
+    run();
+    const generated = read();
+    expect(generated).toContain(inputs);
+    expect(generated).toContain(`review.yml@${pin}`);
+    expectOneInputBlock(generated);
+    expect(fs.readFileSync(path.join(dir, ".github/robin-workflow-archive", `${donor}.disabled`), "utf8")).toBe(original);
+    expectStable();
+    run({ ROBIN_REF: "v2" });
+    expect(read()).toBe(generated.replace(`uses: antongulin/robin/.github/workflows/review.yml@${pin}`, "uses: antongulin/robin/.github/workflows/review.yml@v2"));
+    expectStable();
+  };
+
+  it.each(["|", ">", "|+"])("R1-SCALAR preserves marker text and chomping (%s)", header => {
+    const inputs = ["    with:", "      runner: '\"ubuntu-latest\"'", "      llm-temperature: '1'",
+      `      review-instructions: ${header}`, "        * check errors", "        **keep bold**",
+      "        ! keep bang", "        & keep ampersand", "        # literal tail", "", ""].join("\n");
+    const original = consumer(inputs);
+    const donor = header === ">" ? "historical.yaml" : "robin.yml";
+    write(`workflows/${donor}`, original);
+    checkRegeneration(original, donor, inputs);
+  });
+
+  it.each(["|2", "|"])("R1-TAB preserves input scalar data tabs (%s)", header => {
+    const inputs = ["    with:", "      runner: '\"ubuntu-latest\"'", "      llm-temperature: '1'",
+      `      review-instructions: ${header}`, ...(header === "|" ? ["        Plain first line."] : []),
+      "        \tKeep this data tab."].join("\n");
+    const original = consumer(inputs);
+    write("workflows/robin.yml", original);
+    checkRegeneration(original, "robin.yml", inputs);
+  });
+
+  it.each(["|2", "|"])("R1-TAB permits sibling job scalar data tabs (%s)", header => {
+    const inputs = "    with:\n      runner: '\"ubuntu-latest\"'\n      llm-temperature: '1'";
+    const original = consumer(inputs) + ["  audit:", "    runs-on: ubuntu-latest", "    steps:",
+      `      - run: ${header}`, ...(header === "|" ? ["          echo plain"] : []), "          \techo data", ""].join("\n");
+    write("workflows/robin.yml", original);
+    checkRegeneration(original, "robin.yml", inputs);
+  });
+
+  it.each(["comment", "script", "trailing comment", "donor scalar"])("R1-MENTION ignores a reference in %s", variant => {
+    const mention = "antongulin/robin/.github/workflows/review.yml@main";
+    const inputs = "    with:\n      runner: '\"ubuntu-latest\"'\n      llm-temperature: '1'" +
+      (variant === "donor scalar" ? `\n      review-instructions: |\n        uses: ${mention}\n        Document this reference.` : "");
+    const original = consumer(inputs);
+    const audit = ["name: Audit", "on: [push]", ...(variant === "comment" ? [`# ${mention}`] : []),
+      "jobs:", "  audit:", "    runs-on: ubuntu-latest" + (variant === "trailing comment" ? ` # ${mention}` : ""),
+      "    steps:", "      - run: |", "          echo audit", ...(variant === "script" ? [`          uses: ${mention}`] : []), ""].join("\n");
+    write("workflows/robin.yml", original);
+    if (variant !== "donor scalar") {
+      write("workflows/audit.yml", audit);
+    }
+    write("robin-workflow-archive/existing.disabled", "recovery sentinel\n");
+    checkRegeneration(original, "robin.yml", inputs);
+    expect(fs.readFileSync(path.join(dir, ".github/robin-workflow-archive/existing.disabled"), "utf8")).toBe("recovery sentinel\n");
+    if (variant !== "donor scalar") {
+      expect(fs.readFileSync(path.join(dir, ".github/workflows/audit.yml"), "utf8")).toBe(audit);
+      expect(Object.keys(tree()).some(file => file.includes("archive/audit"))).toBe(false);
+    }
+  });
+
   it.each(["    with:", '    with:\n      llm-temperature: "1"\n\n    # keep this comment\n      max-comments: "7"'])(
     "I04 adds a missing runner once, retaining blank lines/comments (%s)", inputs => {
       write("workflows/robin.yml", consumer(inputs));

@@ -39,6 +39,40 @@ const robinReference = /^[ \t]*(?:-[ \t]*)?uses:\s*antongulin\/(?:robin|universa
 const normalize = (value) => value.replace(/\r\n/g, "\n").trimEnd() + "\n";
 const relative = (target) => path.relative(root, target) || ".";
 
+// Keep line positions while hiding comments and block-scalar data from structural
+// checks. Scalar indentation is explicit (|2, >-2) or set by its first content line.
+function workflowStructure(source) {
+  let scalarBase = -1, scalarIndent = 0;
+  return source.replace(/\r\n/g, "\n").split("\n").map(line => {
+    const d = line.match(/^ */)[0].length;
+    if (scalarBase >= 0) {
+      if (/^\s*$/.test(line)) return "";
+      if (!scalarIndent && d > scalarBase) scalarIndent = d;
+      if (scalarIndent && d >= scalarIndent) return "";
+      scalarBase = -1;
+    }
+    let quote = "", code = line;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quote) {
+        if (quote === '"' && c === "\\") i++;
+        else if (c === quote) {
+          if (quote === "'" && line[i + 1] === "'") i++;
+          else quote = "";
+        }
+      } else if (c === '"' || c === "'") quote = c;
+      else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) { code = line.slice(0, i); break; }
+    }
+    const header = code.match(/: *[|>]([1-9][+-]?|[+-][1-9]?)? *$/);
+    if (header) {
+      scalarBase = code.match(/^ *(?:- +)?/)[0].length;
+      const explicit = (header[1] || "").match(/[1-9]/);
+      scalarIndent = explicit ? scalarBase + Number(explicit[0]) : 0;
+    }
+    return code;
+  });
+}
+
 const isRobinSourceRepository = (() => {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -61,7 +95,7 @@ const workflowFiles = fs.existsSync(workflowDir)
   : [];
 
 const robinWorkflows = workflowFiles.filter((candidate) =>
-  robinReference.test(fs.readFileSync(candidate, "utf8"))
+  workflowStructure(fs.readFileSync(candidate, "utf8")).some(line => robinReference.test(line))
 );
 
 // Keep the whole workflow: custom identity can depend on other steps/jobs. Rebuilding
@@ -77,14 +111,37 @@ const customIdentityWorkflows = workflowFiles.filter((candidate) => {
 // A narrow block-YAML reader, not a general YAML parser. Refuse forms we cannot
 // preserve before touching any workflows or archives. Keep this standalone: npm ships bin/ only.
 const modernReference = /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/i;
+function modernCallerLines(source, structure = workflowStructure(source)) {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  return structure.flatMap((line, i) => {
+    const key = line.match(/(?:^|[{,])[ \t]*(?:-[ \t]*)?["']?uses["']?[ \t]*:/i);
+    if (!key) return [];
+    const value = line.slice(key.index + key[0].length).trim();
+    if (modernReference.test(value)) return [i];
+    // Unsupported multiline/quoted/folded calls must still fail closed. Only
+    // inspect continuations of this uses value, never a sibling with/run value.
+    if (!value || /^["'|>&*!]/.test(value)) {
+      const base = line.match(/^ */)[0].length;
+      for (let j = i + 1; j < lines.length; j++) {
+        const continuation = /^[|>]/.test(value) ? lines[j] : structure[j];
+        if (/^\s*$/.test(continuation)) continue;
+        if (lines[j].match(/^ */)[0].length <= base) break;
+        if (modernReference.test(continuation)) return [i];
+      }
+    }
+    return [];
+  });
+}
+const hasModernCaller = source => modernCallerLines(source).length > 0;
 const defaultRunner = "      runner: ${{ github.repository_owner == 'antongulin' && '\"ubicloud-standard-2\"' || '\"ubuntu-latest\"' }}";
 function preservedInputs(source) {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const structure = workflowStructure(source);
   const indent = line => line.match(/^ */)[0].length;
   const content = line => !/^\s*(?:#|$)/.test(line);
-  const refs = lines.map((line, i) => content(line) && modernReference.test(line) ? i : -1).filter(i => i >= 0);
+  const refs = modernCallerLines(source, structure);
   if (!refs.length) return null; // Legacy action inputs use a different schema.
-  if (refs.length !== 1 || lines.some(line => /^ *\t/.test(line))) throw new Error("unsupported YAML");
+  if (refs.length !== 1 || structure.some(line => /^ *\t/.test(line))) throw new Error("unsupported YAML");
   const u = refs[0];
   const use = lines[u].match(/^ +uses: *antongulin\/robin\/\.github\/workflows\/review\.ya?ml@([A-Za-z0-9._/-]+) *(?:#.*)?$/);
   if (!use) throw new Error("unsupported reusable job");
@@ -103,10 +160,10 @@ function preservedInputs(source) {
   if (!withKeys.length) return { ref: use[1], block: "    with:\n" + defaultRunner };
   const w = lines.indexOf(withKeys[0], start + 1);
   let stop = w + 1;
-  while (stop < end && (!content(lines[stop]) || indent(lines[stop]) > base)) stop++;
+  while (stop < end && (!content(structure[stop]) || indent(structure[stop]) > base)) stop++;
   const body = lines.slice(w + 1, stop);
   // Trailing blanks and indented # lines can be literal data in a |+ scalar.
-  const entries = body.filter(content);
+  const entries = structure.slice(w + 1, stop).filter(content);
   const entryIndent = entries.length ? Math.min(...entries.map(indent)) : base + 2;
   if (entries.some(line => /^[&*!]/.test(line.trimStart()))) throw new Error("unsupported input alias/tag");
   const keys = new Set();
@@ -116,7 +173,7 @@ function preservedInputs(source) {
     keys.add(entry[1]);
   }
   const block = ["    " + lines[w].trimStart(), ...body.map(line =>
-    line.length ? " ".repeat(Math.max(0, 4 + indent(line) - base)) + line.trimStart() : "")];
+    line.length ? " ".repeat(Math.max(0, 4 + indent(line) - base)) + line.slice(indent(line)) : "")];
   if (!keys.has("runner")) block.push(" ".repeat(4 + entryIndent - base) + defaultRunner.trimStart());
   return { ref: use[1], block: block.join("\n") };
 }
@@ -126,13 +183,13 @@ let preservationError = "";
 let preserved = null;
 try {
   // Even an explicit ref cannot disambiguate which existing settings to keep.
-  if (!donor && robinWorkflows.length > 1 && robinWorkflows.some(file => modernReference.test(fs.readFileSync(file, "utf8")))) {
+  if (!donor && robinWorkflows.length > 1 && robinWorkflows.some(file => hasModernCaller(fs.readFileSync(file, "utf8")))) {
     throw new Error("ambiguous modern workflow donors");
   }
   // A quoted/flow/anchored reusable call can fall outside the legacy recognizer.
   for (const file of workflowFiles) {
     const source = fs.readFileSync(file, "utf8");
-    if (modernReference.test(source)) {
+    if (hasModernCaller(source)) {
       const inputs = preservedInputs(source);
       if (!robinWorkflows.includes(file)) throw new Error("unsupported workflow syntax");
       if (file === donor) preserved = inputs;
