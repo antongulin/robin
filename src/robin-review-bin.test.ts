@@ -19,10 +19,10 @@ describe("robin-review CLI", () => {
   });
 
   const run = (env: Record<string, string> = {}) =>
-    cp.execSync(`node "${BIN}"`, {
+    cp.execFileSync(process.execPath, [BIN], {
       stdio: "pipe",
       cwd: dir,
-      env: { ...process.env, ROBIN_SKILL: "0", ...env },
+      env: { ...process.env, ROBIN_REF: undefined, ROBIN_SKILL: "0", ...env },
     }).toString();
 
   it("creates the canonical workflow with the given ref", () => {
@@ -168,7 +168,7 @@ describe("robin-review CLI", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "robin-nogit-"));
     try {
       expect(() =>
-        cp.execSync(`node "${BIN}"`, {
+        cp.execFileSync(process.execPath, [BIN], {
           cwd: bare,
           env: { ...process.env, ROBIN_SKILL: "0" },
           stdio: "pipe",
@@ -181,5 +181,207 @@ describe("robin-review CLI", () => {
 
   it("is tracked as an executable npm binary", () => {
     expect(fs.statSync(BIN).mode & 0o111).not.toBe(0);
+  });
+});
+
+
+// Independent consumer fixtures exercise both shipped entry points, not an extractor mock.
+describe.each([
+  ["npm", process.execPath, BIN],
+  ["shell", "bash", path.resolve(__dirname, "../scripts/install.sh")],
+])("%s runner/override migration", (_name, command, script) => {
+  let dir: string;
+  const policy = `      runner: \${{ github.repository_owner == 'antongulin' && '"ubicloud-standard-2"' || '"ubuntu-latest"' }}`;
+  const pin = "1234567890abcdef1234567890abcdef12345678";
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "robin-inputs-"));
+    cp.execFileSync("git", ["init", "-q"], { cwd: dir });
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const write = (file: string, source: string) => {
+    const target = path.join(dir, ".github", file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, source);
+  };
+  const read = () => fs.readFileSync(path.join(dir, ".github/workflows/robin.yml"), "utf8");
+  const tree = (directory = path.join(dir, ".github")): Record<string, string> => {
+    if (!fs.existsSync(directory)) return {};
+    const result: Record<string, string> = {};
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) Object.assign(result, tree(file));
+      else result[path.relative(dir, file)] = fs.readFileSync(file).toString("base64");
+    }
+    return result;
+  };
+  const run = (env: Record<string, string> = {}) => cp.execFileSync(command, [script], {
+    cwd: dir, encoding: "utf8",
+    env: { ...process.env, ROBIN_REF: undefined, ROBIN_SKILL: "0", ...env },
+  });
+  const consumer = (inputs = "", ref = pin) => [
+    "name: Consumer", "on: [pull_request]", "jobs:", "  review:",
+    `    uses: antongulin/robin/.github/workflows/review.yml@${ref}`,
+    inputs, "    secrets:", "      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}", "",
+  ].filter(line => line !== "").join("\n") + "\n";
+  const expectOneInputBlock = (source: string) => {
+    expect(source.match(/^ {4}with:/gm)).toHaveLength(1);
+    expect(source.match(/^\s+runner:/gm)).toHaveLength(1);
+  };
+  const expectStable = () => {
+    const before = tree();
+    expect(run()).toContain("is already current");
+    expect(tree()).toEqual(before);
+  };
+
+  it.each([undefined, "v2"])("I01 generates owner-aware JSON input without an origin (ref %s)", ref => {
+    run(ref ? { ROBIN_REF: ref } : {});
+    const source = read();
+    expectOneInputBlock(source);
+    expect(source).toContain(policy);
+    expect(source).toContain(`review.yml@${ref || "main"}`);
+    for (const secret of ["LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"]) {
+      expect(source).toContain(`${secret}: \${{ secrets.${secret} }}`);
+    }
+    expect(source).not.toContain("ROBIN_TOKEN");
+    expect(source).toBe(fs.readFileSync(TEMPLATE, "utf8").replace("review.yml@main", `review.yml@${ref || "main"}`));
+    expect(fs.existsSync(path.join(dir, ".github/robin-workflow-archive"))).toBe(false);
+    // An npm install ships bin/ only: executing a standalone copy must still work.
+    if (command === process.execPath) {
+      const standalone = path.join(dir, "installer.cjs");
+      fs.copyFileSync(script, standalone);
+      cp.execFileSync(command, [standalone], { cwd: dir, env: { ...process.env, ROBIN_REF: ref, ROBIN_SKILL: "0" } });
+    }
+    expectStable();
+  });
+
+  it.each([
+    "    uses: antongulin/universal-code-reviewer/.github/workflows/review.yml@v0",
+    "    runs-on: ubuntu-latest\n    steps:\n      - uses: antongulin/universal-code-reviewer@v0\n        with:\n          llm-api-key: ${{ secrets.OLD_KEY }}",
+  ])("I02 migrates a legacy donor and keeps recovery bytes (%s)", legacy => {
+    const original = `name: Old\njobs:\n  review:\n${legacy}\n`;
+    write("workflows/old.yaml", original);
+    write("workflows/ci.yml", "name: CI\non: [push]\njobs: {}\n");
+    run();
+    expect(read()).toContain(policy);
+    expect(read()).toContain("review.yml@main");
+    expect(read()).not.toContain("llm-api-key");
+    expect(fs.readFileSync(path.join(dir, ".github/robin-workflow-archive/old.yaml.disabled"), "utf8")).toBe(original);
+    expect(fs.readFileSync(path.join(dir, ".github/workflows/ci.yml"), "utf8")).toBe("name: CI\non: [push]\njobs: {}\n");
+    expectStable();
+  });
+
+  it.each(['\'"ubicloud-standard-2"\'', '\'"ubuntu-latest"\'', '\'["self-hosted", "linux", "coolify"]\''])(
+    "I03 preserves an explicit runner, pin and controls (%s)", runner => {
+      const inputs = [
+        "    with: # consumer settings", `      runner: ${runner}`,
+        '      llm-temperature: "1" # keep this', '      max-comments: "7"',
+        "      request-changes: false", "      review-instructions: |", "        Keep the API stable.",
+        "        Check error handling.", "      config-file: ${{ vars.ROBIN_CONFIG }}",
+      ].join("\n");
+      const original = consumer(inputs);
+      write("workflows/historical.yaml", original);
+      run();
+      expect(read()).toContain(inputs);
+      expect(read()).toContain(`review.yml@${pin}`);
+      expectOneInputBlock(read());
+      expect(fs.readFileSync(path.join(dir, ".github/robin-workflow-archive/historical.yaml.disabled"), "utf8")).toBe(original);
+      expectStable();
+      run({ ROBIN_REF: "v2" });
+      expect(read()).toContain("review.yml@v2");
+      expect(read()).toContain(inputs);
+    },
+  );
+
+  it("I03 preserves trailing literal comments and blank lines in a keep-chomp scalar", () => {
+    const scalar = "      review-instructions: |+\n        Keep this text.\n        # literal instruction\n\n";
+    write("workflows/robin.yml", consumer("    with:\n" + scalar));
+    run();
+    expect(read()).toContain(scalar);
+    expect(read()).toContain(policy);
+    expectStable();
+  });
+
+  it.each(["    with:", '    with:\n      llm-temperature: "1"\n\n    # keep this comment\n      max-comments: "7"'])(
+    "I04 adds a missing runner once, retaining blank lines/comments (%s)", inputs => {
+      write("workflows/robin.yml", consumer(inputs));
+      run();
+      expectOneInputBlock(read());
+      expect(read()).toContain(policy);
+      if (inputs.includes("llm-temperature")) expect(read()).toContain(inputs);
+      expectStable();
+    },
+  );
+
+  it.each([true, false])("I05 selects only the Robin job, including unusual indentation/CRLF (with first %s)", withFirst => {
+    const use = `      uses: antongulin/robin/.github/workflows/review.yml@${pin}`;
+    const inputs = "      with:\n        runner: '\"ubuntu-latest\"'\n        llm-temperature: '1'";
+    write("workflows/robin.yml", [
+      "name: Boundaries", "on: [pull_request]", "jobs:", "   build:",
+      "      uses: acme/ci/.github/workflows/build.yml@main", "      with:", "        config: BEFORE",
+      "   review:", ...(withFirst ? [inputs, use] : [use, inputs]),
+      "   later:", "      uses: acme/ci/.github/workflows/test.yml@main", "      with:", "        config: AFTER", "",
+    ].join("\n").replace(/\n/g, "\r\n"));
+    run();
+    expect(read()).toContain(`review.yml@${pin}`);
+    expect(read()).toContain("runner: '\"ubuntu-latest\"'");
+    expect(read()).toContain("llm-temperature: '1'");
+    expect(read()).not.toMatch(/BEFORE|AFTER/);
+    expectOneInputBlock(read());
+    // Line-ending equivalence must avoid rewriting a current canonical file.
+    write("workflows/robin.yml", read().replace(/\n/g, "\r\n"));
+    expectStable();
+  });
+
+  it("I05 canonical donor supplies both pin and settings", () => {
+    write("workflows/robin.yml", consumer("    with:\n      runner: '\"ubuntu-latest\"'\n      llm-temperature: '1'"));
+    write("workflows/other.yaml", consumer("    with:\n      runner: '\"other\"'\n      max-comments: 19", "v2"));
+    run();
+    expect(read()).toContain(`review.yml@${pin}`);
+    expect(read()).toContain("runner: '\"ubuntu-latest\"'");
+    expect(read()).not.toContain("max-comments: 19");
+    expectStable();
+  });
+
+  it.each([
+    "    with: { runner: '\"ubuntu-latest\"', llm-temperature: 1 }",
+    "    with: *settings",
+    "    with:\n      <<: *settings",
+    "    with: &settings\n      llm-temperature: 1",
+    "    with:\n      runner: *label",
+    "    with:\n      runner:\n        *label",
+    "    with:\n      runner: !!str &label '\"ubuntu-latest\"'",
+    "    with:\n      runner: '\"ubuntu-latest\"'\n      runner: '\"other\"'",
+  ])("I06 refuses unsupported customization without any workflow/archive changes (%s)", inputs => {
+    write("workflows/robin.yml", "# settings anchor may live elsewhere\n" + consumer(inputs));
+    write("workflows/legacy.yml", "jobs:\n  review:\n    uses: antongulin/universal-code-reviewer@v0\n");
+    write("robin-workflow-archive/robin.yml.disabled", "existing recovery bytes\r\n");
+    const before = tree();
+    for (let i = 0; i < 2; i++) {
+      expect(run({ ROBIN_REF: "main" })).toMatch(/unsupported|ambiguous/i);
+      expect(tree()).toEqual(before);
+    }
+  });
+
+  it("I06 refuses ambiguous modern donors even with an explicit ROBIN_REF", () => {
+    write("workflows/first.yml", consumer("    with:\n      runner: '\"ubuntu-latest\"'"));
+    write("workflows/second.yaml", consumer("    with:\n      runner: '\"other\"'", "v2"));
+    write("robin-workflow-archive/existing.disabled", "recovery\n");
+    const before = tree();
+    expect(run({ ROBIN_REF: "main" })).toMatch(/ambiguous/i);
+    expect(tree()).toEqual(before);
+  });
+
+  it("I07 source sentinels dominate regeneration even with an explicit ref", () => {
+    fs.writeFileSync(path.join(dir, "package.json"), '{"name":"robin-review"}');
+    fs.writeFileSync(path.join(dir, "action.yml"), "name: Robin\n");
+    fs.mkdirSync(path.join(dir, "skills/robin"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "skills/robin/SKILL.md"), "# Robin\n");
+    write("workflows/self-test.yml", "name: Self-Test\n");
+    write("workflows/robin.yml", consumer("    with:\n      runner: '\"ubuntu-latest\"'"));
+    const before = tree();
+    for (let i = 0; i < 2; i++) {
+      expect(run({ ROBIN_REF: "main" })).toContain("source repository detected");
+      expect(tree()).toEqual(before);
+    }
   });
 });

@@ -140,7 +140,8 @@ jobs:
     concurrency:
       group: robin-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}
       cancel-in-progress: true
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    # Select the owned policy before parsing caller-controlled runner JSON.
+    runs-on: ${{ fromJSON(github.repository_owner == 'antongulin' && '"ubicloud-standard-2"' || inputs.runner) }}
     timeout-minutes: 45
     steps:
       - name: Robin

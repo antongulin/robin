@@ -63,11 +63,20 @@ permissions:
 jobs:
   review:
     uses: antongulin/robin/.github/workflows/review.yml@main
+    with:
+      runner: ${{ github.repository_owner == 'antongulin' && '"ubicloud-standard-2"' || '"ubuntu-latest"' }}
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
+
+The current reusable workflow forces Ubicloud for `antongulin`-owned callers before
+parsing `runner`; external callers retain the hosted default and JSON label/array input.
+Installers add the owner-aware input above only when no explicit runner exists. Preserve
+existing runners and pins, including hosted overrides on old refs; repair those callers
+separately. Unsupported customization or ambiguous modern donors must warn and leave all
+workflow/archive files unchanged. Custom identity and source-repository guards take priority.
 
 ## Permissions
 
@@ -153,6 +162,13 @@ Replay it unchanged only on its original assistant tool message, including retai
 compaction tails and forced-final requests. Omit absent or invalid values. Keep it out
 of summary prompts, progress/status updates, Robin logs, and visible reviews; use
 `content` for review text. Low-level SDK debug logging can expose raw payloads.
+
+Installers preserve ordinary block-form job-level `with:` inputs and the ref from the
+same canonical or sole donor. Keep npm generation self-contained (the package ships only
+`bin/`); do not add a runtime YAML dependency or require the Bash installer from the CLI.
+Missing runners get owner-aware JSON input; existing explicit runners win in generation.
+Unsupported flow/anchor/alias forms or ambiguous modern donors fail closed before any
+workflow/archive mutation. Multiple legacy-only files may migrate without a settings donor.
 
 Installers preserve complete custom identity workflows (explicit token mappings, App
 token steps, or inherited secrets), including their refs, rather than reconstructing

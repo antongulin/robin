@@ -62,8 +62,13 @@ older Robin or Universal Code Reviewer workflow under another name, it moves tha
 canonical workflow. Inspect the archived copy, then remove it after confirming the
 migration. An unrelated file already using the canonical path is never overwritten.
 Run an installer separately in every repository that should use Robin. Re-running it is
-safe and idempotent — your pinned version and any `with:` overrides (for example
-`llm-temperature`) are preserved.
+idempotent for ordinary block-form reusable-workflow settings: existing pins and `with:`
+inputs (including an explicit `runner`) are preserved. When no runner is configured, new
+and migrated workflows add an owner-aware JSON input: Ubicloud for `antongulin`, hosted
+`ubuntu-latest` for other owners. This does not replace a hosted override on an old pin;
+update those callers manually. Unsupported customization (such as flow/anchored `with:`)
+or ambiguous modern donors without a canonical workflow causes a warning and leaves all
+workflow and archive files unchanged. Custom identity workflows stay intact.
 You still need to add the three secrets — do **Steps 1 and 2** below, then commit and push.
 You can **skip Step 3**: the installer already did it.
 
@@ -152,14 +157,16 @@ By default Robin reviews when the PR opens (and on `/review`), not on every push
 
 ## Running on a self-hosted runner
 
-By default, the reusable workflow runs on GitHub's hosted `ubuntu-latest` runner:
+For repositories outside the `antongulin` account, the reusable workflow defaults to GitHub's hosted `ubuntu-latest` runner:
 
 ```yaml
 with:
   runner: '"ubuntu-latest"'
 ```
 
-To run reviews on your own machine, Mac mini, home server, local Linux box, or Coolify runner, pass `runner` as valid JSON. Use a JSON string for one label or a JSON array for multiple labels.
+The current reusable workflow always selects `ubicloud-standard-2` for `antongulin`-owned repositories, before parsing `runner`, even when the input specifies another runner or contains invalid JSON. Older pinned workflow versions and direct action jobs need their own explicit Ubicloud routing.
+
+For other owners, to run reviews on your own machine, Mac mini, home server, local Linux box, or Coolify runner, pass `runner` as valid JSON. Use a JSON string for one label or a JSON array for multiple labels.
 
 To create a local runner, go to:
 
@@ -326,7 +333,7 @@ Triggers, authors, and permissions:
 | `bot-allowlist` | Empty list; exact case-insensitive logins. Comma-separated in workflow, YAML sequence in config | Workflow input or repo config |
 | `min-command-permission` | `write`; minimum permission for slash commands | Workflow input |
 | `github-token` / `ROBIN_TOKEN` | `github.token`; custom review identity | Direct action input / reusable workflow secret |
-| `runner` | JSON string `"ubuntu-latest"`; runner label or array of labels | Reusable workflow only |
+| `runner` | JSON string `"ubuntu-latest"`; runner label or array of labels | Reusable workflow only; current workflow forces Ubicloud for `antongulin`-owned repositories |
 
 The [bot author filter](docs/ADVANCED.md#automatic-bot-pr-reviews) applies only to
 automatic PR reviews. Authorized `/review` commands can review excluded bot PRs.

@@ -172,7 +172,9 @@ jobs:
 - **Free tier:** GitHub Free includes about **2,000 Actions minutes/month** for public and private repos; GitHub Pro about **3,000 minutes/month** (limits can change — see [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) for your account).
 - **Heavy usage:** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
 
-To use a self-hosted runner with the reusable workflow, pass `runner` as valid JSON. A single label is a JSON string; multiple labels are a JSON array.
+For repositories outside the `antongulin` account, pass `runner` as valid JSON to use a self-hosted runner with the reusable workflow. A single label is a JSON string; multiple labels are a JSON array.
+
+The current reusable workflow forces `antongulin`-owned reviews onto `ubicloud-standard-2` before parsing the input, regardless of its value. External owners keep the hosted default and configurable JSON labels; malformed JSON still fails. Older pinned workflow versions and direct action jobs require explicit Ubicloud routing in the caller.
 
 Coolify example:
 
@@ -209,7 +211,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `review-on-synchronize` | `false` | Reusable workflow / action input. When the workflow triggers on `synchronize`, set `true` to review every push to an existing PR; default `false` skips pushes and re-reviews with `/review` |
 | `bot-review-policy` | empty (defer to repo config, then `all`) | Automatic PR review policy: `all`, `none`, or `allowlist`. See [Automatic bot PR reviews](#automatic-bot-pr-reviews); authorized manual commands bypass the filter |
 | `bot-allowlist` | empty (defer to repo config, then empty list) | Comma-separated exact, case-insensitive bot author logins; `[]` clears the base list. An empty list excludes all bots under `allowlist` |
-| `runner` | `'"ubuntu-latest"'` | Reusable workflow only: runner as a JSON string or JSON array |
+| `runner` | `'"ubuntu-latest"'` | Reusable workflow only: JSON string or array for external owners; current workflow forces Ubicloud for `antongulin`-owned repositories |
 | `min-command-permission` | `write` | Minimum repository permission for slash commands: `read`, `triage`, `write`, `maintain`, or `admin` |
 | `review-instructions` | empty | Extra prompt text for code reviews (not `/summary`); appended to the built-in prompt alongside the rules file |
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch for code reviews; empty disables this file. Missing files do not block review |
@@ -669,8 +671,25 @@ Both installers preserve the workflow files when a modern Robin workflow contain
 They skip workflow regeneration and archiving, including `ROBIN_REF` overrides, so
 token steps, secret aliases, triggers, and job dependencies survive. The companion
 skill update still runs unless `ROBIN_SKILL=0`. Update refs and settings in these
-workflows yourself. Default installations keep the existing generation and migration
-behavior.
+workflows yourself.
+
+For ordinary block-form reusable callers, the canonical `robin.yml` supplies both the
+preserved pin and `with:` settings; otherwise a single recognized workflow supplies them.
+The installer adds a runner only when absent, using a JSON string expression that selects
+Ubicloud for `antongulin` and hosted `ubuntu-latest` for other owners. Existing explicit
+runners, including hosted values on old pins, stay unchanged. Only the current reusable
+workflow enforces the owned policy regardless of that input; update old pinned callers
+and direct-action job routing manually when needed.
+
+Flow-style or anchored/aliased settings and other unsupported customization are declined.
+Multiple modern candidate files without a canonical donor are also declined, even with
+`ROBIN_REF` set. A warning leaves the entire workflow/archive set unchanged, so resolve
+the settings manually before trying again. Multiple legacy workflows without modern
+reusable settings can still migrate to the default template. Regeneration does not
+preserve arbitrary unrelated jobs or triggers; inspect the archived originals.
+The npm installer is self-contained in `bin/`; the Bash installer needs no Node runtime
+for workflow generation. The website installer copy and published npm package must be
+updated separately to deliver installer source changes.
 
 ## Review flow
 

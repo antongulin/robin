@@ -97,9 +97,29 @@ function consumerWorkflowWithKeys(source: string): string[] {
 function workflowCallInputBlock(source: string, name: string): string | undefined {
   const callSection = source.split(/\n\s+secrets:\n/)[0] ?? source;
   const match = callSection.match(
-    new RegExp(`^      ${name}:\\n((?:        [^\\n]*\\n)+)`, "m"),
+    new RegExp(`^      ${name}:\\n((?:        [^\\n]*(?:\\n|$))+)`, "m"),
   );
   return match?.[1];
+}
+
+/** Job-scoped source inspection; actionlint checks YAML/expression grammar. */
+function workflowJobs(source: string): Array<{ name: string; body: string }> {
+  const jobs = source.split(/^jobs:\n/m)[1] ?? "";
+  return [...jobs.matchAll(/^ {2}([a-z0-9-]+):\n((?: {4}[^\n]*\n|[ \t]*\n)*)/gm)].map(
+    (match) => ({ name: match[1], body: match[2] }),
+  );
+}
+
+function reviewRunnerBranches(): { guard: string; ownedJson: string; external: string } {
+  const reviewJob = workflowJobs(reviewWorkflow).find((job) => job.name === "review");
+  const runsOn = reviewJob?.body.match(/^ {4}runs-on: (.+)$/m)?.[1];
+  // Inspect the dataflow in the real job: choose JSON first, then convert once.
+  // This deliberately does not implement GitHub's expression evaluator.
+  const conversion = runsOn?.match(/^\$\{\{\s*fromJSON\((.*)\)\s*\}\}$/);
+  expect(conversion).toBeTruthy();
+  const branches = conversion![1].match(/^(.*?)\s*&&\s*'([^']+)'\s*\|\|\s*(.*?)\s*$/);
+  expect(branches).toBeTruthy();
+  return { guard: branches![1].trim(), ownedJson: branches![2], external: branches![3] };
 }
 
 describe("reusable review workflow", () => {
@@ -231,13 +251,35 @@ describe("reusable review workflow", () => {
     );
   });
 
-  it("lets callers choose a GitHub-hosted or self-hosted runner", () => {
-    expect(reviewWorkflow).toContain("runner:");
-    expect(reviewWorkflow).toContain(
-      'description: "Runner label or JSON array of labels to use for the review job."',
+  it("R01 selects owned JSON before parsing any caller-controlled runner", () => {
+    const { guard, ownedJson } = reviewRunnerBranches();
+    // GitHub equality ignores case; exact equality excludes antongulin-other.
+    // The nonempty literal short-circuits hosted/array/malformed/empty inputs.
+    expect(guard).toMatch(/^github\.repository_owner\s*==\s*'antongulin'$/);
+    expect(JSON.parse(ownedJson)).toBe("ubicloud-standard-2");
+  });
+
+  it("R02 preserves the external optional JSON runner contract without a fallback", () => {
+    const runnerInput = workflowCallInputBlock(reviewWorkflow, "runner");
+    expect(runnerInput).toMatch(/^ {8}required: false$/m);
+    expect(runnerInput).toMatch(/^ {8}type: string$/m);
+    expect(runnerInput).toMatch(/^ {8}default: '"ubuntu-latest"'$/m);
+    // Passing the original input to the outer fromJSON preserves scalar/array
+    // labels and invalid-JSON errors; no coercion or extra default is allowed.
+    expect(reviewRunnerBranches().external).toBe("inputs.runner");
+  });
+
+  it("R03 routes every self-test job executing the local action to Ubicloud", () => {
+    const localActionJobs = workflowJobs(selfTestWorkflow).filter((job) =>
+      /^\s+uses: \.\/\s*$/m.test(job.body),
     );
-    expect(reviewWorkflow).toContain("default: '\"ubuntu-latest\"'");
-    expect(reviewWorkflow).toContain("runs-on: ${{ fromJSON(inputs.runner) }}");
+    expect(localActionJobs.map((job) => job.name).sort()).toEqual(["command-test", "test"]);
+    for (const job of localActionJobs) {
+      expect({ job: job.name, runner: job.body.match(/^ {4}runs-on: (.+)$/m)?.[1] }).toEqual({
+        job: job.name,
+        runner: "ubicloud-standard-2",
+      });
+    }
   });
 
   it("documents local and Coolify self-hosted runner usage", () => {

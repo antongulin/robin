@@ -36,7 +36,6 @@ const workflowDir = path.join(root, ".github", "workflows");
 const workflowPath = path.join(workflowDir, "robin.yml");
 const archiveDir = path.join(root, ".github", "robin-workflow-archive");
 const robinReference = /^[ \t]*(?:-[ \t]*)?uses:\s*antongulin\/(?:robin|universal-code-reviewer)(?:\/\.github\/workflows\/review\.ya?ml)?@[^\s#]+/im;
-const currentRobinRef = /^[ \t]*(?:-[ \t]*)?uses:\s*antongulin\/robin\/\.github\/workflows\/review\.ya?ml@([A-Za-z0-9._/-]+)/im;
 const normalize = (value) => value.replace(/\r\n/g, "\n").trimEnd() + "\n";
 const relative = (target) => path.relative(root, target) || ".";
 
@@ -75,19 +74,79 @@ const customIdentityWorkflows = workflowFiles.filter((candidate) => {
       || /uses:\s*actions\/create-github-app-token@/.test(source));
 });
 
-let selectedRef = ref;
-if (!process.env.ROBIN_REF) {
-  if (!fs.existsSync(workflowPath) && robinWorkflows.length > 1) {
-    warn(`Multiple Robin workflows found; using default ref (${ref}).`);
+// A narrow block-YAML reader, not a general YAML parser. Refuse forms we cannot
+// preserve before touching any workflows or archives. Keep this standalone: npm ships bin/ only.
+const modernReference = /antongulin\/robin\/\.github\/workflows\/review\.ya?ml@/i;
+const defaultRunner = "      runner: ${{ github.repository_owner == 'antongulin' && '\"ubicloud-standard-2\"' || '\"ubuntu-latest\"' }}";
+function preservedInputs(source) {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const indent = line => line.match(/^ */)[0].length;
+  const content = line => !/^\s*(?:#|$)/.test(line);
+  const refs = lines.map((line, i) => content(line) && modernReference.test(line) ? i : -1).filter(i => i >= 0);
+  if (!refs.length) return null; // Legacy action inputs use a different schema.
+  if (refs.length !== 1 || lines.some(line => /^ *\t/.test(line))) throw new Error("unsupported YAML");
+  const u = refs[0];
+  const use = lines[u].match(/^ +uses: *antongulin\/robin\/\.github\/workflows\/review\.ya?ml@([A-Za-z0-9._/-]+) *(?:#.*)?$/);
+  if (!use) throw new Error("unsupported reusable job");
+  const base = indent(lines[u]);
+  let start = u - 1, end = u + 1;
+  while (start >= 0 && (!content(lines[start]) || indent(lines[start]) >= base)) start--;
+  while (end < lines.length && (!content(lines[end]) || indent(lines[end]) >= base)) end++;
+  if (start < 0 || !/^ +[A-Za-z0-9_-]+: *(?:#.*)?$/.test(lines[start])) throw new Error("unsupported job mapping");
+  let parent = start - 1;
+  while (parent >= 0 && (!content(lines[parent]) || indent(lines[parent]) >= indent(lines[start]))) parent--;
+  if (parent < 0 || !/^jobs: *(?:#.*)?$/.test(lines[parent])) throw new Error("unsupported jobs mapping");
+  const jobLines = lines.slice(start + 1, end);
+  if (jobLines.some(line => content(line) && indent(line) === base && !/^ *(?:[A-Za-z0-9_-]+):/.test(line))) throw new Error("unsupported job key");
+  const withKeys = jobLines.filter(line => indent(line) === base && /^ *with:/.test(line));
+  if (withKeys.length > 1 || (withKeys.length && !/^ *with: *(?:#.*)?$/.test(withKeys[0]))) throw new Error("unsupported with mapping");
+  if (!withKeys.length) return { ref: use[1], block: "    with:\n" + defaultRunner };
+  const w = lines.indexOf(withKeys[0], start + 1);
+  let stop = w + 1;
+  while (stop < end && (!content(lines[stop]) || indent(lines[stop]) > base)) stop++;
+  const body = lines.slice(w + 1, stop);
+  // Trailing blanks and indented # lines can be literal data in a |+ scalar.
+  const entries = body.filter(content);
+  const entryIndent = entries.length ? Math.min(...entries.map(indent)) : base + 2;
+  if (entries.some(line => /^[&*!]/.test(line.trimStart()))) throw new Error("unsupported input alias/tag");
+  const keys = new Set();
+  for (const line of entries.filter(line => indent(line) === entryIndent)) {
+    const entry = line.trimStart().match(/^([A-Za-z0-9_-]+):(?:\s|$)(.*)$/);
+    if (!entry || keys.has(entry[1]) || /^[&*!{[]/.test(entry[2].trimStart())) throw new Error("unsupported input entry");
+    keys.add(entry[1]);
   }
-  const canonicalSource = fs.existsSync(workflowPath)
-    ? fs.readFileSync(workflowPath, "utf8")
-    : robinWorkflows.length === 1
-      ? fs.readFileSync(robinWorkflows[0], "utf8")
-      : "";
-  const match = canonicalSource.match(currentRobinRef);
-  if (match && match[1] !== "v0") selectedRef = match[1];
+  const block = ["    " + lines[w].trimStart(), ...body.map(line =>
+    line.length ? " ".repeat(Math.max(0, 4 + indent(line) - base)) + line.trimStart() : "")];
+  if (!keys.has("runner")) block.push(" ".repeat(4 + entryIndent - base) + defaultRunner.trimStart());
+  return { ref: use[1], block: block.join("\n") };
 }
+
+const donor = robinWorkflows.includes(workflowPath) ? workflowPath : robinWorkflows.length === 1 ? robinWorkflows[0] : null;
+let preservationError = "";
+let preserved = null;
+try {
+  // Even an explicit ref cannot disambiguate which existing settings to keep.
+  if (!donor && robinWorkflows.length > 1 && robinWorkflows.some(file => modernReference.test(fs.readFileSync(file, "utf8")))) {
+    throw new Error("ambiguous modern workflow donors");
+  }
+  // A quoted/flow/anchored reusable call can fall outside the legacy recognizer.
+  for (const file of workflowFiles) {
+    const source = fs.readFileSync(file, "utf8");
+    if (modernReference.test(source)) {
+      const inputs = preservedInputs(source);
+      if (!robinWorkflows.includes(file)) throw new Error("unsupported workflow syntax");
+      if (file === donor) preserved = inputs;
+    }
+  }
+} catch (error) {
+  preservationError = error.message;
+}
+let selectedRef = ref;
+if (!process.env.ROBIN_REF && preserved && preserved.ref !== "v0") selectedRef = preserved.ref;
+if (!process.env.ROBIN_REF && !donor && robinWorkflows.length > 1 && !preservationError) {
+  warn(`Multiple Robin workflows found; using default ref (${ref}).`);
+}
+const inputBlock = preserved ? preserved.block : "    with:\n" + defaultRunner;
 
 const workflow = `# Generated by robin-review. Re-run \`npx robin-review\` to check for updates.
 name: Robin
@@ -106,6 +165,7 @@ permissions:
 jobs:
   review:
     uses: antongulin/robin/.github/workflows/review.yml@${selectedRef}
+${inputBlock}
     secrets:
       LLM_API_KEY: \${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: \${{ secrets.LLM_BASE_URL }}
@@ -143,6 +203,8 @@ if (isRobinSourceRepository) {
   warn("Preserved custom identity workflows; no workflow files were changed or archived.");
   for (const file of customIdentityWorkflows) info(relative(file));
   warn("Update workflow refs/settings manually, including any requested ROBIN_REF override.");
+} else if (preservationError) {
+  warn(`Preserved workflows: ${preservationError}; no workflow files were changed or archived. Update settings manually.`);
 } else {
   if (fs.existsSync(workflowPath) && !robinReference.test(fs.readFileSync(workflowPath, "utf8"))) {
     die(`${relative(workflowPath)} exists but is not a Robin workflow. Move or rename it, then run again.`);
@@ -191,6 +253,8 @@ if (isRobinSourceRepository) {
 `);
 } else if (customIdentityWorkflows.length > 0) {
   console.log("Keep your existing token setup. Docs: https://github.com/antongulin/robin/blob/main/docs/ADVANCED.md#custom-review-identity");
+} else if (preservationError) {
+  info("Review the existing workflow settings manually before rerunning the installer.");
 } else {
   console.log(`
   1. Add three repository secrets (Settings → Secrets and variables → Actions):

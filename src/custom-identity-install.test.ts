@@ -31,17 +31,19 @@ describe.each(installers)("%s custom identity preservation", (_name, command, sc
     ["robin.yml", "    secrets: { ROBIN_TOKEN: '${{ secrets.REVIEW_PAT }}' }"],
     ["robin.yml", "    secrets: 'inherit'"],
     ["robin.yml", "    secrets:\n      inherit"],
-  ])("keeps %s and its job dependencies intact on repeated installs", (filename, secrets) => {
+  ])("I07 keeps %s and its job dependencies intact on repeated installs", (filename, secrets) => {
     const workflow = [
       "name: Custom reviewer", "on: [pull_request]", "jobs:",
       "  prepare:", "    runs-on: ubuntu-latest", "    steps:", "      - run: echo ready",
       "  review:", "    needs: prepare",
       "    uses: antongulin/robin/.github/workflows/review.yml@v2",
-      "    with:", '      llm-temperature: "1"', secrets, "",
+      "    with:", '      runner: \'"ubuntu-latest"\'', '      llm-temperature: "1"', secrets, "",
     ].join("\r\n");
     const target = path.join(dir, ".github/workflows", filename);
     fs.writeFileSync(target, workflow);
+    cp.execFileSync("git", ["remote", "add", "origin", "https://github.com/antongulin/synthetic.git"], { cwd: dir });
     for (let i = 0; i < 2; i++) {
+      if (i === 1) cp.execFileSync("git", ["remote", "set-url", "origin", "https://github.com/acme/synthetic.git"], { cwd: dir });
       expect(run()).toContain("custom identity");
       expect(fs.readFileSync(target, "utf8")).toBe(workflow);
       expect(fs.readdirSync(path.join(dir, ".github/workflows"))).toEqual([filename]);
