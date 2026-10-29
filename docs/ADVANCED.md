@@ -23,7 +23,7 @@ skip-paths:
 
 | Key | Purpose |
 | --- | --- |
-| `max-diff-size` | Used when the workflow still passes the action default (`50000`). Counted after `skip-paths` and built-in exclusions; a larger filtered diff fails before the model request instead of being truncated |
+| `max-diff-size` | Used when the workflow still passes the action default (`50000`). Counted after `skip-paths` and built-in exclusions; a larger filtered diff fails before the corresponding single-shot review or summary request instead of being truncated. This also applies to a single-shot fallback or structured retry after an agent request |
 | `max-comments` | Used when the workflow still passes the action default (`15`) |
 | `json-response-mode` | Used when `use-json-response-mode` is empty (action default defers to this file) |
 | `request-changes` | Used when `request-changes` input is empty. `true` (default) blocks on high findings; `false` posts advisor-only comments |

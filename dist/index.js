@@ -2561,7 +2561,7 @@ function buildFailedStatusBody(error, command) {
         advice = `Raise \`${error.setting}\` (currently ${error.limit} characters) on the base branch so it includes the ` +
             `${error.observedChars} characters of changed files still under review, or split the change into smaller ` +
             "logically complete PRs (keep related implementation and tests together). Robin stops before sending a partial diff, " +
-            "so an unchanged retry cannot succeed. After adjusting the cause, comment `/robin` to try again.";
+            `so an unchanged retry cannot succeed. After adjusting the cause, comment \`/${command === "summary" ? "summary" : "robin"}\` to try again.`;
     }
     else if (error instanceof llm_client_1.LLMRequestError && (0, llm_retry_1.isContextLengthError)(error.cause)) {
         advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +

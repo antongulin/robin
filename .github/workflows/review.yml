@@ -15,7 +15,7 @@ on:
         # No default: omitted must stay unset so .github/robin.yml can still win.
         # A boolean default of true would override repo-config advisor mode.
       max-diff-size:
-        description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, the run fails before any model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff."
+        description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, that path fails before its model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff."
         required: false
         type: string
         default: "50000"
