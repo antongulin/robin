@@ -3,6 +3,9 @@ import * as github from "@actions/github";
 import { OpenAI } from "openai";
 import { createRepoSnapshot } from "./repo-snapshot";
 import { ReviewToolbox } from "./review-tools";
+import { mkdtemp, rm, stat } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 
 jest.mock("@actions/core");
 jest.mock("@actions/github", () => ({
@@ -66,6 +69,7 @@ interface Scenario {
   inputs?: Record<string, string>;
   create?: jest.Mock;
   snapshotError?: Error;
+  snapshot?: Awaited<ReturnType<typeof createRepoSnapshot>>;
   updateCommentError?: Error;
   summaryCommand?: boolean;
   configFile?: string;
@@ -103,11 +107,11 @@ async function execute(scenario: Scenario): Promise<Result> {
   });
   jest.mocked(OpenAI).mockImplementation(() => ({ chat: { completions: { create } } }) as any);
 
-  const cleanup = jest.fn().mockResolvedValue(undefined);
+  const cleanup = jest.fn(scenario.snapshot?.cleanup ?? (() => Promise.resolve()));
   if (scenario.snapshotError) {
     jest.mocked(createRepoSnapshot).mockRejectedValue(scenario.snapshotError);
   } else {
-    jest.mocked(createRepoSnapshot).mockResolvedValue({ root: "/synthetic-snapshot", cleanup });
+    jest.mocked(createRepoSnapshot).mockResolvedValue({ root: scenario.snapshot?.root ?? "/synthetic-snapshot", cleanup });
   }
   jest.mocked(ReviewToolbox).mockImplementation(() => ({
     execute: jest.fn().mockResolvedValue("synthetic tool output"),
@@ -400,49 +404,39 @@ describe("agent fallback input completeness", () => {
     expect(result.lastStatus).toContain("Raise `max-diff-size`");
   });
 
-  it("COV-08: a tools-unsupported fallback fails instead of sending a cut-off diff", async () => {
+  it.each([
+    [400, "Model does not support tools", "model has no tool support"],
+    [401, "Unauthorized", "agent review failed"],
+  ])("COV-08: %s fallback failure reports the cap and cleans up the snapshot", async (status, message, reason) => {
     const diff = reviewableDiff();
     const create = jest.fn().mockRejectedValueOnce(
-      Object.assign(new Error("Model does not support tools"), { status: 400 })
+      Object.assign(new Error(message), { status })
     );
-    const result = await execute({
-      diff,
-      create,
-      inputs: {
-        "agent-mode": "auto",
-        "agent-max-diff-size": String(diff.length + 500),
-        "max-diff-size": String(diff.length - 1),
-      },
-    });
+    const root = await mkdtemp(join(tmpdir(), "robin-input-limit-"));
+    try {
+      const result = await execute({
+        diff,
+        create,
+        snapshot: { root, cleanup: () => rm(root, { recursive: true, force: true }) },
+        inputs: {
+          "agent-mode": "auto",
+          "agent-max-diff-size": String(diff.length + 500),
+          "max-diff-size": String(diff.length - 1),
+        },
+      });
 
-    expect(result.requests).toHaveLength(1);
-    expect(result.requests[0].tools).toBeDefined();
-    expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
-    const failure = jest.mocked(core.setFailed).mock.calls[0][0] as string;
-    expect(failure).toContain("model has no tool support");
-    expect(failure).toContain("`max-diff-size` allows");
-  });
-
-  it("COV-08: a generic agent-loop failure fails instead of sending a cut-off diff", async () => {
-    const diff = reviewableDiff();
-    const create = jest.fn().mockRejectedValueOnce(
-      Object.assign(new Error("Unauthorized"), { status: 401 })
-    );
-    const result = await execute({
-      diff,
-      create,
-      inputs: {
-        "agent-mode": "auto",
-        "agent-max-diff-size": String(diff.length + 500),
-        "max-diff-size": String(diff.length - 1),
-      },
-    });
-
-    expect(result.requests).toHaveLength(1);
-    expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
-    const failure = jest.mocked(core.setFailed).mock.calls[0][0] as string;
-    expect(failure).toContain("agent review failed");
-    expect(failure).toContain("`max-diff-size` allows");
+      expect(result.requests).toHaveLength(1);
+      expect(result.requests[0].tools).toBeDefined();
+      expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+      expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(reason));
+      expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("`max-diff-size` allows"));
+      expect(result.lastStatus).toContain("Raise `max-diff-size`");
+      expect(result.lastStatus).not.toContain("Review done.");
+      expect(result.cleanup).toHaveBeenCalledTimes(1);
+      await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("COV-08: a fallback whose full input fits max-diff-size still completes", async () => {

@@ -902,14 +902,15 @@ async function runAgentOrSingleShotReview(
     };
   } catch (error) {
     if (error instanceof CompletionLengthError) throw error;
+    // Handle fallback rejection before the asynchronous snapshot cleanup in finally.
     if (error instanceof ToolsUnsupportedError) {
       core.warning(`${error.message}. Running single-shot diff review instead.`);
       reporter.setStep("Model doesn't support tool calling — running a diff-only review…");
-      return singleShot("model has no tool support");
+      return await singleShot("model has no tool support");
     }
     core.warning(`Agent review failed (${error}); running single-shot diff review instead.`);
     reporter.setStep("Agent review failed — retrying as a diff-only review…");
-    return singleShot("agent review failed");
+    return await singleShot("agent review failed");
   } finally {
     await snapshot.cleanup();
   }

@@ -2806,14 +2806,15 @@ async function runAgentOrSingleShotReview(params) {
     catch (error) {
         if (error instanceof llm_client_1.CompletionLengthError)
             throw error;
+        // Handle fallback rejection before the asynchronous snapshot cleanup in finally.
         if (error instanceof llm_client_1.ToolsUnsupportedError) {
             core.warning(`${error.message}. Running single-shot diff review instead.`);
             reporter.setStep("Model doesn't support tool calling — running a diff-only review…");
-            return singleShot("model has no tool support");
+            return await singleShot("model has no tool support");
         }
         core.warning(`Agent review failed (${error}); running single-shot diff review instead.`);
         reporter.setStep("Agent review failed — retrying as a diff-only review…");
-        return singleShot("agent review failed");
+        return await singleShot("agent review failed");
     }
     finally {
         await snapshot.cleanup();
