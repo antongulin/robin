@@ -24,6 +24,7 @@ import {
 } from "./config";
 import { filterDiff, splitDiffIntoFiles } from "./diff-filter";
 import { annotateDiffWithLineNumbers } from "./diff-annotate";
+import { DiffInputLimit, DiffInputLimitError, assertDiffFits } from "./input-limit";
 import {
   AgentMode,
   DEFAULT_CONFIG_FILE,
@@ -304,11 +305,8 @@ async function run(): Promise<void> {
       return;
     }
 
-    const truncatedDiff = truncateDiff(reviewDiff, maxDiffSize);
-    const agentDiff = truncateDiff(reviewDiff, agentMaxDiffSize);
-
     core.info(
-      `Diff size: ${reviewDiff.length} chars (single-shot limit ${maxDiffSize}${reviewDiff.length > maxDiffSize ? ", truncated" : ""}; agent limit ${agentMaxDiffSize}${reviewDiff.length > agentMaxDiffSize ? ", truncated" : ""})${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`
+      `Diff size: ${reviewDiff.length} chars (single-shot limit ${maxDiffSize}${reviewDiff.length > maxDiffSize ? ", too large for a single-shot request" : ""}; agent limit ${agentMaxDiffSize}${reviewDiff.length > agentMaxDiffSize ? ", too large for an agent request" : ""})${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`
     );
     const reviewInstructions = command === "review"
       ? await loadReviewInstructions(
@@ -343,7 +341,7 @@ async function run(): Promise<void> {
     let reviewText: string;
     let reviewStats: string | undefined;
     if (command === "summary") {
-      reviewText = (await runSummary(llm, truncatedDiff)).content;
+      reviewText = (await runSummary(llm, reviewDiff, maxDiffSize)).content;
     } else {
       ({ content: reviewText, stats: reviewStats } = await runAgentOrSingleShotReview({
         octokit,
@@ -352,8 +350,10 @@ async function run(): Promise<void> {
         prNumber,
         headSha: payload.pull_request?.head?.sha,
         llm,
-        diff: truncatedDiff,
-        agentDiff,
+        diff: reviewDiff,
+        maxDiffSize,
+        agentDiff: reviewDiff,
+        agentMaxDiffSize,
         changedFiles: splitDiffIntoFiles(reviewDiff).map((file) => file.path),
         reviewInstructions,
         useJsonMode,
@@ -391,9 +391,15 @@ async function run(): Promise<void> {
         const retryText = (
           await runReview(
             llm,
-            truncatedDiff,
+            reviewDiff,
             `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`,
-            true
+            true,
+            {
+              mode: "single-shot review",
+              setting: "max-diff-size",
+              limit: maxDiffSize,
+              detail: "structured JSON retry",
+            }
           )
         ).content;
         parsedReview = ReviewParser.parseDetailed(retryText);
@@ -566,6 +572,11 @@ function buildFailedStatusBody(error: unknown, command: "review" | "summary"): s
       "If the input is too large, split the change into smaller logically complete PRs " +
       "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
       "After adjusting the cause, comment `/robin` to try again.";
+  } else if (error instanceof DiffInputLimitError) {
+    advice = `Raise \`${error.setting}\` (currently ${error.limit} characters) on the base branch so it includes the ` +
+      `${error.observedChars} characters of changed files still under review, or split the change into smaller ` +
+      "logically complete PRs (keep related implementation and tests together). Robin stops before sending a partial diff, " +
+      "so an unchanged retry cannot succeed. After adjusting the cause, comment `/robin` to try again.";
   } else if (error instanceof LLMRequestError && isContextLengthError(error.cause)) {
     advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +
       "or select a model/provider with larger effective context capacity. " +
@@ -789,16 +800,14 @@ async function runReview(
   llm: LLMClient,
   diff: string,
   reviewInstructions: string,
-  jsonResponseMode: boolean
+  jsonResponseMode: boolean,
+  inputLimit: DiffInputLimit
 ) {
+  assertDiffFits(diff, inputLimit);
   const systemPrompt = getReviewPrompt(reviewInstructions);
   const userContent = buildReviewInput(diff);
   core.info("Getting full code review...");
   return await llm.chatCompletion(systemPrompt, userContent, jsonResponseMode);
-}
-
-function truncateDiff(diff: string, limit: number): string {
-  return diff.length > limit ? diff.slice(0, limit) + "\n\n[... Diff truncated due to size limit]" : diff;
 }
 
 interface AgentOrSingleShotParams {
@@ -808,10 +817,14 @@ interface AgentOrSingleShotParams {
   prNumber: number;
   headSha?: string;
   llm: LLMClient;
-  /** Diff for the single-shot review, truncated to max-diff-size. */
+  /** Complete filtered diff; a selected path whose cap cannot include it fails before its request. */
   diff: string;
-  /** Diff for agent mode, truncated to agent-max-diff-size. */
+  /** Cap applied to the single-shot review and its structured retry. */
+  maxDiffSize: number;
+  /** Complete filtered diff for agent mode; the cap below decides eligibility. */
   agentDiff: string;
+  /** Cap applied to the agent review input. */
+  agentMaxDiffSize: number;
   changedFiles: string[];
   reviewInstructions: string;
   useJsonMode: boolean;
@@ -823,7 +836,8 @@ interface AgentOrSingleShotParams {
 /**
  * Multi-turn review with repository tools when possible; failures to set it up or run it
  * (no tool support, snapshot download error, provider error mid-loop) fall back to the
- * single-shot diff review, except explicit completion truncation. `stats` describes how the review ran.
+ * single-shot diff review, except explicit completion truncation. Every path either sends the
+ * complete filtered diff or fails before its request; `stats` describes how the review ran.
  */
 async function runAgentOrSingleShotReview(
   params: AgentOrSingleShotParams
@@ -831,7 +845,18 @@ async function runAgentOrSingleShotReview(
   const { reporter } = params;
   const singleShot = async (why: string) => {
     reporter.setMode("code review (diff only)");
-    const { content } = await runReview(params.llm, params.diff, params.reviewInstructions, params.useJsonMode);
+    const { content } = await runReview(
+      params.llm,
+      params.diff,
+      params.reviewInstructions,
+      params.useJsonMode,
+      {
+        mode: "single-shot review",
+        setting: "max-diff-size",
+        limit: params.maxDiffSize,
+        detail: why,
+      }
+    );
     return { content, stats: `diff-only review (${why})` };
   };
 
@@ -839,6 +864,12 @@ async function runAgentOrSingleShotReview(
     core.info("Agent mode is off; running single-shot diff review.");
     return singleShot("agent mode off");
   }
+
+  assertDiffFits(params.agentDiff, {
+    mode: "agent review",
+    setting: "agent-max-diff-size",
+    limit: params.agentMaxDiffSize,
+  });
 
   let snapshot: Awaited<ReturnType<typeof createRepoSnapshot>>;
   try {
@@ -894,7 +925,8 @@ async function fetchHeadSha(
   return data.head.sha;
 }
 
-async function runSummary(llm: LLMClient, diff: string) {
+async function runSummary(llm: LLMClient, diff: string, maxDiffSize: number) {
+  assertDiffFits(diff, { mode: "summary", setting: "max-diff-size", limit: maxDiffSize });
   const systemPrompt = getSummaryPrompt();
   const userContent = buildSummaryInput(diff);
   core.info("Getting PR summary...");

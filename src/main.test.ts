@@ -99,7 +99,7 @@ function added(path: string, text: string): string {
   return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(line => `+${line}`).join("\n")}\n`;
 }
 
-async function capture(baseConfig: boolean, small = false, lifecycleFailure = false): Promise<{ request: any; configRefs: string[]; requests: number }> {
+async function capture(baseConfig: boolean, small = false, lifecycleFailure = false, expectInputFailure = false): Promise<{ request: any; configRefs: string[]; requests: number; statusBody: string }> {
   const requests: any[] = [];
   const server = http.createServer((req, res) => {
     // A synthetic bearer is the only credential allowed at this boundary.
@@ -183,11 +183,16 @@ async function capture(baseConfig: boolean, small = false, lifecycleFailure = fa
       }));
       expect(octokit.request).toHaveBeenCalledTimes(1);
       expect(octokit.rest.pulls.get).toHaveBeenCalledTimes(1);
+    } else if (expectInputFailure) {
+      expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("`max-diff-size` allows 50000"));
+      expect(requests).toHaveLength(0);
+      expect(GitHubReviewer).not.toHaveBeenCalled();
     } else {
       expect(core.setFailed).not.toHaveBeenCalled();
       expect(requests).toHaveLength(1);
     }
-    return { request: requests[0], configRefs, requests: requests.length };
+    const statusBody: string = octokit.rest.issues.updateComment.mock.calls.at(-1)?.[0]?.body ?? "";
+    return { request: requests[0], configRefs, requests: requests.length, statusBody };
   } finally {
     if (lifecycleFailure) jest.dontMock("./native-diff");
     if (timer) clearTimeout(timer);
@@ -226,12 +231,15 @@ test("C1: base configuration retains every authored runtime/test/tool/packaging 
   }));
 });
 
-test("C1: config present only at feature head cannot activate; the existing base cap truncates the tail", async () => {
-  const { request, configRefs } = await capture(false);
+test("C1: config present only at feature head cannot activate; the existing base cap fails before the provider request", async () => {
+  const { configRefs, requests, statusBody } = await capture(false, false, false, true);
   expect(configRefs).toEqual(["a".repeat(40)]);
-  const payload = JSON.stringify(request.messages);
-  expect(payload).not.toContain("FINAL_RUNTIME_TAIL_MARKER");
-  expect(payload).toContain("truncated");
+  expect(requests).toBe(0);
+  expect(statusBody).toContain("single-shot review");
+  expect(statusBody).toContain("`max-diff-size` allows 50000");
+  expect(statusBody).toContain("Raise `max-diff-size`");
+  expect(statusBody).not.toContain("FINAL_RUNTIME_TAIL_MARKER");
+  expect(statusBody).not.toContain("reviewable line");
 });
 
 test("C3: an ordinary small review still reaches the actual loopback request intact", async () => {

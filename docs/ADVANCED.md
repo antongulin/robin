@@ -23,14 +23,14 @@ skip-paths:
 
 | Key | Purpose |
 | --- | --- |
-| `max-diff-size` | Used when the workflow still passes the action default (`50000`) |
+| `max-diff-size` | Used when the workflow still passes the action default (`50000`). Counted after `skip-paths` and built-in exclusions; a larger filtered diff fails before the model request instead of being truncated |
 | `max-comments` | Used when the workflow still passes the action default (`15`) |
 | `json-response-mode` | Used when `use-json-response-mode` is empty (action default defers to this file) |
 | `request-changes` | Used when `request-changes` input is empty. `true` (default) blocks on high findings; `false` posts advisor-only comments |
 | `reasoning-effort` | Used when the `reasoning-effort` action/workflow input is empty. Provider-dependent reasoning value; when both are unset no reasoning control is sent and the provider/model decides, `off` also sends no reasoning configuration |
 | `agent-mode` | Used when the `agent-mode` input is empty. `auto` runs the [multi-turn agent review](#agent-mode-multi-turn-review-with-repository-context); when both are unset (or `off`) the single-shot diff review runs |
 | `agent-max-turns` | Used when the `agent-max-turns` input is empty. Tool-calling turns before the final review is requested (default `40`, max `100`) |
-| `agent-max-diff-size` | Used when the `agent-max-diff-size` input is empty. Diff characters sent up front in agent mode (default `200000`); `max-diff-size` still applies to the single-shot fallback |
+| `agent-max-diff-size` | Used when the `agent-max-diff-size` input is empty. Diff characters sent up front in agent mode (default `200000`); a larger filtered diff fails before the agent request. `max-diff-size` still applies to the single-shot fallback |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
 | `bot-review-policy` | `all` (default), `none`, or `allowlist`; blank action/workflow input defers here. Applies to automatic PR reviews only |
 | `bot-allowlist` | YAML sequence of string logins (default empty); blank action/workflow input defers here. Used by `allowlist` policy; `[]` clears the list |
@@ -200,7 +200,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `model` / `LLM_MODEL` | — | Model name (required) |
 | `fail-on-high` | `false` | Fail the check if high-severity issues are found |
 | `request-changes` | omit → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode). Reusable workflow input is a boolean with no default — omit it to let `.github/robin.yml` win |
-| `max-diff-size` | `50000` | Max diff characters sent to the model |
+| `max-diff-size` | `50000` | Max diff characters for a single-shot review or `/summary`, after path filters. A larger filtered diff fails before the model request with its observed size and this limit |
 | `max-output-tokens` | empty | Cap response tokens (optional) |
 | `reasoning-effort` | empty (defer to repo config; unset anywhere sends nothing) | Provider reasoning effort, provider-dependent (for example `low`, `medium`, `high`). Empty defers to `.github/robin.yml`; if that is also unset, no reasoning control is sent and the provider/model default applies. `off` also sends no reasoning configuration |
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
@@ -217,7 +217,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `use-json-response-mode` | empty (defer to repo config, else true) | Request strict JSON-schema output (`response_format: json_schema`) for reviews, stepping down to `json_object` and then to no `response_format` if the provider rejects it. Pass `"true"` / `"false"` on the reusable workflow |
 | `agent-mode` | empty (defer to repo config, then single-shot) | `auto` lets the model read the repository with tools before reviewing, falling back to the single-shot diff review when the model has no tool support; unset or `off` always uses the single-shot review |
 | `agent-max-turns` | empty (defer to repo config, then `40`) | Maximum tool-calling turns in agent mode (capped at 100) |
-| `agent-max-diff-size` | empty (defer to repo config, then `200000`) | Diff characters sent up front in agent mode. The model reads any truncated files with its tools; `max-diff-size` still applies to the single-shot fallback |
+| `agent-max-diff-size` | empty (defer to repo config, then `200000`) | Diff characters sent up front in agent mode, after path filters. A larger filtered diff fails before the agent request with its observed size and this limit; agent tools read PR head files, so they cannot restore dropped diff hunks. `max-diff-size` still applies to the single-shot fallback |
 
 ## Agent mode (multi-turn review with repository context)
 
@@ -242,7 +242,7 @@ The defaults favor finding bugs over saving tokens, sized for frontier models wi
 | Limit | Default |
 | --- | --- |
 | Tool-calling turns | 40 (`agent-max-turns`, max 100) |
-| Diff sent up front | 200k characters (`agent-max-diff-size`); the single-shot fallback keeps `max-diff-size` (50k) so small-context models still fit |
+| Diff sent up front | 200k characters (`agent-max-diff-size`); a larger filtered diff fails before the agent request. The single-shot fallback keeps `max-diff-size` (50k) so small-context models still fit, and fails before that request when the filtered diff does not fit it either |
 | Tool calls per turn | 16 |
 | Investigation time | 30 minutes |
 | Output per tool call | about 50k characters (`read_file` returns up to 2000 lines and says where to continue) |
@@ -736,7 +736,7 @@ No daily quota from this action. Real limits:
 
 - GitHub Actions minutes (while the job waits on the model).
 - Provider rate limits and model context size.
-- `max-diff-size` truncation on very large PRs.
+- Configured diff caps (`max-diff-size`, `agent-max-diff-size`) on very large PRs: the run fails before the model request instead of reviewing a partial diff.
 
 ## Troubleshooting
 
@@ -759,7 +759,7 @@ No daily quota from this action. Real limits:
 | `Resource not accessible by integration` | Missing permissions | Add `pull-requests: write` |
 | Slash command ignored | Wrong format or permission | `/robin` or `/review` as first line; need write access |
 | `/robin` does nothing on `@v1` | Stale `v1` tag before v1.4.0 | Use `/review`, pin `@v1.4.0`+, or `@v2`; floating `v1` tracks latest `1.x` on release |
-| Shallow review | Small model or truncated diff | Stronger model or higher `max-diff-size` |
+| Shallow review | Small model, or files removed by `skip-paths`/built-in exclusions | Stronger model, or review the excluded paths separately |
 
 ## Comparison
 
@@ -832,7 +832,10 @@ the operator. Git, process, and cleanup diagnostics are replaced with fixed erro
 codes without raw causes.
 
 Acquiring the complete patch does not raise the review's `max-diff-size` or
-`agent-max-diff-size`. Repository configuration is loaded from the PR base, so a
+`agent-max-diff-size`. A filtered diff larger than the cap selected for that request path
+fails the run before the model request, and the failed status reports the observed size,
+the limit, and how to fix it; Robin never sends a truncated diff. Repository
+configuration is loaded from the PR base, so a
 configuration added only in the PR cannot enlarge that PR's review. Existing
 `skip-paths` and generated-file exclusions still apply, including lockfiles and
 `dist/`. Set a suitable base-branch cap and narrowly scoped exclusions when a
