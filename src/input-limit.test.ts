@@ -306,7 +306,7 @@ describe("oversized single-shot review", () => {
 describe("normal complete input", () => {
   it("COV-06: a below-cap review sends the complete diff and keeps the normal conclusion", async () => {
     const diff = reviewableDiff();
-    const result = await execute({ diff });
+    const result = await execute({ diff, inputs: { "max-diff-size": String(diff.length * 2) } });
 
     expect(result.requests).toHaveLength(1);
     expect(result.payloads[0]).toContain(TAIL);
@@ -322,6 +322,7 @@ describe("normal complete input", () => {
     const result = await execute({
       diff,
       summaryCommand: true,
+      inputs: { "max-diff-size": String(diff.length * 2) },
       create: jest.fn().mockResolvedValue({
         choices: [{ message: { content: "Synthetic summary of the complete diff." }, finish_reason: "stop" }],
       }),
