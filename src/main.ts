@@ -573,7 +573,8 @@ function buildFailedStatusBody(error: unknown, command: "review" | "summary"): s
       "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
       "After adjusting the cause, comment `/robin` to try again.";
   } else if (error instanceof DiffInputLimitError) {
-    advice = `Raise \`${error.setting}\` (currently ${error.limit} characters) on the base branch so it includes the ` +
+    advice = `Raise \`${error.setting}\` (currently ${error.limit} characters) in the workflow/action input or ` +
+      "applicable base-branch repo configuration so it includes the " +
       `${error.observedChars} characters of changed files still under review, or split the change into smaller ` +
       "logically complete PRs (keep related implementation and tests together). Robin stops before sending a partial diff, " +
       `so an unchanged retry cannot succeed. After adjusting the cause, comment \`/${command === "summary" ? "summary" : "robin"}\` to try again.`;

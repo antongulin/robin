@@ -32,7 +32,8 @@ export class DiffInputLimitError extends Error {
       `The ${mode} did not run: the complete filtered diff is ${observedChars} characters, ` +
         `but \`${target.setting}\` allows ${target.limit} characters. ` +
         "Robin does not send a partial diff, so it stops instead of reviewing an incomplete one. " +
-        `Raise \`${target.setting}\` on the base branch, or split the change into smaller logically complete PRs.`
+        `Raise \`${target.setting}\` in the workflow/action input or applicable base-branch repo configuration, ` +
+        "or split the change into smaller logically complete PRs."
     );
     this.name = "DiffInputLimitError";
     this.mode = target.mode;

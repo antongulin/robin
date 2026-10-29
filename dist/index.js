@@ -1077,7 +1077,8 @@ class DiffInputLimitError extends Error {
         super(`The ${mode} did not run: the complete filtered diff is ${observedChars} characters, ` +
             `but \`${target.setting}\` allows ${target.limit} characters. ` +
             "Robin does not send a partial diff, so it stops instead of reviewing an incomplete one. " +
-            `Raise \`${target.setting}\` on the base branch, or split the change into smaller logically complete PRs.`);
+            `Raise \`${target.setting}\` in the workflow/action input or applicable base-branch repo configuration, ` +
+            "or split the change into smaller logically complete PRs.");
         this.name = "DiffInputLimitError";
         this.mode = target.mode;
         this.setting = target.setting;
@@ -2558,7 +2559,8 @@ function buildFailedStatusBody(error, command) {
             "After adjusting the cause, comment `/robin` to try again.";
     }
     else if (error instanceof input_limit_1.DiffInputLimitError) {
-        advice = `Raise \`${error.setting}\` (currently ${error.limit} characters) on the base branch so it includes the ` +
+        advice = `Raise \`${error.setting}\` (currently ${error.limit} characters) in the workflow/action input or ` +
+            "applicable base-branch repo configuration so it includes the " +
             `${error.observedChars} characters of changed files still under review, or split the change into smaller ` +
             "logically complete PRs (keep related implementation and tests together). Robin stops before sending a partial diff, " +
             `so an unchanged retry cannot succeed. After adjusting the cause, comment \`/${command === "summary" ? "summary" : "robin"}\` to try again.`;
