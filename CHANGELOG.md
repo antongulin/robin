@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.12.4](https://github.com/antongulin/robin/compare/v2.12.3...v2.12.4) (2026-10-30)
+
+
+### Bug Fixes
+
+* fail before the model request when the filtered diff exceeds its cap ([#122](https://github.com/antongulin/robin/issues/122)) ([eb206e0](https://github.com/antongulin/robin/commit/eb206e0db160e72a9d81b69e296556af27d96ad4))
+
+
+### Documentation
+
+* remove completed 2.0 roadmap ([#121](https://github.com/antongulin/robin/issues/121)) ([9c664a8](https://github.com/antongulin/robin/commit/9c664a87248d1443ea2abf7484c85d72ca1a365e))
+
 ## [2.12.3](https://github.com/antongulin/robin/compare/v2.12.2...v2.12.3) (2026-10-21)
 
 
