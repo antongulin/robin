@@ -194,7 +194,7 @@ function buildAgentReviewInput(annotatedDiff, changedFiles) {
         "Review the following pull request. Use the tools to gather the context you need, then return only the strict JSON object described in the system prompt.",
         "Each diff line is prefixed with its line number in the NEW file (blank for removed lines and headers).",
         "For any line-specific finding, copy that exact number into the `line` field. Do not guess or recount.",
-        "If the diff below is truncated, read the remaining changed files with read_file.",
+        "The diff below is complete after intentional path filters. Use the tools to read the surrounding files and their callers.",
         "",
         "Changed files:",
         fileList,
@@ -1048,6 +1048,55 @@ function fenced(text, info = "") {
     return fence + info + "\n" + text + "\n" + fence;
 }
 //# sourceMappingURL=github-reviewer.js.map
+
+/***/ }),
+
+/***/ 6183:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Fail-closed diff input selection.
+ *
+ * Every model request receives the complete filtered diff or does not happen at all. A
+ * configured diff cap that cannot include the complete diff fails the run before the
+ * request, because a cut-off diff can never be reviewed or summarized completely.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DiffInputLimitError = void 0;
+exports.assertDiffFits = assertDiffFits;
+/** A configured diff cap cannot include the complete filtered diff. */
+class DiffInputLimitError extends Error {
+    mode;
+    setting;
+    limit;
+    observedChars;
+    constructor(observedChars, target) {
+        const mode = target.detail ? `${target.mode} (${target.detail})` : target.mode;
+        super(`The ${mode} did not run: the complete filtered diff is ${observedChars} characters, ` +
+            `but \`${target.setting}\` allows ${target.limit} characters. ` +
+            "Robin does not send a partial diff, so it stops instead of reviewing an incomplete one. " +
+            `Raise \`${target.setting}\` in the workflow/action input or applicable base-branch repo configuration, ` +
+            "or split the change into smaller logically complete PRs.");
+        this.name = "DiffInputLimitError";
+        this.mode = target.mode;
+        this.setting = target.setting;
+        this.limit = target.limit;
+        this.observedChars = observedChars;
+    }
+}
+exports.DiffInputLimitError = DiffInputLimitError;
+/**
+ * Throws before the request when `diff` is larger than the cap selected for `target`.
+ * `diff` must already be the diff after intentional path filtering.
+ */
+function assertDiffFits(diff, target) {
+    if (diff.length > target.limit) {
+        throw new DiffInputLimitError(diff.length, target);
+    }
+}
+//# sourceMappingURL=input-limit.js.map
 
 /***/ }),
 
@@ -2124,6 +2173,7 @@ const brand_1 = __nccwpck_require__(4444);
 const config_1 = __nccwpck_require__(4008);
 const diff_filter_1 = __nccwpck_require__(7561);
 const diff_annotate_1 = __nccwpck_require__(4523);
+const input_limit_1 = __nccwpck_require__(6183);
 const repo_config_1 = __nccwpck_require__(2800);
 const review_prompts_1 = __nccwpck_require__(319);
 const commands_1 = __nccwpck_require__(367);
@@ -2316,9 +2366,7 @@ async function run() {
             await updateStatusComment(octokit, owner, repo, statusCommentId, buildFailedStatusBody("No reviewable diff remained after filtering skipped paths.", statusCommand));
             return;
         }
-        const truncatedDiff = truncateDiff(reviewDiff, maxDiffSize);
-        const agentDiff = truncateDiff(reviewDiff, agentMaxDiffSize);
-        core.info(`Diff size: ${reviewDiff.length} chars (single-shot limit ${maxDiffSize}${reviewDiff.length > maxDiffSize ? ", truncated" : ""}; agent limit ${agentMaxDiffSize}${reviewDiff.length > agentMaxDiffSize ? ", truncated" : ""})${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`);
+        core.info(`Diff size: ${reviewDiff.length} chars (single-shot limit ${maxDiffSize}${reviewDiff.length > maxDiffSize ? ", too large for a single-shot request" : ""}; agent limit ${agentMaxDiffSize}${reviewDiff.length > agentMaxDiffSize ? ", too large for an agent request" : ""})${removedFiles.length > 0 ? ` (${removedFiles.length} file(s) filtered)` : ""}`);
         const reviewInstructions = command === "review"
             ? await loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineReviewInstructions, reviewInstructionsFile, baseRef)
             : "";
@@ -2330,7 +2378,7 @@ async function run() {
         let reviewText;
         let reviewStats;
         if (command === "summary") {
-            reviewText = (await runSummary(llm, truncatedDiff)).content;
+            reviewText = (await runSummary(llm, reviewDiff, maxDiffSize)).content;
         }
         else {
             ({ content: reviewText, stats: reviewStats } = await runAgentOrSingleShotReview({
@@ -2340,8 +2388,10 @@ async function run() {
                 prNumber,
                 headSha: payload.pull_request?.head?.sha,
                 llm,
-                diff: truncatedDiff,
-                agentDiff,
+                diff: reviewDiff,
+                maxDiffSize,
+                agentDiff: reviewDiff,
+                agentMaxDiffSize,
                 changedFiles: (0, diff_filter_1.splitDiffIntoFiles)(reviewDiff).map((file) => file.path),
                 reviewInstructions,
                 useJsonMode,
@@ -2369,7 +2419,12 @@ async function run() {
             if ((0, review_retry_1.shouldRetryStructuredReview)(findings, parsedReview.usedJson)) {
                 core.warning("Structured review parse was empty; retrying once with JSON-only instructions.");
                 reporter.setStep("First pass returned no parseable findings — retrying with JSON-only instructions…");
-                const retryText = (await runReview(llm, truncatedDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true)).content;
+                const retryText = (await runReview(llm, reviewDiff, `${reviewInstructions}\n\nReturn ONLY a single valid JSON object. Do not use markdown.`, true, {
+                    mode: "single-shot review",
+                    setting: "max-diff-size",
+                    limit: maxDiffSize,
+                    detail: "structured JSON retry",
+                })).content;
                 parsedReview = review_parser_1.ReviewParser.parseDetailed(retryText);
                 findings = parsedReview.findings;
             }
@@ -2502,6 +2557,13 @@ function buildFailedStatusBody(error, command) {
             "If the input is too large, split the change into smaller logically complete PRs " +
             "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
             "After adjusting the cause, comment `/robin` to try again.";
+    }
+    else if (error instanceof input_limit_1.DiffInputLimitError) {
+        advice = `Raise \`${error.setting}\` (currently ${error.limit} characters) in the workflow/action input or ` +
+            "applicable base-branch repo configuration so it includes the " +
+            `${error.observedChars} characters of changed files still under review, or split the change into smaller ` +
+            "logically complete PRs (keep related implementation and tests together). Robin stops before sending a partial diff, " +
+            `so an unchanged retry cannot succeed. After adjusting the cause, comment \`/${command === "summary" ? "summary" : "robin"}\` to try again.`;
     }
     else if (error instanceof llm_client_1.LLMRequestError && (0, llm_retry_1.isContextLengthError)(error.cause)) {
         advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +
@@ -2679,31 +2741,40 @@ async function postHelpComment(octokit, payload) {
     });
     core.info("Posted help comment.");
 }
-async function runReview(llm, diff, reviewInstructions, jsonResponseMode) {
+async function runReview(llm, diff, reviewInstructions, jsonResponseMode, inputLimit) {
+    (0, input_limit_1.assertDiffFits)(diff, inputLimit);
     const systemPrompt = (0, review_prompts_1.getReviewPrompt)(reviewInstructions);
     const userContent = buildReviewInput(diff);
     core.info("Getting full code review...");
     return await llm.chatCompletion(systemPrompt, userContent, jsonResponseMode);
 }
-function truncateDiff(diff, limit) {
-    return diff.length > limit ? diff.slice(0, limit) + "\n\n[... Diff truncated due to size limit]" : diff;
-}
 /**
  * Multi-turn review with repository tools when possible; failures to set it up or run it
  * (no tool support, snapshot download error, provider error mid-loop) fall back to the
- * single-shot diff review, except explicit completion truncation. `stats` describes how the review ran.
+ * single-shot diff review, except explicit completion truncation. Every path either sends the
+ * complete filtered diff or fails before its request; `stats` describes how the review ran.
  */
 async function runAgentOrSingleShotReview(params) {
     const { reporter } = params;
     const singleShot = async (why) => {
         reporter.setMode("code review (diff only)");
-        const { content } = await runReview(params.llm, params.diff, params.reviewInstructions, params.useJsonMode);
+        const { content } = await runReview(params.llm, params.diff, params.reviewInstructions, params.useJsonMode, {
+            mode: "single-shot review",
+            setting: "max-diff-size",
+            limit: params.maxDiffSize,
+            detail: why,
+        });
         return { content, stats: `diff-only review (${why})` };
     };
     if (params.agentMode === "off") {
         core.info("Agent mode is off; running single-shot diff review.");
         return singleShot("agent mode off");
     }
+    (0, input_limit_1.assertDiffFits)(params.agentDiff, {
+        mode: "agent review",
+        setting: "agent-max-diff-size",
+        limit: params.agentMaxDiffSize,
+    });
     let snapshot;
     try {
         const headSha = params.headSha || (await fetchHeadSha(params.octokit, params.owner, params.repo, params.prNumber));
@@ -2737,14 +2808,15 @@ async function runAgentOrSingleShotReview(params) {
     catch (error) {
         if (error instanceof llm_client_1.CompletionLengthError)
             throw error;
+        // Handle fallback rejection before the asynchronous snapshot cleanup in finally.
         if (error instanceof llm_client_1.ToolsUnsupportedError) {
             core.warning(`${error.message}. Running single-shot diff review instead.`);
             reporter.setStep("Model doesn't support tool calling — running a diff-only review…");
-            return singleShot("model has no tool support");
+            return await singleShot("model has no tool support");
         }
         core.warning(`Agent review failed (${error}); running single-shot diff review instead.`);
         reporter.setStep("Agent review failed — retrying as a diff-only review…");
-        return singleShot("agent review failed");
+        return await singleShot("agent review failed");
     }
     finally {
         await snapshot.cleanup();
@@ -2754,7 +2826,8 @@ async function fetchHeadSha(octokit, owner, repo, prNumber) {
     const { data } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
     return data.head.sha;
 }
-async function runSummary(llm, diff) {
+async function runSummary(llm, diff, maxDiffSize) {
+    (0, input_limit_1.assertDiffFits)(diff, { mode: "summary", setting: "max-diff-size", limit: maxDiffSize });
     const systemPrompt = (0, review_prompts_1.getSummaryPrompt)();
     const userContent = buildSummaryInput(diff);
     core.info("Getting PR summary...");
@@ -3442,7 +3515,7 @@ exports.DEFAULT_MAX_COMMENTS = 15;
 exports.DEFAULT_AGENT_MODE = "off";
 exports.DEFAULT_AGENT_MAX_TURNS = 40;
 const MAX_AGENT_MAX_TURNS = 100;
-/** Diff characters sent up front in agent mode (~50-65k tokens); the single-shot fallback keeps max-diff-size. */
+/** Diff characters sent up front in agent mode (~50-65k tokens); a larger filtered diff fails before the agent request. The single-shot fallback keeps max-diff-size. */
 exports.DEFAULT_AGENT_MAX_DIFF_SIZE = 200_000;
 /** Strips a trailing ` # comment` only outside quotes, so quoted values keep `#` intact. */
 function stripTrailingComment(line) {
