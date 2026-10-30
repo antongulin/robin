@@ -24,7 +24,7 @@ export type AgentMode = "auto" | "off";
 export const DEFAULT_AGENT_MODE: AgentMode = "off";
 export const DEFAULT_AGENT_MAX_TURNS = 40;
 const MAX_AGENT_MAX_TURNS = 100;
-/** Diff characters sent up front in agent mode (~50-65k tokens); the single-shot fallback keeps max-diff-size. */
+/** Diff characters sent up front in agent mode (~50-65k tokens); a larger filtered diff fails before the agent request. The single-shot fallback keeps max-diff-size. */
 export const DEFAULT_AGENT_MAX_DIFF_SIZE = 200_000;
 
 /** Strips a trailing ` # comment` only outside quotes, so quoted values keep `#` intact. */

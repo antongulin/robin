@@ -188,7 +188,7 @@ export function buildAgentReviewInput(annotatedDiff: string, changedFiles: strin
     "Review the following pull request. Use the tools to gather the context you need, then return only the strict JSON object described in the system prompt.",
     "Each diff line is prefixed with its line number in the NEW file (blank for removed lines and headers).",
     "For any line-specific finding, copy that exact number into the `line` field. Do not guess or recount.",
-    "If the diff below is truncated, read the remaining changed files with read_file.",
+    "The diff below is complete after intentional path filters. Use the tools to read the surrounding files and their callers.",
     "",
     "Changed files:",
     fileList,

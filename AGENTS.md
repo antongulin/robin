@@ -147,6 +147,11 @@ Keep action inputs, reusable-workflow `workflow_call` inputs, the `with:` forwar
 that parity. Behavior changes that touch optional request parameters should not silently
 drop a user-configured control; surface the provider error instead.
 
+Diff input fails closed: every model request receives the complete filtered diff or the run
+fails before that request, reporting the observed size, the cap that applied, and how to fix
+it (`src/input-limit.ts`). Do not reintroduce truncated diff input or claim that agent tools
+recover dropped hunks; commit the rebuilt `dist/index.js` with the change.
+
 **Private assistant replay.** Preserve a provider-supplied string `reasoning_content`
 as private completion metadata, including empty strings and streamed string deltas.
 Replay it unchanged only on its original assistant tool message, including retained

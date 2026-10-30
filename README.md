@@ -337,7 +337,7 @@ Review scope, results, and instructions:
 
 | Setting | Default / behavior | Where |
 | --- | --- | --- |
-| `max-diff-size` | `50000` characters for single-shot reviews | Workflow input or repo config; config wins when input equals `50000` |
+| `max-diff-size` | `50000` characters for single-shot reviews and `/summary`; a larger filtered diff fails before the model request | Workflow input or repo config; config wins when input equals `50000` |
 | `max-comments` | `15` inline comments; extra findings stay in the review body | Workflow input or repo config; config wins when input equals `15` |
 | `skip-paths` | No extra exclusions; built-in generated-file exclusions still apply | Repo config only |
 | `fail-on-high` | `false`; optionally fail the check on high findings | Workflow input |
@@ -358,7 +358,7 @@ Model requests and repository context:
 | `use-json-response-mode` / `json-response-mode` | `true`; request structured review output, with provider fallbacks | Workflow input / repo config key |
 | `agent-mode` | `off` (single-shot); `auto` enables repository tools with fallback | Workflow input or repo config |
 | `agent-max-turns` | `40`, capped at `100` | Workflow input or repo config |
-| `agent-max-diff-size` | `200000` characters up front in agent mode; single-shot fallback uses `max-diff-size` | Workflow input or repo config |
+| `agent-max-diff-size` | `200000` characters up front in agent mode; a larger filtered diff fails before the agent request and the single-shot fallback uses `max-diff-size` | Workflow input or repo config |
 
 Blank inputs for `request-changes`, `reasoning-effort`, `use-json-response-mode`,
 and the three `agent-*` settings defer to repo config, then to these defaults. Omit the
@@ -385,7 +385,7 @@ Add `.github/code-reviewer.md` in your repo:
 | `Input required: model` or `llm-base-url` | Add missing secrets (Step 2) |
 | Review never appears | Open **Actions** tab → open the failed run → read the error |
 | `/robin` does nothing | Put `/robin` on the **first** line; you need write access on the repo. On `@v1`, pin `@v1.4.0`+ or use `/review` if the tag predates v1.4.0 |
-| Review is very short | PR may be huge — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`) |
+| Review fails with a diff-size message | The filtered diff is larger than the selected cap, so Robin stops before the model request instead of reviewing part of it — see [docs/ADVANCED.md](docs/ADVANCED.md) (`max-diff-size`, `agent-max-diff-size`) |
 | `Empty response from LLM` | Free routers sometimes return no text — the action retries automatically; comment `/robin` again |
 | `OpenRouter stall` / job runs 45 min with no review | Auto-router hung — action now aborts after 45s with no stream and retries | Watch Actions log for `LLM resolved model` (routing OK); pin `@v2` or `@main` for the fix |
 | `404 Provider returned error` | Normal for `openrouter/free` when one provider is down — the action retries up to 5 times; keep `LLM_MODEL=openrouter/free` |

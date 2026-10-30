@@ -15,7 +15,7 @@ on:
         # No default: omitted must stay unset so .github/robin.yml can still win.
         # A boolean default of true would override repo-config advisor mode.
       max-diff-size:
-        description: "Maximum diff characters sent to the model."
+        description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, that path fails before its model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff."
         required: false
         type: string
         default: "50000"
@@ -95,7 +95,7 @@ on:
         type: string
         default: ""
       agent-max-diff-size:
-        description: "Diff characters sent up front in agent mode; the single-shot fallback keeps max-diff-size. Leave empty to use repo config (default 200000)."
+        description: "Diff characters sent up front in agent mode, counted after path filters. When the filtered diff is larger the run fails before the agent request with a size/limit status; agent tools read PR head files, not dropped hunks. The single-shot fallback keeps max-diff-size. Leave empty to use repo config (default 200000)."
         required: false
         type: string
         default: ""
