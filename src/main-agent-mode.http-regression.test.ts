@@ -217,9 +217,13 @@ test("ID1 omitted API key preserves local model identifiers and the Ollama wire 
   expect(core.setFailed).not.toHaveBeenCalled();
   expect(result.credentials).toEqual(["Bearer ollama"]);
   expect(result.requests).toHaveLength(1);
-  expect(result.usageReport.requested_model).toBe("ollama/local-model");
+  expect(result.usageReport).toMatchObject({ requested_model: null, model_groups: [], model_groups_omitted: 1 });
+  expect(result.fullReport.requested_model).toBe("ollama/local-model");
   expect(result.fullReport.ledger[0]).toMatchObject({ sent_model: "ollama/local-model", reported_model: "ollama/backend" });
-  expect(result.usageReport.model_groups[0].reported_model).toBe("ollama/backend");
+  expect(result.fullReport.model_groups[0].reported_model).toBe("ollama/backend");
+  expect(result.usageReport.metrics).toEqual(result.fullReport.metrics);
+  expect(core.summary.addRaw).toHaveBeenCalledWith(expect.stringContaining("ollama/local-model"));
+  expect(core.summary.addRaw).toHaveBeenCalledWith(expect.stringContaining("ollama/backend"));
 });
 
 test.each([
@@ -233,6 +237,7 @@ test.each([
   expect(result.credentials).toEqual([`Bearer ${input === "llm-api-key" ? secret : "synthetic-loopback-key"}`]);
   expect(result.requests).toHaveLength(1);
   expect(result.usageReport.requested_model).toBeNull();
+  expect(result.fullReport.requested_model).toBeNull();
   expect(result.fullReport.ledger[0]).toMatchObject({ sent_model: null, reported_model: null });
   expect(JSON.stringify({ compact: result.usageReport, full: result.fullReport,
     summary: jest.mocked(core.summary.addRaw).mock.calls })).not.toContain(secret);
@@ -365,8 +370,11 @@ test("UR06/UR10 issue-comment summary records observed head, one request, and no
 
 test("UR10 event head and configured/sent/reported facts remain distinct", async () => {
   const r = await execute({ input: "off" });
-  expect(r.usageReport).toMatchObject({ head_sha: HEAD_SHA, head_provenance: "event", requested_model: "synthetic-local-model", requested_effort: { state: "unset", value: null } });
+  expect(r.usageReport).toMatchObject({ head_sha: HEAD_SHA, head_provenance: "event", requested_model: null, model_groups: [], model_groups_omitted: 1,
+    requested_effort: { state: "unset", value: null } });
+  expect(r.fullReport.requested_model).toBe("synthetic-local-model");
   expect(r.fullReport.ledger[0]).toMatchObject({ sent_model: "synthetic-local-model", reported_model: "reported-backend", sent_effort: { state: "unset", field: null, value: null } });
+  expect(r.fullReport.model_groups[0]).toMatchObject({ sent_model: "synthetic-local-model", reported_model: "reported-backend" });
   expect(r.fullReport.metrics).toEqual(r.usageReport.metrics);
 });
 

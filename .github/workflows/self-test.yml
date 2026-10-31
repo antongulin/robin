@@ -14,6 +14,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      usage-report: ${{ steps.usage-output.outputs.usage-report }}
     env:
       HAS_LLM: ${{ secrets.LLM_API_KEY != '' && secrets.LLM_BASE_URL != '' && secrets.LLM_MODEL != '' }}
     steps:
@@ -59,6 +61,29 @@ jobs:
 
       - name: Verify committed bundle
         run: git diff --exit-code dist/index.js
+
+      - name: Publish usage with masked model labels
+        id: usage-output
+        run: |
+          node <<'NODE'
+          require('ts-node/register');
+          const core = require('@actions/core');
+          const { UsageLedger, publishUsageReport } = require('./src/usage-report');
+          const requested = 'synthetic-masked-requested-model';
+          const reported = 'synthetic-masked-provider-model';
+          core.setSecret(requested);
+          core.setSecret(reported);
+          const ledger = new UsageLedger();
+          ledger.configure({ requested_model: requested });
+          const attempt = ledger.begin({ phase: 'single-shot-initial' }, ledger.startCall(), 1, 1, 'initial',
+            { model: requested, stream: false, effortRemoved: false });
+          ledger.capture(attempt, { model: reported,
+            usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } });
+          ledger.received(attempt);
+          ledger.finish(attempt, 'accepted');
+          ledger.state = 'completed';
+          publishUsageReport(ledger).catch(error => { throw error; });
+          NODE
       
       - name: Use the action on itself
         if: github.event_name == 'pull_request' && env.HAS_LLM == 'true'
@@ -73,6 +98,35 @@ jobs:
           fail-on-high: "false"
           # This repository dogfoods Robin on every push; consumers opt in the same way.
           review-on-synchronize: "true"
+
+  usage-output-test:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify usage crossed the job boundary
+        env:
+          USAGE_REPORT: ${{ needs.test.outputs.usage-report }}
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          assert.ok(process.env.USAGE_REPORT, 'Masked-model usage output must reach the dependent job');
+          const report = JSON.parse(process.env.USAGE_REPORT);
+          assert.equal(report.schema_version, 1);
+          assert.equal(report.state, 'completed');
+          assert.equal(report.attempts, 1);
+          assert.equal(report.logical_calls, 1);
+          assert.equal(report.requested_model, null);
+          assert.deepEqual(report.model_groups, []);
+          assert.equal(report.model_groups_omitted, 1);
+          for (const [metric, count] of Object.entries({ prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 })) {
+            assert.deepEqual(report.metrics[metric], { observed_sum: count, observed_attempts: 1,
+              final_attempts: 1, unknown_attempts: 0, nonfinal_attempts: 0, complete: true, overflow: false });
+          }
+          assert.equal(report.phases['single-shot-initial'].attempts, 1);
+          assert.equal(report.outcomes.accepted, 1);
+          assert.equal(report.triggers.initial, 1);
+          NODE
 
   command-test:
     if: |

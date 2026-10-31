@@ -150,9 +150,16 @@ async function withFiles(fn: (root: string) => Promise<void>) {
   }
 }
 
-test("UR10 real Actions output/summary files and local ledger contain sanitized correlated observations", async () => {
+test.each([
+  { name: "sanitized identifiers", requested: "model/credential-sentinel", sent: "safe-model", reported: "<script>source-sentinel</script>",
+    expectedRequested: null, expectedReported: null },
+  { name: "configured and provider model labels", requested: "synthetic-configured-model", sent: "synthetic-configured-model", reported: "synthetic-provider-model",
+    expectedRequested: "synthetic-configured-model", expectedReported: "synthetic-provider-model" },
+])("UF01/UR10 real Actions files preserve local metadata and publish model-free output: $name", async fixture => {
   await withFiles(async root => {
-    const actual = jest.requireActual<typeof core>("@actions/core");
+    // Each real summary instance caches its file path; isolate it for each temp directory.
+    let actual!: typeof core;
+    jest.isolateModules(() => { actual = jest.requireActual<typeof core>("@actions/core"); });
     const oldOutput = process.env.GITHUB_OUTPUT, oldSummary = process.env.GITHUB_STEP_SUMMARY;
     process.env.GITHUB_OUTPUT = join(root, "output"); process.env.GITHUB_STEP_SUMMARY = join(root, "summary");
     await writeFile(process.env.GITHUB_OUTPUT, ""); await writeFile(process.env.GITHUB_STEP_SUMMARY, "");
@@ -162,22 +169,34 @@ test("UR10 real Actions output/summary files and local ledger contain sanitized 
     try {
       const ledger = new UsageLedger(["credential-sentinel"]);
       ledger.configure({ repository: "owner/repo", pr_number: 7, head_sha: "a".repeat(40), head_provenance: "observed", command: "summary",
-        requested_model: "model/credential-sentinel", requested_effort: { state: "configured", value: "<script>private</script>" }, run_id: "123", run_attempt: "2" });
-      const a = ledger.begin({ phase: "summary" }, ledger.startCall(), 1, 1, "initial", { model: "safe-model", stream: false, effortRemoved: false });
-      ledger.capture(a, { model: "<script>source-sentinel</script>", usage: usage(), reasoning_content: "private reasoning", content: "source sentinel" });
+        requested_model: fixture.requested, requested_effort: { state: "configured", value: "<script>private</script>" }, run_id: "123", run_attempt: "2" });
+      const a = ledger.begin({ phase: "summary" }, ledger.startCall(), 1, 1, "initial", { model: fixture.sent, stream: false, effortRemoved: false });
+      ledger.capture(a, { model: fixture.reported, usage: usage(), reasoning_content: "private reasoning", content: "source sentinel" });
       ledger.received(a); ledger.finish(a, "accepted"); ledger.state = "completed";
+      ledger.recordAgentActivity(1, 2, 0);
+      const before = ledger.report();
       await publishUsageReport(ledger);
       const outputs = await readFile(process.env.GITHUB_OUTPUT, "utf8");
-      const compact = JSON.parse(jest.mocked(core.setOutput).mock.calls.find(([name]) => name === "usage-report")![1]);
+      const compact = JSON.parse(outputs.match(/^usage-report<<[^\r\n]+\r?\n([^\r\n]+)\r?\n/m)![1]);
       const path = jest.mocked(core.setOutput).mock.calls.find(([name]) => name === "usage-report-path")![1];
       const full = JSON.parse(await readFile(path, "utf8"));
       const summary = await readFile(process.env.GITHUB_STEP_SUMMARY, "utf8");
+      expect(compact).toEqual({ ...before.compact, requested_model: null, model_groups: [], model_groups_omitted: 1 });
+      expect(ledger.report()).toEqual(before);
+      expect(full).toEqual(before.full);
+      expect(full.requested_model).toBe(fixture.expectedRequested);
+      expect(full.ledger[0]).toMatchObject({ sent_model: fixture.sent, reported_model: fixture.expectedReported });
       expect(full.metrics).toEqual(compact.metrics);
+      expect(compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 100, observed_attempts: 1, final_attempts: 1, complete: true });
       expect(compact).toMatchObject({ head_provenance: "observed", run_id: "123", run_attempt: "2", requested_model: null, requested_effort: { value: null } });
       expect(summary).toContain("Hood of code review");
       expect(summary).toContain("&quot;schema_version&quot;");
       expect(summary).toContain("100 (0 missing, 0 nonfinal)");
       expect(outputs).toContain("usage-report<<");
+      for (const label of [fixture.expectedRequested, fixture.expectedReported, fixture.sent].filter(Boolean) as string[]) {
+        expect(JSON.stringify(compact)).not.toContain(label);
+        expect(summary).toContain(label);
+      }
       expect(JSON.stringify(full) + outputs + summary).not.toMatch(/credential-sentinel|source.sentinel|private reasoning|<script>/);
     } finally {
       actual.summary.emptyBuffer();
@@ -206,7 +225,7 @@ test.each(["file", "output", "summary"])("UR11 %s sink failure leaves other sink
   });
 });
 
-test("UR12 oversized model grouping omits only compact details; full file and aggregates remain exact", async () => {
+test("UF03/UR12 oversized model grouping omits only compact details; full file and aggregates remain exact", async () => {
   const ledger = new UsageLedger();
   for (let i = 0; i < 500; i++) {
     const a = ledger.begin({ phase: "agent", agentTurn: i + 1 }, ledger.startCall(), 1, 1, "initial", { model: "requested", stream: false, effortRemoved: false });
@@ -222,8 +241,13 @@ test("UR12 oversized model grouping omits only compact details; full file and ag
   expect(r.compact.metrics.prompt_tokens.observed_sum).toBe(500);
   await withFiles(async () => {
     await publishUsageReport(ledger);
+    const output = JSON.parse(jest.mocked(core.setOutput).mock.calls.find(([name]) => name === "usage-report")![1]);
+    expect(output).toEqual({ ...r.compact, requested_model: null, model_groups: [], model_groups_omitted: 500 });
+    expect(ledger.report()).toEqual(r);
     const path = jest.mocked(core.setOutput).mock.calls.find(([name]) => name === "usage-report-path")![1];
     const full = JSON.parse(await readFile(path, "utf8"));
+    expect(full).toEqual(r.full);
+    expect(full.model_groups).toHaveLength(500);
     expect(full.ledger).toHaveLength(500);
     expect(full.metrics).toEqual(r.compact.metrics);
   });

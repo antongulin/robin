@@ -466,7 +466,7 @@ It does not request extra usage chunks from providers that omit them.
 | Surface | Contents and lifetime |
 | --- | --- |
 | Actions job summary | Concise branded totals/coverage and escaped aggregate JSON in a details block |
-| `usage-report` action output | Compact aggregate JSON, also mapped through the reusable job to `workflow_call.outputs.usage-report` |
+| `usage-report` action output | Model-free compact aggregate JSON, also mapped through the reusable job to `workflow_call.outputs.usage-report` |
 | `usage-report-path` action output | Full sanitized JSON ledger in a uniquely owned runner-temp file; available to later steps in the **same job** |
 
 Use `needs.<review-job>.outputs.usage-report` in a dependent caller job. The reusable
@@ -475,6 +475,14 @@ individual attempts, use the direct action in a job you control, give its step a
 `id`, and consume `steps.<id>.outputs.usage-report-path` in a later step. You own
 optional upload, access and retention. Runner/OS temp cleanup controls the local
 file's lifetime; it is not a durable download.
+
+The `usage-report` output sets `requested_model` to `null` and `model_groups` to
+`[]`, and adds the removed groups to `model_groups_omitted`. It preserves the other
+schema version 1 fields, including counts, coverage and correlation. Model labels
+often come from `LLM_MODEL` secrets; repeating them can cause GitHub to suppress
+the entire job output. The summary and local file retain sanitized model metadata.
+GitHub can still suppress an output that matches another secret; see
+[GitHub's job output rules](https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions#jobsjob_idoutputs).
 
 Robin attempts each sink independently on handled completion/failure. A reporting
 failure produces a fixed warning and does not fail the review. Failed-job outputs
