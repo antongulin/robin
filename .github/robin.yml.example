@@ -8,6 +8,7 @@
 # estimated-request-token-budget: 256000  # default; off restores absent-cap provider output when max-output-tokens is unset
 # Both raw character caps default to 500000; tune with the budget for your endpoint.
 max-diff-size: 25000
+agent-max-diff-size: 25000
 max-comments: 10
 json-response-mode: true
 # request-changes: true   # default; set false for advisor mode (never block the PR, even on high findings)
@@ -23,7 +24,7 @@ json-response-mode: true
 # agent-mode: off   # unset: auto (repository tools). Set off for diff-only reviews; recommended starting point for weak/local models
 # An explicit agent-mode input overrides this base-branch setting; see docs/ADVANCED.md#default-change-and-migration
 # agent-max-turns: 40   # default; tool-calling turns before the final review is requested
-# agent-max-diff-size: 500000   # default; diff characters sent up front in agent mode (max-diff-size above applies to the single-shot fallback)
+# The paired 25000 overrides above cover agent input and single-shot fallback/summary.
 
 skip-paths:
   - "**/generated/**"

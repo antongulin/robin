@@ -8,6 +8,7 @@ Copy [`.github/robin.yml.example`](../.github/robin.yml.example) to `.github/rob
 
 ```yaml
 max-diff-size: 25000
+agent-max-diff-size: 25000
 max-comments: 10
 json-response-mode: true
 request-changes: true
@@ -16,7 +17,6 @@ request-changes: true
 # reasoning-effort: high   # unset: no reasoning control is sent (provider default). Set low/medium/high/… to send it, or "off" to be explicit
 # agent-mode: off   # unset: auto (repository tools). Set off for a diff-only review
 # agent-max-turns: 40
-# agent-max-diff-size: 500000
 skip-paths:
   - "**/generated/**"
 ```
@@ -53,8 +53,9 @@ can use an empty string. `use-json-response-mode` maps to config `json-response-
 `50000` wins over config, including values forwarded by older reusable workflows.
 All three budget/character metadata defaults stay blank. `max-comments` retains its
 existing convention: config wins when the workflow passes `15`. `skip-paths` has
-no workflow input. Other inputs have no repository-config equivalent. The example's
-`25000` and `10` are sample overrides, not defaults.
+no workflow input. Other inputs have no repository-config equivalent. The example
+sets both diff caps to `25000` for agent and single-shot paths; `25000` and `10`
+are sample overrides, not defaults.
 
 ## Estimated request budget
 
@@ -183,17 +184,25 @@ still ignores bot-authored comments. Synchronize reviews also require the existi
 
 ## Pinning the action
 
+These refs describe a **direct action step**, `uses: antongulin/robin@…`:
+
 | Ref | When to use |
 | --- | --- |
 | `@main` | Latest changes on the default branch |
-| `@v1` | Latest `1.x` release (floating tag, updated each release) |
-| `@v1.2.3` | Exact semver from [GitHub Releases](https://github.com/antongulin/robin/releases) |
-| Full commit SHA | Maximum supply-chain safety in regulated environments |
+| `@v2` | Latest `2.x` release (floating tag, updated each release) |
+| `@v2.12.4` | The action implementation in that release |
+| Full commit SHA | The action implementation at that commit |
 | `@v0` | **Do not use** — outdated; workflows often fail |
 
 ```yaml
-uses: antongulin/robin/.github/workflows/review.yml@v1
+uses: antongulin/robin@v2.12.4
 ```
+
+A reusable-workflow ref pins only its workflow file. The workflows at `main`,
+`v2` and `v2.12.4` call `antongulin/robin@main` internally, so even an exact
+workflow tag or SHA can receive action changes from `main`. See the
+[migration guide](#default-change-and-migration) for explicit compatibility settings
+and the [direct action example](#custom-review-identity) for permissions and credentials.
 
 ## Releases
 
@@ -224,7 +233,7 @@ for commands and failure states. Do not create tags or releases by hand.
 | `LLM_BASE_URL` | `https://openrouter.ai/api/v1` |
 | `LLM_MODEL` | `openrouter/free` |
 
-Smaller diffs help free models stay fast and accurate:
+Set both diff caps to limit input on agent and single-shot paths:
 
 ```yaml
 jobs:
@@ -232,6 +241,7 @@ jobs:
     uses: antongulin/robin/.github/workflows/review.yml@main
     with:
       max-diff-size: "25000"
+      agent-max-diff-size: "25000"
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
@@ -241,7 +251,7 @@ jobs:
 ### Save GitHub Actions minutes
 
 - Leave `synchronize` out of the trigger (the shipped default) so Robin reviews once when the PR opens and you comment `/review` after fixes (see [Review every push (opt-in)](#review-every-push-opt-in)).
-- Use a smaller `max-diff-size` for huge PRs.
+- Lower `max-diff-size` and `agent-max-diff-size` to reject larger diffs before review.
 - **Free tier:** GitHub Free includes about **2,000 Actions minutes/month** for public and private repos; GitHub Pro about **3,000 minutes/month** (limits can change — see [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) for your account).
 - **Heavy usage:** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
 
