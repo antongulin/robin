@@ -5177,7 +5177,9 @@ async function publishUsageReport(ledger) {
         warn("local file unavailable");
     }
     try {
-        core.setOutput("usage-report", compact);
+        // Model labels often come from GitHub secrets, which can suppress the entire job output.
+        core.setOutput("usage-report", JSON.stringify({ ...reports.compact, requested_model: null, model_groups: [],
+            model_groups_omitted: reports.compact.model_groups_omitted + reports.compact.model_groups.length }));
     }
     catch {
         warn("aggregate output unavailable");

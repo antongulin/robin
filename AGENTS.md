@@ -181,6 +181,9 @@ Preserve unknown/nonfinal coverage and preceding attempts; cached/reasoning coun
 breakdowns. Reporting is passive and nonfatal, with allowlisted metadata only. Keep
 `usage-report` action -> job -> workflow output wiring intact. `usage-report-path` is a
 same-job runner-local ledger, not a caller artifact. See `docs/ADVANCED.md#llm-usage-reports`.
+Only the action output omits model labels: `requested_model: null`, `model_groups: []`,
+with removed groups added to `model_groups_omitted`. Preserve all other fields and
+counts; summary/local reports retain sanitized model metadata.
 Redact explicitly supplied credentials, including short keys. Keep the omitted-key
 input blank so the public `ollama` fallback sent to the SDK does not suppress report identifiers.
 

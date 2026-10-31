@@ -273,7 +273,11 @@ export async function publishUsageReport(ledger: UsageLedger): Promise<void> {
     await writeFile(pending, JSON.stringify(reports.full), { encoding: "utf8", mode: 0o600 });
     await rename(pending, path);
   } catch { path = undefined; warn("local file unavailable"); }
-  try { core.setOutput("usage-report", compact); } catch { warn("aggregate output unavailable"); }
+  try {
+    // Model labels often come from GitHub secrets, which can suppress the entire job output.
+    core.setOutput("usage-report", JSON.stringify({ ...reports.compact, requested_model: null, model_groups: [],
+      model_groups_omitted: reports.compact.model_groups_omitted + reports.compact.model_groups.length }));
+  } catch { warn("aggregate output unavailable"); }
   if (path) { try { core.setOutput("usage-report-path", path); } catch { warn("local path output unavailable"); } }
   try {
     const r = reports.compact;
