@@ -106,7 +106,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     core.info(`Compacting agent context #${compactions}: ${reason}`);
     await progress("compacting", "Context is getting full — summarizing the investigation so far");
     try {
-      notes = await summarizeInvestigation(options.llm, summarize, notes);
+      notes = await summarizeInvestigation(options.llm, summarize, notes, compactions, turns);
       messages = [...freshMessages(), ...keep];
       core.info(`Compacted ${summarize.length} message(s) into ${notes.length} characters of notes.`);
       return true;
@@ -117,13 +117,15 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
   };
 
   const callModel = async (activity: string, toolChoice?: "none") => {
+    let recovery = false;
     for (;;) {
       await progress("model", activity);
       try {
-        return await options.llm.chatWithTools(messages, REVIEW_TOOLS, toolChoice ? { toolChoice } : {});
+        return await options.llm.chatWithTools(messages, REVIEW_TOOLS, { toolChoice, usageContext: { phase: toolChoice ? "forced-final" : "agent", agentTurn: toolChoice ? turns + 1 : turns, recovery } });
       } catch (error) {
         if (!isContextLengthError(error)) throw error;
         if (!(await compact("the provider reported the context window is full"))) throw error;
+        recovery = true;
       }
     }
   };
@@ -244,10 +246,12 @@ const COMPACTION_SYSTEM_PROMPT = [
 async function summarizeInvestigation(
   llm: Pick<LLMClient, "chatCompletion">,
   transcript: ChatMessage[],
-  previousNotes: string
+  previousNotes: string,
+  compactionIndex: number,
+  agentTurn: number
 ): Promise<string> {
   let lastError: unknown;
-  for (const caps of COMPACTION_ATTEMPTS) {
+  for (const [index, caps] of COMPACTION_ATTEMPTS.entries()) {
     const prompt = [
       "Write concise plain-text notes (at most about 1500 words) covering:",
       "1. Suspected or confirmed problems: file, NEW-file line in the diff, what is wrong, the evidence (callers, definitions, short exact code excerpts), and confidence.",
@@ -262,7 +266,7 @@ async function summarizeInvestigation(
     ].join("\n");
 
     try {
-      const { content } = await llm.chatCompletion(COMPACTION_SYSTEM_PROMPT, prompt, false);
+      const { content } = await llm.chatCompletion(COMPACTION_SYSTEM_PROMPT, prompt, false, { phase: "compaction", compactionIndex, compactionAttempt: index + 1, agentTurn });
       if (content.trim()) return content.trim();
       lastError = new Error("empty summary");
     } catch (error) {

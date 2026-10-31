@@ -1,3 +1,5 @@
+import { UsageLedger, UsageContext, publishUsageReport } from "./usage-report";
+import { detectLlmProvider } from "./llm-provider";
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { CompletionLengthError, LLMClient, LLMRequestError, ToolsUnsupportedError } from "./llm-client";
@@ -47,6 +49,7 @@ import { ReviewerCommand, hasRequiredPermission, parseSlashCommand } from "./com
 import { shouldSkipSynchronizeEvent } from "./trigger";
 
 async function run(): Promise<void> {
+  let usage: UsageLedger | undefined;
   let octokit: ReturnType<typeof github.getOctokit> | undefined;
   let statusOwner = "";
   let statusRepo = "";
@@ -146,6 +149,12 @@ async function run(): Promise<void> {
     const apiKey = core.getInput("llm-api-key") || "ollama";
     const baseUrl = core.getInput("llm-base-url") || "";
     const model = core.getInput("model") || "";
+    usage = new UsageLedger([apiKey, token]);
+    usage.configure({ repository: `${owner}/${repo}`, pr_number: prNumber, command,
+      head_sha: eventName === "pull_request" ? payload.pull_request?.head?.sha ?? null : null,
+      head_provenance: eventName === "pull_request" ? "event" : null,
+      run_id: process.env.GITHUB_RUN_ID ?? null, run_attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+      requested_model: model, provider: detectLlmProvider(baseUrl) });
     const failOnHigh = core.getInput("fail-on-high") === "true";
     const maxDiffSizeInput = core.getInput("max-diff-size") || "50000";
     const maxCommentsInput = core.getInput("max-comments") || "25";
@@ -176,8 +185,15 @@ async function run(): Promise<void> {
 
     const gitUtils = new GitUtils(octokit as any, token);
     const baseRef = payload.pull_request?.base?.sha;
+    let observedHead = payload.pull_request?.head?.sha as string | undefined;
     const repoConfig = await loadRepoConfig(
-      octokit, gitUtils, owner, repo, prNumber, configFile, baseRef
+      octokit, gitUtils, owner, repo, prNumber, configFile, baseRef,
+      head => {
+        if (eventName === "issue_comment") {
+          observedHead = head;
+          usage?.configure({ head_sha: head, head_provenance: "observed" });
+        }
+      }
     );
     if (eventName === "pull_request") {
       const botSettings = resolveBotReviewSettings(
@@ -260,6 +276,14 @@ async function run(): Promise<void> {
       );
     }
 
+    usage.configure({ requested_effort: { state: reasoningEffort ? "configured" : reasoningEffortConfigured ? "off" : "unset", value: reasoningEffort ?? null } });
+    if (eventName === "issue_comment" && !observedHead) {
+      try {
+        observedHead = await fetchHeadSha(octokit, owner, repo, prNumber);
+        usage.configure({ head_sha: observedHead, head_provenance: "observed" });
+      } catch { /* Correlation is best effort; never use github.sha as the PR head. */ }
+    }
+
     const diff = await gitUtils.getPullRequestDiff(owner, repo, prNumber);
     
     if (!diff || diff.trim().length === 0) {
@@ -330,7 +354,8 @@ async function run(): Promise<void> {
       undefined,
       llmTemperature,
       (detail) => reporter?.setProvider(detail),
-      reasoningEffort
+      reasoningEffort,
+      usage
     );
     const useJsonMode = command === "review" && jsonResponseMode;
     // Only a user-configured effort earns a PR-visible "fix your config" notice; a rejected
@@ -348,7 +373,7 @@ async function run(): Promise<void> {
         owner,
         repo,
         prNumber,
-        headSha: payload.pull_request?.head?.sha,
+        headSha: observedHead,
         llm,
         diff: reviewDiff,
         maxDiffSize,
@@ -360,9 +385,11 @@ async function run(): Promise<void> {
         agentMode,
         agentMaxTurns,
         reporter,
+        usage,
       }));
     }
 
+    usage.state = "completed";
     if (command === "summary") {
       // Post summary as a regular comment
       await octokit.rest.issues.createComment({
@@ -399,7 +426,8 @@ async function run(): Promise<void> {
               setting: "max-diff-size",
               limit: maxDiffSize,
               detail: "structured JSON retry",
-            }
+            },
+            { phase: "structured-retry" }
           )
         ).content;
         parsedReview = ReviewParser.parseDetailed(retryText);
@@ -420,6 +448,7 @@ async function run(): Promise<void> {
       );
 
       if (findings.high.length > 0 && failOnHigh) {
+        usage.state = "failed";
         core.setFailed(`Found ${findings.high.length} high severity issue(s). Failing check.`);
       }
     }
@@ -428,6 +457,7 @@ async function run(): Promise<void> {
     core.info("Done.");
 
   } catch (error) {
+    if (usage) usage.state = "failed";
     const message = error instanceof Error ? error.message : String(error);
     await reporter?.close();
     if (octokit && statusOwner && statusRepo && statusCommentId) {
@@ -436,7 +466,12 @@ async function run(): Promise<void> {
     core.setFailed(message);
   } finally {
     onJobCancelled = undefined;
-    await reporter?.close();
+    try { await reporter?.close(); }
+    finally {
+      if (usage) {
+        try { await publishUsageReport(usage); } catch { /* Reporting must preserve the original result. */ }
+      }
+    }
   }
 }
 
@@ -684,7 +719,8 @@ async function loadRepoConfig(
   repo: string,
   prNumber: number,
   configFile: string,
-  baseRef?: string
+  baseRef?: string,
+  onObservedHead?: (head: string) => void
 ): Promise<RepoConfig> {
   const filePath = configFile.trim();
   if (!filePath) return {};
@@ -697,6 +733,7 @@ async function loadRepoConfig(
         repo,
         pull_number: prNumber,
       });
+      if (typeof pullRequest.head?.sha === "string") onObservedHead?.(pullRequest.head.sha);
       ref = pullRequest.base.sha;
     }
 
@@ -802,13 +839,14 @@ async function runReview(
   diff: string,
   reviewInstructions: string,
   jsonResponseMode: boolean,
-  inputLimit: DiffInputLimit
+  inputLimit: DiffInputLimit,
+  usageContext: UsageContext = { phase: "single-shot-initial" }
 ) {
   assertDiffFits(diff, inputLimit);
   const systemPrompt = getReviewPrompt(reviewInstructions);
   const userContent = buildReviewInput(diff);
   core.info("Getting full code review...");
-  return await llm.chatCompletion(systemPrompt, userContent, jsonResponseMode);
+  return await llm.chatCompletion(systemPrompt, userContent, jsonResponseMode, usageContext);
 }
 
 interface AgentOrSingleShotParams {
@@ -832,6 +870,7 @@ interface AgentOrSingleShotParams {
   agentMode: AgentMode;
   agentMaxTurns: number;
   reporter: StatusReporter;
+  usage?: UsageLedger;
 }
 
 /**
@@ -856,7 +895,8 @@ async function runAgentOrSingleShotReview(
         setting: "max-diff-size",
         limit: params.maxDiffSize,
         detail: why,
-      }
+      },
+      { phase: params.agentMode === "off" ? "single-shot-initial" : "diff-only-fallback" }
     );
     return { content, stats: `diff-only review (${why})` };
   };
@@ -875,6 +915,7 @@ async function runAgentOrSingleShotReview(
   let snapshot: Awaited<ReturnType<typeof createRepoSnapshot>>;
   try {
     const headSha = params.headSha || (await fetchHeadSha(params.octokit, params.owner, params.repo, params.prNumber));
+    if (!params.headSha) params.usage?.configure({ head_sha: headSha, head_provenance: "observed" });
     reporter.setMode("code review (agent)");
     reporter.setStep("Downloading the repository snapshot for context…");
     snapshot = await createRepoSnapshot(params.octokit as any, params.owner, params.repo, headSha);
@@ -895,6 +936,7 @@ async function runAgentOrSingleShotReview(
       budgets: { maxTurns: params.agentMaxTurns },
       onProgress: (progress) => reporter.setAgentProgress(progress),
     });
+    params.usage?.recordAgentActivity(result.turns, result.toolCalls, result.compactions);
     const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
     const compactions = result.compactions ? ` · ${plural(result.compactions, "compaction")}` : "";
     return {
@@ -932,7 +974,7 @@ async function runSummary(llm: LLMClient, diff: string, maxDiffSize: number) {
   const systemPrompt = getSummaryPrompt();
   const userContent = buildSummaryInput(diff);
   core.info("Getting PR summary...");
-  return await llm.chatCompletion(systemPrompt, userContent, false);
+  return await llm.chatCompletion(systemPrompt, userContent, false, { phase: "summary" });
 }
 
 function buildReviewInput(diff: string): string {
@@ -964,4 +1006,4 @@ function buildSummaryInput(diff: string): string {
   ].join("\n");
 }
 
-run();
+export const actionCompletion = run();

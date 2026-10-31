@@ -1,3 +1,4 @@
+import { UsageLedger, UsageAttempt, UsageContext, AttemptTrigger, CompatibilityAdjustment } from "./usage-report";
 import { randomUUID } from "node:crypto";
 import { OpenAI } from "openai";
 import { REVIEW_JSON_SCHEMA } from "./prompts/review-schema";
@@ -64,6 +65,7 @@ export interface CompletionUsage {
   completion_tokens?: number;
   total_tokens?: number;
   reasoning_tokens?: number;
+  cached_input_tokens?: number;
 }
 
 /** An explicitly truncated completion must not be accepted or retried unchanged. */
@@ -95,6 +97,8 @@ function extractUsage(value: unknown): CompletionUsage | undefined {
     prompt_tokens: raw.prompt_tokens,
     completion_tokens: raw.completion_tokens,
     total_tokens: raw.total_tokens,
+    cached_input_tokens: raw.prompt_tokens_details && typeof raw.prompt_tokens_details === "object"
+      ? (raw.prompt_tokens_details as Record<string, unknown>).cached_tokens : undefined,
     reasoning_tokens: details && typeof details === "object"
       ? (details as Record<string, unknown>).reasoning_tokens
       : undefined,
@@ -116,6 +120,7 @@ function extractReasoningContent(value: unknown): string | undefined {
 }
 
 export interface ToolChatOptions {
+  usageContext?: UsageContext;
   /** "none" asks for a final text answer while keeping the tool definitions the history needs. */
   toolChoice?: "auto" | "none";
 }
@@ -129,6 +134,7 @@ export class ToolsUnsupportedError extends Error {
 }
 
 interface CompletionOptions {
+  usageContext?: UsageContext;
   jsonResponseMode: boolean;
   tools?: ToolDefinition[];
   toolChoice?: "auto" | "none";
@@ -177,7 +183,8 @@ export class LLMClient {
     maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS,
     temperature = DEFAULT_LLM_TEMPERATURE,
     onProgress?: LlmProgressHandler,
-    reasoningEffort?: string
+    reasoningEffort?: string,
+    private readonly usageLedger?: UsageLedger
   ) {
     this.model = model;
     this.temperature = temperature;
@@ -328,14 +335,15 @@ export class LLMClient {
   async chatCompletion(
     systemPrompt: string,
     userContent: string,
-    jsonResponseMode = false
+    jsonResponseMode = false,
+    usageContext?: UsageContext
   ): Promise<ChatCompletionResult> {
     return this.complete(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
-      { jsonResponseMode }
+      { jsonResponseMode, usageContext }
     );
   }
 
@@ -352,6 +360,7 @@ export class LLMClient {
       jsonResponseMode: false,
       tools,
       toolChoice: options.toolChoice,
+      usageContext: options.usageContext,
     });
   }
 
@@ -359,6 +368,8 @@ export class LLMClient {
     messages: ChatMessage[],
     options: CompletionOptions
   ): Promise<ChatCompletionResult> {
+    const logicalCall = this.usageLedger?.startCall() ?? 0;
+    let trigger: AttemptTrigger = "initial";
     let lastFinishReason = "unknown";
     let lastError: unknown;
 
@@ -370,7 +381,7 @@ export class LLMClient {
         await this.progress(
           `Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`
         );
-        const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson });
+        const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson }, logicalCall, attempt, trigger);
 
         if (result.finishReason === "length") {
           throw new CompletionLengthError(result.usage);
@@ -382,12 +393,14 @@ export class LLMClient {
           return result;
         }
 
+        trigger = "outer-empty-retry";
         lastFinishReason = result.finishReason || "unknown";
         core.warning(
           `LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`
         );
       } catch (error) {
         if (error instanceof CompletionLengthError) throw error;
+        trigger = "outer-error-retry";
         lastError = error;
         if (options.tools && isToolsUnsupportedError(error)) {
           throw new ToolsUnsupportedError(error);
@@ -434,16 +447,40 @@ export class LLMClient {
    */
   private async performRequest(
     messages: ChatMessage[],
-    options: CompletionOptions
+    options: CompletionOptions,
+    logicalCall: number,
+    outerAttempt: number,
+    trigger: AttemptTrigger
   ): Promise<ChatCompletionResult> {
+    let compatibility = 0;
     for (;;) {
       const request = this.buildMessagesRequest(messages, options);
+      const record = this.usageLedger?.begin(options.usageContext, logicalCall, outerAttempt, ++compatibility,
+        compatibility > 1 ? "compatibility-retry" : trigger, {
+          model: this.model, stream: this.routerModel,
+          effort: request.reasoning?.effort ?? request.reasoning_effort,
+          effortField: request.reasoning ? "reasoning" : request.reasoning_effort !== undefined ? "reasoning_effort" : undefined,
+          effortRemoved: this.reasoningFallbackActive,
+          output: request.max_tokens ?? request.max_completion_tokens ?? undefined,
+          outputField: request.max_tokens !== undefined ? "max_tokens" : request.max_completion_tokens !== undefined ? "max_completion_tokens" : undefined,
+        });
+      let outcome: "accepted" | "empty" | "length" | "error" = "error";
+      let adjustment: CompatibilityAdjustment | null = null;
       try {
-        return await this.dispatch(request);
+        const result = await this.dispatch(request, record);
+        outcome = result.finishReason === "length" ? "length" : result.content || result.toolCalls?.length ? "accepted" : "empty";
+        return result;
       } catch (error) {
-        if (await this.applyReasoningFallback(error)) continue;
-        if (this.applyParameterFallback(error, request)) continue;
+        this.usageLedger?.captureError(record, error);
+        if (await this.applyReasoningFallback(error)) { adjustment = "reasoning"; continue; }
+        if (this.applyParameterFallback(error, request)) {
+          const param = findUnsupportedRequestParam(error, this.sentDroppableParams(request));
+          adjustment = param === "temperature" ? "temperature" : param === "response_format" ? "response-format" : "output-limit";
+          continue;
+        }
         throw error;
+      } finally {
+        this.usageLedger?.finish(record, outcome, adjustment);
       }
     }
   }
@@ -474,17 +511,19 @@ export class LLMClient {
     return true;
   }
 
-  private async dispatch(request: ChatRequest): Promise<ChatCompletionResult> {
+  private async dispatch(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
     return this.routerModel
-      ? await this.streamChatCompletion(request)
-      : await this.blockingChatCompletion(request);
+      ? await this.streamChatCompletion(request, record)
+      : await this.blockingChatCompletion(request, record);
   }
 
-  private async blockingChatCompletion(request: ChatRequest): Promise<ChatCompletionResult> {
+  private async blockingChatCompletion(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
     const response = await this.client.chat.completions.create({
       ...(request as OpenAI.Chat.Completions.ChatCompletionCreateParams),
       stream: false,
     });
+    this.usageLedger?.capture(record, response);
+    this.usageLedger?.received(record);
     const toolCalls = this.extractToolCalls(response);
     const reasoningContent = extractReasoningContent(response.choices?.[0]?.message);
     return {
@@ -498,7 +537,7 @@ export class LLMClient {
   }
 
   /** Stream so the first SSE chunk (model id) proves OpenRouter routed; abort if none arrives. */
-  private async streamChatCompletion(request: ChatRequest): Promise<ChatCompletionResult> {
+  private async streamChatCompletion(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
     const firstChunkMs = DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
     const controller = new AbortController();
     let gotFirstChunk = false;
@@ -528,6 +567,7 @@ export class LLMClient {
       let resolvedModel = this.model;
 
       for await (const chunk of stream) {
+        this.usageLedger?.capture(record, chunk);
         if (!gotFirstChunk) {
           gotFirstChunk = true;
           clearStallTimer();
@@ -563,6 +603,7 @@ export class LLMClient {
         }
       }
 
+      this.usageLedger?.received(record);
       const toolCalls = [...toolCallParts.entries()]
         .sort(([a], [b]) => a - b)
         .map(([index, call]) => ({ ...call, id: call.id || `call_${index}` }))
@@ -576,6 +617,7 @@ export class LLMClient {
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
       };
     } catch (error) {
+      this.usageLedger?.captureError(record, error);
       clearStallTimer();
       if (finishReason === "length") throw new CompletionLengthError(usage);
       if (!gotFirstChunk) {

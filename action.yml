@@ -97,6 +97,12 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  usage-report:
+    description: "Compact sanitized per-invocation LLM usage JSON; provider-reported tokens and coverage, not cost."
+  usage-report-path:
+    description: "Full sanitized JSON ledger in a runner-local file for subsequent steps in this job. Not a downloadable artifact."
+
 runs:
   using: "node24"
   main: "dist/index.js"

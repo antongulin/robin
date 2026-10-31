@@ -35,10 +35,12 @@
 - A successful Actions run can skip work or handle help. Confirm a posted PR review before counting it. Agent time-limit/final-answer failures can lead to a single-shot fallback with its own requests and retries. Masked model/base-URL logs and secret receipts do not directly prove the serving provider or model, and unmatched samples do not establish a speedup.
 - Agent turns, tool calls and compactions describe the investigation, not total requests, whole-run tokens/cost or model quality. Existing limits and output controls remain in effect; there is no whole-run token budget.
 
+- Passive per-invocation LLM usage reports count physical requests across turns, compatibility/outer retries, compaction, structured retry and fallback. Actions summary and `usage-report` output expose aggregate JSON with missing/nonfinal metric coverage; direct action `usage-report-path` is a full sanitized runner-local ledger for same-job consumers, not a downloadable/reusable caller artifact. No uploads, extra inference or usage-request controls. Provider observations do not establish billed cost, plan percentages or a token budget. See docs/ADVANCED.md#llm-usage-reports.
+
 ## Key files
 
 - [README.md](README.md): human setup and usage
-- [action.yml](action.yml): action inputs
+- [action.yml](action.yml): action inputs and usage outputs
 - [.github/workflows/review.yml](.github/workflows/review.yml): reusable workflow consumers call
 - [skills/robin/SKILL.md](skills/robin/SKILL.md): companion chat skill — drives a bounded PR review→fix→merge loop from a coding agent
 - [docs/ADVANCED.md](docs/ADVANCED.md): all settings, strict mode, self-hosted runners

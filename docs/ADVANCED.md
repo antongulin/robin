@@ -359,6 +359,90 @@ and compaction statistics describe the investigation; they are not total request
 cost analytics, a whole-run token ceiling or a measure of review quality. Retries,
 compaction and a fallback can add requests beyond the reported investigation turns.
 
+## LLM usage reports
+
+Robin records metadata at each physical SDK dispatch, below its outer and
+request-compatibility retry loops. The ledger retains preceding work when an empty
+response, truncation, compaction failure, parsing/posting error or diff-only fallback
+ends or changes the review. `/summary` has its own phase. Accounting does not change
+request parameters, effort, output limits, retries, character caps or the verdict.
+It does not request extra usage chunks from providers that omit them.
+
+### Outputs and retention
+
+| Surface | Contents and lifetime |
+| --- | --- |
+| Actions job summary | Concise branded totals/coverage and escaped aggregate JSON in a details block |
+| `usage-report` action output | Compact aggregate JSON, also mapped through the reusable job to `workflow_call.outputs.usage-report` |
+| `usage-report-path` action output | Full sanitized JSON ledger in a uniquely owned runner-temp file; available to later steps in the **same job** |
+
+Use `needs.<review-job>.outputs.usage-report` in a dependent caller job. The reusable
+workflow does **not** forward its local file path or upload an artifact. To retain
+individual attempts, use the direct action in a job you control, give its step an
+`id`, and consume `steps.<id>.outputs.usage-report-path` in a later step. You own
+optional upload, access and retention. Runner/OS temp cleanup controls the local
+file's lifetime; it is not a durable download.
+
+Robin attempts each sink independently on handled completion/failure. A reporting
+failure produces a fixed warning and does not fail the review. Failed-job outputs
+may be unavailable; the summary also contains the compact JSON. Abrupt termination,
+the existing signal-exit path, OOM and runner loss can prevent any final report.
+No report guarantees consumption visibility for an interrupted in-flight request.
+
+### Schema version 1 and coverage
+
+The aggregate contains invocation UUID, repository/PR, head SHA and provenance,
+command, Actions run ID/attempt, state, requested model/effort, provider class,
+logical-call and physical-attempt counts, outcomes/triggers, per-phase counts and
+metrics, model groups, and agent activity when a completed agent review supplies it.
+The full file adds `ledger`, one record per physical attempt, with logical-call ID,
+phase and optional agent/compaction ordinals, outer/compatibility attempt ordinals,
+retry trigger, compatibility adjustment, streaming state, sent model/effort/output
+limit, reported model, finish/outcome and numeric observations. Metadata-only phase
+context never goes to the provider.
+
+`metrics` contains `prompt_tokens`, `completion_tokens`, `total_tokens`,
+`cached_input_tokens` and `reasoning_tokens`. Each metric has:
+
+| Field | Meaning |
+| --- | --- |
+| `observed_sum` | Sum of known safe nonnegative integers, or `null` with no observations or arithmetic overflow |
+| `observed_attempts` / `final_attempts` | Attempts with a numeric observation / a final, nonconflicting observation |
+| `unknown_attempts` / `nonfinal_attempts` | Attempts missing that metric / attempts with observations that cannot establish final counts |
+| `complete` / `overflow` | Whether all dispatched attempts have final counts and collector coverage is intact / safe integer addition overflowed |
+
+An explicit reported zero is valid. Missing usage, timeouts and failed requests do
+not mean zero tokens. A zero-dispatch failure has no known token sum and zero
+unknown dispatched attempts. Prompt, completion and reported total sum independently;
+Robin does not invent absent totals or reconcile provider inconsistencies. Cached
+input and reasoning are breakdowns (subsets of prompt and completion in OpenAI's
+contract); Robin never adds them again. Compatible providers may define these
+fields differently. Totals do not establish dollars, OpenCode Go plan percentages,
+account-level attribution or review quality, and enforce no token budget.
+
+For cumulative stream usage, Robin keeps the latest valid value **per metric** and
+counts it once. Earlier-only fields, decreasing counters and interrupted streams
+retain observations with incomplete coverage. A reported model change sets
+`model_conflict`. No response model means `null`; Robin does not substitute the
+requested model. Requested effort and the actual sent field/value/state remain
+separate, including `off`, `unset`, `not-sent` and `removed-by-compatibility`.
+`collector_incomplete` marks an observation failure. Compact JSON stays within
+64 KiB UTF-8 by omitting only model-group details with `model_groups_omitted` set to
+the omitted count; all counts/metrics and the full local ledger remain intact.
+
+PR events supply an `event` head snapshot. Comment-triggered runs reuse fetched PR
+metadata or try a best-effort read and label the head `observed`. Unknown stays
+`null`; the Actions checkout SHA is not a substitute for the PR head. This is
+correlation, not proof that the diff and head were acquired atomically.
+
+The report copies allowlisted metadata and safe numeric fields. It excludes prompt,
+source, tool arguments/results, private reasoning, credential values and raw request,
+response and error bodies. Model/effort identifiers have a bounded grammar and known
+configured credentials are suppressed. Treat provider-supplied identifiers as
+untrusted metadata; this does not audit existing SDK/debug/error logs. Only usage
+already exposed by the SDK (including a preserved `error.usage` envelope) is visible;
+usage discarded by SDK error parsing remains unknown.
+
 ## Review timing
 
 Measure the review job and its Robin step separately in GitHub Actions:

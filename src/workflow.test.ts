@@ -56,7 +56,7 @@ function publicActionInputs(): string[] {
 /** Keys under `on.workflow_call.inputs` (4-space indent under `inputs:`). */
 function workflowCallInputNames(source: string): string[] {
   const callSection = source.split(/\n\s+secrets:\n/)[0] ?? source;
-  const inputsBlock = callSection.split(/\n\s+inputs:\n/)[1];
+  const inputsBlock = callSection.split(/\n\s+inputs:\n/)[1]?.split(/\n    (?:outputs|secrets):\n/)[0];
   if (!inputsBlock) return [];
   return [...inputsBlock.matchAll(/^      ([a-z0-9-]+):\n/gm)].map((match) => match[1]);
 }
@@ -269,4 +269,15 @@ describe("reusable review workflow", () => {
       "If no matching runner is online, GitHub queues the job until one comes online.",
     );
   });
+});
+
+
+test("UR12 usage output maps from action step through job to workflow without exporting a local path", () => {
+  expect(actionYml).toMatch(/outputs:\n  usage-report:\n    description:/);
+  expect(actionYml).toMatch(/  usage-report-path:\n    description:/);
+  expect(reviewWorkflow).toContain("id: robin");
+  expect(reviewWorkflow).toContain("usage-report: ${{ steps.robin.outputs.usage-report }}");
+  expect(reviewWorkflow).toContain("value: ${{ jobs.review.outputs.usage-report }}");
+  expect(reviewWorkflow).not.toContain("usage-report-path");
+  expect(reviewWorkflow).not.toContain("actions/upload-artifact");
 });

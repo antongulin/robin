@@ -7,6 +7,8 @@ jest.mock("@actions/core", () => ({
 import * as http from "http";
 import { AddressInfo } from "net";
 import { IncomingHttpHeaders } from "http";
+import { UsageLedger } from "./usage-report";
+import * as retry from "./llm-retry";
 import { LLMClient } from "./llm-client";
 
 /**
@@ -28,7 +30,7 @@ interface Gateway {
 }
 
 function startGateway(
-  handler: (body: Body, headers: IncomingHttpHeaders) => { status: number; body: unknown },
+  handler: (body: Body, headers: IncomingHttpHeaders) => { status: number; body?: unknown; sse?: string },
 ): Promise<Gateway> {
   const requests: Body[] = [];
   const headers: IncomingHttpHeaders[] = [];
@@ -39,9 +41,9 @@ function startGateway(
       const parsed = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
       requests.push(parsed);
       headers.push(req.headers);
-      const { status, body } = handler(parsed, req.headers);
-      res.writeHead(status, { "content-type": "application/json" });
-      res.end(JSON.stringify(body));
+      const { status, body, sse } = handler(parsed, req.headers);
+      res.writeHead(status, { "content-type": sse === undefined ? "application/json" : "text/event-stream" });
+      res.end(sse === undefined ? JSON.stringify(body) : sse);
     });
   });
 
@@ -485,4 +487,53 @@ describe("OpenCode Go max effort (real OpenAI SDK and local endpoint)", () => {
       await gateway.close();
     }
   });
+});
+
+
+test("UR03 physical ledger spans compatibility and outer retry at real SDK wire", async () => {
+  const delay = jest.spyOn(retry, "delayMs").mockResolvedValue();
+  let accepted = 0;
+  const gateway = await startGateway(body => {
+    if (body.max_tokens !== undefined) return unsupportedField("max_tokens", "Use max_completion_tokens instead.");
+    accepted++;
+    const value = completion("reported-backend", accepted === 1 ? "" : "review");
+    value.body.usage = { prompt_tokens: accepted * 100, completion_tokens: accepted * 10, total_tokens: accepted * 110 };
+    return value;
+  });
+  const ledger = new UsageLedger();
+  try {
+    const client = new LLMClient(gateway.baseUrl, "synthetic-key", "requested-model", 1234, undefined, 2, undefined, undefined, "high", ledger);
+    await client.chatCompletion("synthetic system", "synthetic user", true);
+    const r = ledger.report();
+    expect(gateway.requests).toHaveLength(3);
+    expect(r.full.ledger.map(a => [a.logical_call, a.outer_attempt, a.compatibility_attempt, a.trigger, a.compatibility_adjustment])).toEqual([
+      [1, 1, 1, "initial", "output-limit"], [1, 1, 2, "compatibility-retry", null], [1, 2, 1, "outer-empty-retry", null],
+    ]);
+    expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 300, unknown_attempts: 1, complete: false });
+    expect(r.compact.metrics.completion_tokens.observed_sum).toBe(30);
+    expect(gateway.requests.every(body => hasAnyTokenField(body) && (body.reasoning as any).effort === "high" && !body.stream_options && !body.usageContext)).toBe(true);
+  } finally { delay.mockRestore(); await gateway.close(); }
+});
+
+test.each([false, true])("UR09 actual SDK SSE terminal usage and interruption (interrupted %s)", async interrupted => {
+  const chunks = [
+    { model: "backend", choices: [{ index: 0, delta: { content: "review" }, finish_reason: null }], usage: { prompt_tokens: 100, completion_tokens: 5 } },
+    { model: "backend", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+    { model: "backend", choices: [], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } },
+  ];
+  const gateway = await startGateway(() => ({ status: 200, sse: chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join("") +
+    (interrupted ? 'data: {"error":{"message":"synthetic stream failure","type":"server_error"}}\n\n' : "data: [DONE]\n\n") }));
+  const ledger = new UsageLedger();
+  try {
+    const client = new LLMClient(gateway.baseUrl, "synthetic-key", "openrouter/free", 1234, undefined, 1, undefined, undefined, undefined, ledger);
+    if (interrupted) await expect(client.chatCompletion("s", "u")).rejects.toThrow("synthetic stream failure");
+    else expect((await client.chatCompletion("s", "u")).content).toBe("review");
+    expect(gateway.requests).toHaveLength(1);
+    expect(gateway.requests[0]).toMatchObject({ stream: true, max_tokens: 1234 });
+    expect(gateway.requests[0]).not.toHaveProperty("stream_options");
+    const r = ledger.report();
+    expect(r.compact.attempts).toBe(1);
+    expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 100, final_attempts: interrupted ? 0 : 1, complete: !interrupted });
+    expect(r.compact.metrics.completion_tokens.observed_sum).toBe(10);
+  } finally { await gateway.close(); }
 });

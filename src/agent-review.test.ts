@@ -115,7 +115,7 @@ describe("runAgentReview", () => {
 
     expect(result.content).toBe(FINAL_JSON);
     expect(calls).toHaveLength(3);
-    expect(calls[2].options).toEqual({ toolChoice: "none" });
+    expect(calls[2].options).toEqual(expect.objectContaining({ toolChoice: "none" }));
     const lastMessage = calls[2].messages[calls[2].messages.length - 1];
     expect(lastMessage).toMatchObject({ role: "user" });
     expect(String(lastMessage.content)).toContain("2-turn limit");
@@ -144,7 +144,7 @@ describe("runAgentReview", () => {
     });
 
     expect(calls).toHaveLength(2);
-    expect(calls[1].options).toEqual({ toolChoice: "none" });
+    expect(calls[1].options).toEqual(expect.objectContaining({ toolChoice: "none" }));
     expect(String(calls[1].messages[calls[1].messages.length - 1].content)).toContain("time limit");
   });
 
@@ -244,7 +244,7 @@ describe("runAgentReview", () => {
     });
 
     const retried = calls[2];
-    expect(retried.options).toEqual({ toolChoice: "none" });
+    expect(retried.options).toEqual(expect.objectContaining({ toolChoice: "none" }));
     expect(String(retried.messages[retried.messages.length - 1].content)).toContain("Do not call any more tools");
   });
 
@@ -335,7 +335,7 @@ it("RC04 retains private replay in the compaction tail and forced final, outside
   expect(summary).not.toContain("Inspecting b");
   expect(calls[1].messages.find(message => message.role === "assistant")).toHaveProperty("reasoning_content", removed);
   const final = calls[2];
-  expect(final.options).toEqual({ toolChoice: "none" });
+  expect(final.options).toEqual(expect.objectContaining({ toolChoice: "none" }));
   expect(String(final.messages[1].content)).toContain("CONTEXT WAS COMPACTED");
   expect(final.messages.slice(2)).toEqual([
     expect.objectContaining({ role: "assistant", reasoning_content: retained, tool_calls: [expect.objectContaining({ id: "c2" })] }),
@@ -349,4 +349,41 @@ it("RC04 retains private replay in the compaction tail and forced final, outside
   }
   expect(JSON.stringify([result, progress.mock.calls, (core.info as jest.Mock).mock.calls,
     (core.warning as jest.Mock).mock.calls, (core.error as jest.Mock).mock.calls])).not.toContain("PRIVATE_");
+});
+
+test("UR04 real client ledger covers compaction shrinking and forced-final context recovery", async () => {
+  const { LLMClient } = await import("./llm-client");
+  const { UsageLedger } = await import("./usage-report");
+  const ledger = new UsageLedger();
+  const llm = new LLMClient("https://provider.invalid/v1", "synthetic", "model", undefined, undefined, 1, undefined, undefined, undefined, ledger);
+  let count = 0;
+  const create = jest.fn(async (request: any) => {
+    count++;
+    const usage = { prompt_tokens: count * 10, completion_tokens: count, total_tokens: count * 11 };
+    if (count === 2 || count === 5) throw Object.assign(contextFull(), { error: { usage } });
+    const tool = count === 1 || count === 4;
+    return { model: "backend", usage, choices: [{ finish_reason: tool ? "tool_calls" : "stop", message: {
+      content: request.tools ? tool ? "private turn" : FINAL_JSON : "compacted notes",
+      reasoning_content: "private reasoning sentinel",
+      ...(tool ? { tool_calls: [{ id: `c${count}`, type: "function", function: { name: "read_file", arguments: '{"path":"file"}' } }] } : {}),
+    } }] };
+  });
+  (llm as any).client = { chat: { completions: { create } } };
+  const toolbox = makeToolbox();
+  toolbox.execute.mockResolvedValueOnce("x".repeat(2000)).mockResolvedValueOnce("y".repeat(200));
+  const result = await runAgentReview({ llm, toolbox, annotatedDiff: "diff", changedFiles: ["file"], instructions: "",
+    budgets: { maxTurns: 2, maxContextChars: 1000 } });
+  expect(result).toMatchObject({ content: FINAL_JSON, turns: 3, toolCalls: 2, compactions: 2 });
+  const r = ledger.report();
+  expect(r.full.ledger.map(a => [a.phase, a.agent_turn, a.compaction_index, a.compaction_attempt, a.recovery])).toEqual([
+    ["agent", 1, null, null, false],
+    ["compaction", 1, 1, 1, false], ["compaction", 1, 1, 2, false],
+    ["agent", 2, null, null, false],
+    ["forced-final", 3, null, null, false], ["compaction", 2, 2, 1, false],
+    ["forced-final", 3, null, null, true],
+  ]);
+  expect(r.compact.attempts).toBe(7);
+  expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 280, nonfinal_attempts: 2, complete: false });
+  expect(JSON.stringify(r)).not.toContain("private reasoning sentinel");
+  expect(toolbox.execute).toHaveBeenCalledTimes(2);
 });

@@ -163,6 +163,22 @@ By default Robin reviews when the PR opens (and on `/review`), not on every push
 > [!IMPORTANT]
 > Use **`@main`** to follow the default branch, or choose a workflow ref from [releases](https://github.com/antongulin/robin/releases). A reusable-workflow tag does not pin its nested action at `@main`. Do **not** use `@v0`. See [Version pins](#version-pins) below.
 
+## LLM usage reports
+
+Open the **LLM usage** section of the Actions job summary to see provider-reported
+prompt, completion, cached-input and reasoning tokens across the invocation. Robin
+counts physical requests, including retries, compaction and diff-only fallback.
+Missing or interrupted usage stays unknown; known sums can be partial.
+
+The reusable workflow exposes compact JSON as `usage-report`; dependent jobs read
+`needs.<your-review-job>.outputs.usage-report`. Direct action
+steps also expose `usage-report-path`, a full sanitized ledger for later steps in
+that same job. The local file is not a downloadable artifact. See
+[report fields and retention](docs/ADVANCED.md#llm-usage-reports).
+
+These observations do not establish billed dollars, plan percentages or a token
+budget. Robin adds no model requests or usage-request parameters for reporting.
+
 ## Running on a self-hosted runner
 
 By default, the reusable workflow runs on GitHub's hosted `ubuntu-latest` runner:

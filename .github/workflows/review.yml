@@ -104,6 +104,10 @@ on:
         required: false
         type: string
         default: '"ubuntu-latest"'
+    outputs:
+      usage-report:
+        description: "Compact sanitized per-invocation LLM usage JSON, including coverage."
+        value: ${{ jobs.review.outputs.usage-report }}
     secrets:
       LLM_API_KEY:
         required: true
@@ -142,8 +146,11 @@ jobs:
       cancel-in-progress: true
     runs-on: ${{ fromJSON(inputs.runner) }}
     timeout-minutes: 45
+    outputs:
+      usage-report: ${{ steps.robin.outputs.usage-report }}
     steps:
       - name: Robin
+        id: robin
         uses: antongulin/robin@main
         with:
           github-token: ${{ secrets.ROBIN_TOKEN || github.token }}
