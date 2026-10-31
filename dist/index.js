@@ -43,6 +43,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DEFAULT_AGENT_CONTEXT_CHARS = exports.DEFAULT_AGENT_DEADLINE_MS = void 0;
 exports.runAgentReview = runAgentReview;
 exports.buildAgentReviewInput = buildAgentReviewInput;
+const request_budget_1 = __nccwpck_require__(5188);
 const core = __importStar(__nccwpck_require__(7484));
 const llm_retry_1 = __nccwpck_require__(4069);
 const review_prompts_1 = __nccwpck_require__(319);
@@ -50,9 +51,8 @@ const repo_config_1 = __nccwpck_require__(2800);
 const review_tools_1 = __nccwpck_require__(7635);
 exports.DEFAULT_AGENT_DEADLINE_MS = 30 * 60 * 1000;
 /**
- * Diff plus tool output kept verbatim before the conversation is compacted (~115-150k tokens),
- * which fits a 200k-token window with room for the prompt and answer. Larger windows are covered
- * too, because compaction also runs whenever the provider reports the context is full.
+ * Early character pressure valve for tool output, independent of request fit.
+ * The full-body estimated budget and provider context errors can also trigger compaction.
  */
 exports.DEFAULT_AGENT_CONTEXT_CHARS = 450_000;
 /** Tool output always gets at least this much room, even next to a very large diff. */
@@ -106,7 +106,7 @@ async function runAgentReview(options) {
         { role: "user", content: notes ? `${baseInput}\n\n${compactedNotesBlock(notes)}` : baseInput },
     ];
     let messages = freshMessages();
-    const compact = async (reason) => {
+    const compact = async (reason, requireShrink = false) => {
         if (compactions >= MAX_COMPACTIONS) {
             core.warning(`Compaction limit reached (${reason}); dropping the oldest tool results instead.`);
             return elideOldestToolOutputs(messages, Math.floor(toolOutputChars(messages) / 2));
@@ -115,6 +115,7 @@ async function runAgentReview(options) {
         if (summarize.length === 0) {
             return elideOldestToolOutputs(messages, Math.floor(toolOutputChars(messages) / 2));
         }
+        const previousSize = Buffer.byteLength(JSON.stringify(messages), "utf8");
         compactions++;
         core.info(`Compacting agent context #${compactions}: ${reason}`);
         await progress("compacting", "Context is getting full — summarizing the investigation so far");
@@ -122,7 +123,8 @@ async function runAgentReview(options) {
             notes = await summarizeInvestigation(options.llm, summarize, notes, compactions, turns);
             messages = [...freshMessages(), ...keep];
             core.info(`Compacted ${summarize.length} message(s) into ${notes.length} characters of notes.`);
-            return true;
+            return !requireShrink || Buffer.byteLength(JSON.stringify(messages), "utf8") < previousSize ||
+                elideOldestToolOutputs(messages, Math.floor(toolOutputChars(messages) / 2));
         }
         catch (error) {
             core.warning(`Context compaction failed (${error}); dropping the oldest tool results instead.`);
@@ -137,9 +139,10 @@ async function runAgentReview(options) {
                 return await options.llm.chatWithTools(messages, review_tools_1.REVIEW_TOOLS, { toolChoice, usageContext: { phase: toolChoice ? "forced-final" : "agent", agentTurn: toolChoice ? turns + 1 : turns, recovery } });
             }
             catch (error) {
-                if (!(0, llm_retry_1.isContextLengthError)(error))
+                if (!(error instanceof request_budget_1.EstimatedRequestBudgetError) && !(0, llm_retry_1.isContextLengthError)(error))
                     throw error;
-                if (!(await compact("the provider reported the context window is full")))
+                if (!(await compact(error instanceof request_budget_1.EstimatedRequestBudgetError
+                    ? "the estimated request budget is full" : "the provider reported the context window is full", error instanceof request_budget_1.EstimatedRequestBudgetError)))
                     throw error;
                 recovery = true;
             }
@@ -264,7 +267,7 @@ async function summarizeInvestigation(llm, transcript, previousNotes, compaction
         }
         catch (error) {
             lastError = error;
-            if (!(0, llm_retry_1.isContextLengthError)(error))
+            if (!(error instanceof request_budget_1.EstimatedRequestBudgetError) && !(0, llm_retry_1.isContextLengthError)(error))
                 break;
         }
     }
@@ -1142,6 +1145,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LLMClient = exports.ToolsUnsupportedError = exports.LLMRequestError = exports.CompletionLengthError = void 0;
+const request_budget_1 = __nccwpck_require__(5188);
 const node_crypto_1 = __nccwpck_require__(7598);
 const openai_1 = __nccwpck_require__(2583);
 const review_schema_1 = __nccwpck_require__(665);
@@ -1211,6 +1215,7 @@ class ToolsUnsupportedError extends Error {
 exports.ToolsUnsupportedError = ToolsUnsupportedError;
 class LLMClient {
     usageLedger;
+    estimatedRequestTokenBudget;
     client;
     model;
     provider;
@@ -1229,17 +1234,16 @@ class LLMClient {
     responseFormat = "json_schema";
     tokenLimitParam = "max_tokens";
     droppedParams = [];
-    constructor(baseUrl, apiKey, model, maxOutputTokens, timeoutMs = config_1.DEFAULT_LLM_TIMEOUT_MS, maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS, temperature = config_1.DEFAULT_LLM_TEMPERATURE, onProgress, reasoningEffort, usageLedger) {
+    constructor(baseUrl, apiKey, model, maxOutputTokens, timeoutMs = config_1.DEFAULT_LLM_TIMEOUT_MS, maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS, temperature = config_1.DEFAULT_LLM_TEMPERATURE, onProgress, reasoningEffort, usageLedger, estimatedRequestTokenBudget = "off") {
         this.usageLedger = usageLedger;
+        this.estimatedRequestTokenBudget = estimatedRequestTokenBudget;
         this.model = model;
         this.temperature = temperature;
         this.routerModel = (0, llm_retry_1.isOpenRouterRouterModel)(model);
         this.onProgress = onProgress;
         this.reasoningEffort = reasoningEffort?.trim() || undefined;
-        this.maxOutputTokens =
-            maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
-                ? maxOutputTokens
-                : undefined;
+        this.estimatedRequestTokenBudget = (0, request_budget_1.parseEstimatedRequestTokenBudget)(estimatedRequestTokenBudget);
+        this.maxOutputTokens = (0, request_budget_1.resolveOutputTokenCap)(maxOutputTokens, this.estimatedRequestTokenBudget);
         this.maxAttempts = (0, llm_retry_1.getLlmCompletionAttemptCount)(maxAttempts, model);
         const effectiveTimeoutMs = (0, llm_retry_1.resolveLlmTimeoutMs)(model, timeoutMs);
         const normalizedBaseUrl = (0, llm_provider_1.normalizeLlmBaseUrl)(baseUrl);
@@ -1399,7 +1403,7 @@ class LLMClient {
                 core.warning(`LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`);
             }
             catch (error) {
-                if (error instanceof CompletionLengthError)
+                if (error instanceof CompletionLengthError || error instanceof request_budget_1.EstimatedRequestBudgetError)
                     throw error;
                 trigger = "outer-error-retry";
                 lastError = error;
@@ -1438,6 +1442,7 @@ class LLMClient {
         let compatibility = 0;
         for (;;) {
             const request = this.buildMessagesRequest(messages, options);
+            (0, request_budget_1.assertRequestFits)(request, this.estimatedRequestTokenBudget, request.max_tokens ?? request.max_completion_tokens ?? undefined);
             const record = this.usageLedger?.begin(options.usageContext, logicalCall, outerAttempt, ++compatibility, compatibility > 1 ? "compatibility-retry" : trigger, {
                 model: this.model, stream: this.routerModel,
                 effort: request.reasoning?.effort ?? request.reasoning_effort,
@@ -1632,6 +1637,7 @@ class LLMClient {
         const request = {
             model: this.model,
             messages,
+            stream: this.routerModel,
         };
         if (this.sendTemperature) {
             request.temperature = this.temperature;
@@ -2194,6 +2200,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.actionCompletion = void 0;
+const request_budget_1 = __nccwpck_require__(5188);
 const usage_report_1 = __nccwpck_require__(9837);
 const llm_provider_1 = __nccwpck_require__(710);
 const core = __importStar(__nccwpck_require__(7484));
@@ -2300,10 +2307,10 @@ async function run() {
             run_id: process.env.GITHUB_RUN_ID ?? null, run_attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
             requested_model: model, provider: (0, llm_provider_1.detectLlmProvider)(baseUrl) });
         const failOnHigh = core.getInput("fail-on-high") === "true";
-        const maxDiffSizeInput = core.getInput("max-diff-size") || "50000";
+        const maxDiffSizeInput = core.getInput("max-diff-size") || "";
         const maxCommentsInput = core.getInput("max-comments") || "25";
         const maxOutputTokensInput = core.getInput("max-output-tokens") || "";
-        const maxOutputTokens = maxOutputTokensInput ? parseInt(maxOutputTokensInput, 10) : undefined;
+        const maxOutputTokens = maxOutputTokensInput.trim() ? (0, request_budget_1.positiveSafeInteger)(maxOutputTokensInput, "max-output-tokens") : undefined;
         const reasoningEffortInput = core.getInput("reasoning-effort") || "";
         const llmTimeoutMsInput = core.getInput("llm-timeout-ms") || "";
         const { value: llmTimeoutMs, valid: llmTimeoutValid } = (0, config_1.parseLLMTimeout)(llmTimeoutMsInput);
@@ -2380,6 +2387,7 @@ async function run() {
         if (!model) {
             throw new Error("Input required and not supplied: model");
         }
+        const estimatedRequestTokenBudget = (0, repo_config_1.resolveEstimatedRequestTokenBudget)(core.getInput("estimated-request-token-budget"), repoConfig);
         const maxDiffSize = (0, repo_config_1.resolveMaxDiffSize)(maxDiffSizeInput, repoConfig);
         const maxComments = (0, repo_config_1.resolveMaxComments)(maxCommentsInput, repoConfig);
         const jsonResponseMode = (0, repo_config_1.resolveJsonResponseMode)(jsonResponseModeInput, repoConfig);
@@ -2432,7 +2440,7 @@ async function run() {
         const reviewInstructions = command === "review"
             ? await loadReviewInstructions(octokit, gitUtils, owner, repo, prNumber, inlineReviewInstructions, reviewInstructionsFile, baseRef)
             : "";
-        const llm = new llm_client_1.LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs, undefined, llmTemperature, (detail) => reporter?.setProvider(detail), reasoningEffort, usage);
+        const llm = new llm_client_1.LLMClient(baseUrl, apiKey, model, maxOutputTokens, llmTimeoutMs, undefined, llmTemperature, (detail) => reporter?.setProvider(detail), reasoningEffort, usage, estimatedRequestTokenBudget);
         const useJsonMode = command === "review" && jsonResponseMode;
         // Only a user-configured effort earns a PR-visible "fix your config" notice; a rejected
         // default falls back quietly in the logs.
@@ -3571,7 +3579,7 @@ function buildReasoningFallbackNotice(reason) {
 /***/ }),
 
 /***/ 2800:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
@@ -3579,6 +3587,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.REASONING_EFFORT_OFF = exports.DEFAULT_AGENT_MAX_DIFF_SIZE = exports.DEFAULT_AGENT_MAX_TURNS = exports.DEFAULT_AGENT_MODE = exports.DEFAULT_MAX_COMMENTS = exports.DEFAULT_ACTION_MAX_DIFF_SIZE = exports.DEFAULT_CONFIG_FILE = void 0;
 exports.parseRepoConfigYaml = parseRepoConfigYaml;
 exports.resolveMaxDiffSize = resolveMaxDiffSize;
+exports.resolveEstimatedRequestTokenBudget = resolveEstimatedRequestTokenBudget;
 exports.resolveBotReviewSettings = resolveBotReviewSettings;
 exports.shouldReviewAuthor = shouldReviewAuthor;
 exports.resolveMaxComments = resolveMaxComments;
@@ -3589,16 +3598,17 @@ exports.resolveAgentMaxTurns = resolveAgentMaxTurns;
 exports.resolveAgentMaxDiffSize = resolveAgentMaxDiffSize;
 exports.resolveReasoningEffort = resolveReasoningEffort;
 exports.isReasoningEffortConfigured = isReasoningEffortConfigured;
+const request_budget_1 = __nccwpck_require__(5188);
 exports.DEFAULT_CONFIG_FILE = ".github/robin.yml";
-exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
+exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 500_000;
 /** Single default shared by action.yml and the reusable review.yml workflow. */
 exports.DEFAULT_MAX_COMMENTS = 15;
 /** Multi-turn repository review unless the input or base-branch config selects off. */
 exports.DEFAULT_AGENT_MODE = "auto";
 exports.DEFAULT_AGENT_MAX_TURNS = 40;
 const MAX_AGENT_MAX_TURNS = 100;
-/** Diff characters sent up front in agent mode (~50-65k tokens); a larger filtered diff fails before the agent request. The single-shot fallback keeps max-diff-size. */
-exports.DEFAULT_AGENT_MAX_DIFF_SIZE = 200_000;
+/** Independent raw character allowance; complete serialized requests also face the estimate. */
+exports.DEFAULT_AGENT_MAX_DIFF_SIZE = 500_000;
 /** Strips a trailing ` # comment` only outside quotes, so quoted values keep `#` intact. */
 function stripTrailingComment(line) {
     let quote;
@@ -3675,9 +3685,13 @@ function parseRepoConfigYaml(text) {
         }
         // Scalar settings tolerate the inline comments the shipped examples use
         // (`reasoning-effort: high   # provider note`); a `#` inside a quoted value is kept.
-        const maxDiffMatch = setting.match(/^max-diff-size:\s*(\d+)\s*$/i);
-        if (maxDiffMatch) {
-            config.maxDiffSize = parseInt(maxDiffMatch[1], 10);
+        const budgetScalar = setting.match(/^(max-diff-size|agent-max-diff-size|estimated-request-token-budget):\s*(.*)$/i);
+        if (budgetScalar) {
+            const key = { "max-diff-size": "maxDiffSize", "agent-max-diff-size": "agentMaxDiffSize",
+                "estimated-request-token-budget": "estimatedRequestTokenBudget" }[budgetScalar[1].toLowerCase()];
+            const value = unquoteBotValue(budgetScalar[2]);
+            // Preserve malformed explicit config for fail-closed resolution.
+            config[key] = /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : value;
             continue;
         }
         const maxCommentsMatch = setting.match(/^max-comments:\s*(\d+)\s*$/i);
@@ -3705,11 +3719,6 @@ function parseRepoConfigYaml(text) {
             config.agentMaxTurns = parseInt(agentMaxTurnsMatch[1], 10);
             continue;
         }
-        const agentMaxDiffMatch = setting.match(/^agent-max-diff-size:\s*(\d+)\s*$/i);
-        if (agentMaxDiffMatch) {
-            config.agentMaxDiffSize = parseInt(agentMaxDiffMatch[1], 10);
-            continue;
-        }
         const reasoningEffortMatch = setting.match(/^reasoning-effort:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|(.+))\s*$/i);
         if (reasoningEffortMatch) {
             const quotedValue = reasoningEffortMatch[1] ?? reasoningEffortMatch[2];
@@ -3725,14 +3734,10 @@ function parseRepoConfigYaml(text) {
     return config;
 }
 function resolveMaxDiffSize(actionInput, repoConfig) {
-    const parsed = parseInt(actionInput, 10);
-    if (repoConfig?.maxDiffSize !== undefined &&
-        Number.isFinite(parsed) &&
-        parsed === exports.DEFAULT_ACTION_MAX_DIFF_SIZE &&
-        repoConfig.maxDiffSize !== exports.DEFAULT_ACTION_MAX_DIFF_SIZE) {
-        return repoConfig.maxDiffSize;
-    }
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : exports.DEFAULT_ACTION_MAX_DIFF_SIZE;
+    return (0, request_budget_1.positiveSafeInteger)(actionInput.trim() || (repoConfig?.maxDiffSize ?? exports.DEFAULT_ACTION_MAX_DIFF_SIZE), "max-diff-size");
+}
+function resolveEstimatedRequestTokenBudget(actionInput, repoConfig) {
+    return (0, request_budget_1.parseEstimatedRequestTokenBudget)(actionInput.trim() || (repoConfig?.estimatedRequestTokenBudget ?? request_budget_1.DEFAULT_ESTIMATED_REQUEST_TOKEN_BUDGET));
 }
 function unquoteBotValue(value) {
     return value.replace(/^(["'])(.*)\1$/, "$2");
@@ -3814,12 +3819,7 @@ function resolveAgentMaxTurns(actionInput, repoConfig) {
     return Math.min(value, MAX_AGENT_MAX_TURNS);
 }
 function resolveAgentMaxDiffSize(actionInput, repoConfig) {
-    const parsed = parseInt(actionInput, 10);
-    if (Number.isFinite(parsed) && parsed > 0)
-        return parsed;
-    if (repoConfig?.agentMaxDiffSize && repoConfig.agentMaxDiffSize > 0)
-        return repoConfig.agentMaxDiffSize;
-    return exports.DEFAULT_AGENT_MAX_DIFF_SIZE;
+    return (0, request_budget_1.positiveSafeInteger)(actionInput.trim() || (repoConfig?.agentMaxDiffSize ?? exports.DEFAULT_AGENT_MAX_DIFF_SIZE), "agent-max-diff-size");
 }
 /**
  * Sentinel value that sends no reasoning configuration at all.
@@ -3949,6 +3949,73 @@ function toBuffer(data) {
     throw new Error("unexpected tarball response type from GitHub");
 }
 //# sourceMappingURL=repo-snapshot.js.map
+
+/***/ }),
+
+/***/ 5188:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.EstimatedRequestBudgetError = exports.DEFAULT_ESTIMATED_REQUEST_TOKEN_BUDGET = exports.REQUEST_ESTIMATOR = void 0;
+exports.positiveSafeInteger = positiveSafeInteger;
+exports.parseEstimatedRequestTokenBudget = parseEstimatedRequestTokenBudget;
+exports.resolveOutputTokenCap = resolveOutputTokenCap;
+exports.assertRequestFits = assertRequestFits;
+/** Heuristic for the installed SDK's complete, pretty-printed JSON request body. */
+exports.REQUEST_ESTIMATOR = "utf8-json-div3-v1";
+exports.DEFAULT_ESTIMATED_REQUEST_TOKEN_BUDGET = 256_000;
+/** Fixed diagnostics deliberately omit invalid input/config text. */
+function positiveSafeInteger(value, setting) {
+    const text = typeof value === "string" ? value.trim() : String(value);
+    const parsed = /^\d+$/.test(text) ? Number(text) : NaN;
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+        throw new Error(`Invalid ${setting}; use a positive safe integer.`);
+    }
+    return parsed;
+}
+function parseEstimatedRequestTokenBudget(value) {
+    if (typeof value === "string" && value.trim().toLowerCase() === "off")
+        return "off";
+    return positiveSafeInteger(value, "estimated-request-token-budget (or use off)");
+}
+function resolveOutputTokenCap(explicit, budget) {
+    if (explicit !== undefined)
+        return positiveSafeInteger(explicit, "max-output-tokens");
+    return budget === "off" ? undefined : Math.max(1, Math.min(32_000, Math.floor(budget / 8)));
+}
+/** Local preflight rejection: never a physical provider attempt or compatibility error. */
+class EstimatedRequestBudgetError extends Error {
+    facts;
+    constructor(facts) {
+        super(`Estimated request budget exceeded (${exports.REQUEST_ESTIMATOR}): budget ${facts.budget}, ` +
+            `estimated input ${facts.estimatedInput}, output reserve ${facts.outputReserve}, safety headroom ${facts.safetyHeadroom}. ` +
+            "No provider request was sent. Adjust estimated-request-token-budget or max-output-tokens for your endpoint, " +
+            "reduce instructions/history or split the PR. Robin does not clip the diff. " +
+            "Use estimated-request-token-budget: off to disable this estimate and its default output cap.");
+        this.facts = facts;
+        this.name = "EstimatedRequestBudgetError";
+    }
+}
+exports.EstimatedRequestBudgetError = EstimatedRequestBudgetError;
+/** No serialization is retained; estimates are separate from provider-reported usage. */
+function assertRequestFits(body, budget, outputReserve) {
+    if (budget === "off")
+        return;
+    positiveSafeInteger(budget, "estimated-request-token-budget");
+    const output = positiveSafeInteger(outputReserve ?? 0, "max-output-tokens");
+    // OpenAI SDK 4.104.0 core serializes JSON with two-space indentation.
+    const bytes = Buffer.byteLength(JSON.stringify(body, null, 2), "utf8");
+    const estimatedInput = Math.ceil(bytes / 3);
+    const safetyHeadroom = Math.ceil(budget / 16);
+    // Subtract reserves instead of summing potentially unsafe integers.
+    if (!Number.isSafeInteger(bytes) || !Number.isSafeInteger(estimatedInput) ||
+        output > budget - safetyHeadroom || estimatedInput > budget - safetyHeadroom - output) {
+        throw new EstimatedRequestBudgetError({ budget, estimatedInput, outputReserve: output, safetyHeadroom });
+    }
+}
+//# sourceMappingURL=request-budget.js.map
 
 /***/ }),
 
@@ -16825,7 +16892,7 @@ const { parseMIMEType, serializeAMimeType } = __nccwpck_require__(1900)
 module.exports.parseMIMEType = parseMIMEType
 module.exports.serializeAMimeType = serializeAMimeType
 
-const { CloseEvent, ErrorEvent, MessageEvent } = __nccwpck_require__(5188)
+const { CloseEvent, ErrorEvent, MessageEvent } = __nccwpck_require__(2807)
 const { WebSocket, ping } = __nccwpck_require__(3726)
 module.exports.WebSocket = WebSocket
 module.exports.CloseEvent = CloseEvent
@@ -39180,7 +39247,7 @@ const { makeRequest } = __nccwpck_require__(9967)
 const { webidl } = __nccwpck_require__(7879)
 const { EventSourceStream } = __nccwpck_require__(4031)
 const { parseMIMEType } = __nccwpck_require__(1900)
-const { createFastMessageEvent } = __nccwpck_require__(5188)
+const { createFastMessageEvent } = __nccwpck_require__(2807)
 const { isNetworkError } = __nccwpck_require__(9051)
 const { kEnumerableProperty } = __nccwpck_require__(3440)
 const { environmentSettingsObject } = __nccwpck_require__(3168)
@@ -50356,7 +50423,7 @@ module.exports = {
 
 /***/ }),
 
-/***/ 5188:
+/***/ 2807:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 "use strict";
@@ -52535,7 +52602,7 @@ const { establishWebSocketConnection, closeWebSocketConnection, failWebsocketCon
 const { ByteParser } = __nccwpck_require__(1652)
 const { kEnumerableProperty } = __nccwpck_require__(3440)
 const { getGlobalDispatcher } = __nccwpck_require__(2581)
-const { ErrorEvent, CloseEvent, createFastMessageEvent } = __nccwpck_require__(5188)
+const { ErrorEvent, CloseEvent, createFastMessageEvent } = __nccwpck_require__(2807)
 const { SendQueue } = __nccwpck_require__(3900)
 const { WebsocketFrameSend } = __nccwpck_require__(3264)
 const { channels } = __nccwpck_require__(2414)

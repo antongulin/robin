@@ -49,6 +49,11 @@
 ## Links
 
 - Site: https://robinreview.dev
+- Estimated request budget: blank action/workflow input inherits base-branch `estimated-request-token-budget`, then decimal 256000. Both `max-diff-size` and `agent-max-diff-size` inherit likewise, default 500000 characters; explicit 50000 from older callers wins. Full raw diff or fail, independent of full-body fit.
+- `utf8-json-div3-v1` estimates ceil(complete final SDK JSON UTF-8 bytes /3), including stream, messages/private replay, tools and schema. Add ceil(budget/16) safety and the actual output cap. Unset output sends max(1,min(32000,floor(budget/8))); at 256000 this reserves 32000 output + 16000 safety, leaving 208000 estimated input. This is a disclosed output-control change, not exact token counting or a model capacity guarantee.
+- Guard each rebuild before physical-attempt accounting. Preflight rejection is no provider call; earlier usage remains. Agent recovery can compact/elide bounded history; summaries and complete fallback also must fit. No raw diff clipping. Explicit caps never silently clamp/drop; malformed positive-safe-integer controls fail without raw-value diagnostics.
+- Compatibility: `estimated-request-token-budget: off` disables estimate/default output cap; pair with `agent-mode: off` and unset max-output-tokens for previous single-shot/provider-default output shape. Explicit output/character caps remain. Lower the paired controls for smaller effective context. Total usage across requests can exceed 256000. Each new /robin uses current diff/head and fresh conversation. See docs/ADVANCED.md#estimated-request-budget.
+
 - Repository: https://github.com/antongulin/robin
 - License: MIT
 - Author: Anton Gulin — https://www.anton.qa

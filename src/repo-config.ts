@@ -1,10 +1,13 @@
+import { DEFAULT_ESTIMATED_REQUEST_TOKEN_BUDGET, EstimatedRequestTokenBudget, parseEstimatedRequestTokenBudget, positiveSafeInteger } from "./request-budget";
+
 export const DEFAULT_CONFIG_FILE = ".github/robin.yml";
-export const DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
+export const DEFAULT_ACTION_MAX_DIFF_SIZE = 500_000;
 /** Single default shared by action.yml and the reusable review.yml workflow. */
 export const DEFAULT_MAX_COMMENTS = 15;
 
 export interface RepoConfig {
-  maxDiffSize?: number;
+  maxDiffSize?: number | string;
+  estimatedRequestTokenBudget?: number | string;
   maxComments?: number;
   skipPaths?: string[];
   jsonResponseMode?: boolean;
@@ -12,7 +15,7 @@ export interface RepoConfig {
   reasoningEffort?: string;
   agentMode?: AgentMode;
   agentMaxTurns?: number;
-  agentMaxDiffSize?: number;
+  agentMaxDiffSize?: number | string;
   /** Preserve invalid values so automatic bot reviews fail closed with a diagnostic. */
   botReviewPolicy?: string;
   /** null means a malformed YAML sequence; omitted means an empty allowlist. */
@@ -24,8 +27,8 @@ export type AgentMode = "auto" | "off";
 export const DEFAULT_AGENT_MODE: AgentMode = "auto";
 export const DEFAULT_AGENT_MAX_TURNS = 40;
 const MAX_AGENT_MAX_TURNS = 100;
-/** Diff characters sent up front in agent mode (~50-65k tokens); a larger filtered diff fails before the agent request. The single-shot fallback keeps max-diff-size. */
-export const DEFAULT_AGENT_MAX_DIFF_SIZE = 200_000;
+/** Independent raw character allowance; complete serialized requests also face the estimate. */
+export const DEFAULT_AGENT_MAX_DIFF_SIZE = 500_000;
 
 /** Strips a trailing ` # comment` only outside quotes, so quoted values keep `#` intact. */
 function stripTrailingComment(line: string): string {
@@ -104,9 +107,13 @@ export function parseRepoConfigYaml(text: string): RepoConfig {
 
     // Scalar settings tolerate the inline comments the shipped examples use
     // (`reasoning-effort: high   # provider note`); a `#` inside a quoted value is kept.
-    const maxDiffMatch = setting.match(/^max-diff-size:\s*(\d+)\s*$/i);
-    if (maxDiffMatch) {
-      config.maxDiffSize = parseInt(maxDiffMatch[1], 10);
+    const budgetScalar = setting.match(/^(max-diff-size|agent-max-diff-size|estimated-request-token-budget):\s*(.*)$/i);
+    if (budgetScalar) {
+      const key = { "max-diff-size": "maxDiffSize", "agent-max-diff-size": "agentMaxDiffSize",
+        "estimated-request-token-budget": "estimatedRequestTokenBudget" }[budgetScalar[1].toLowerCase()]!;
+      const value = unquoteBotValue(budgetScalar[2]);
+      // Preserve malformed explicit config for fail-closed resolution.
+      (config as Record<string, unknown>)[key] = /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : value;
       continue;
     }
 
@@ -140,12 +147,6 @@ export function parseRepoConfigYaml(text: string): RepoConfig {
       continue;
     }
 
-    const agentMaxDiffMatch = setting.match(/^agent-max-diff-size:\s*(\d+)\s*$/i);
-    if (agentMaxDiffMatch) {
-      config.agentMaxDiffSize = parseInt(agentMaxDiffMatch[1], 10);
-      continue;
-    }
-
     const reasoningEffortMatch = setting.match(
       /^reasoning-effort:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|(.+))\s*$/i
     );
@@ -167,16 +168,11 @@ export function parseRepoConfigYaml(text: string): RepoConfig {
 }
 
 export function resolveMaxDiffSize(actionInput: string, repoConfig?: RepoConfig): number {
-  const parsed = parseInt(actionInput, 10);
-  if (
-    repoConfig?.maxDiffSize !== undefined &&
-    Number.isFinite(parsed) &&
-    parsed === DEFAULT_ACTION_MAX_DIFF_SIZE &&
-    repoConfig.maxDiffSize !== DEFAULT_ACTION_MAX_DIFF_SIZE
-  ) {
-    return repoConfig.maxDiffSize;
-  }
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ACTION_MAX_DIFF_SIZE;
+  return positiveSafeInteger(actionInput.trim() || (repoConfig?.maxDiffSize ?? DEFAULT_ACTION_MAX_DIFF_SIZE), "max-diff-size");
+}
+
+export function resolveEstimatedRequestTokenBudget(actionInput: string, repoConfig?: RepoConfig): EstimatedRequestTokenBudget {
+  return parseEstimatedRequestTokenBudget(actionInput.trim() || (repoConfig?.estimatedRequestTokenBudget ?? DEFAULT_ESTIMATED_REQUEST_TOKEN_BUDGET));
 }
 
 export type BotReviewPolicy = "all" | "none" | "allowlist";
@@ -278,10 +274,7 @@ export function resolveAgentMaxTurns(actionInput: string, repoConfig?: RepoConfi
 }
 
 export function resolveAgentMaxDiffSize(actionInput: string, repoConfig?: RepoConfig): number {
-  const parsed = parseInt(actionInput, 10);
-  if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  if (repoConfig?.agentMaxDiffSize && repoConfig.agentMaxDiffSize > 0) return repoConfig.agentMaxDiffSize;
-  return DEFAULT_AGENT_MAX_DIFF_SIZE;
+  return positiveSafeInteger(actionInput.trim() || (repoConfig?.agentMaxDiffSize ?? DEFAULT_AGENT_MAX_DIFF_SIZE), "agent-max-diff-size");
 }
 
 /**

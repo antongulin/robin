@@ -1,3 +1,4 @@
+import { EstimatedRequestBudgetError, EstimatedRequestTokenBudget, assertRequestFits, parseEstimatedRequestTokenBudget, resolveOutputTokenCap } from "./request-budget";
 import { UsageLedger, UsageAttempt, UsageContext, AttemptTrigger, CompatibilityAdjustment } from "./usage-report";
 import { randomUUID } from "node:crypto";
 import { OpenAI } from "openai";
@@ -184,17 +185,16 @@ export class LLMClient {
     temperature = DEFAULT_LLM_TEMPERATURE,
     onProgress?: LlmProgressHandler,
     reasoningEffort?: string,
-    private readonly usageLedger?: UsageLedger
+    private readonly usageLedger?: UsageLedger,
+    private readonly estimatedRequestTokenBudget: EstimatedRequestTokenBudget = "off"
   ) {
     this.model = model;
     this.temperature = temperature;
     this.routerModel = isOpenRouterRouterModel(model);
     this.onProgress = onProgress;
     this.reasoningEffort = reasoningEffort?.trim() || undefined;
-    this.maxOutputTokens =
-      maxOutputTokens && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
-        ? maxOutputTokens
-        : undefined;
+    this.estimatedRequestTokenBudget = parseEstimatedRequestTokenBudget(estimatedRequestTokenBudget);
+    this.maxOutputTokens = resolveOutputTokenCap(maxOutputTokens, this.estimatedRequestTokenBudget);
     this.maxAttempts = getLlmCompletionAttemptCount(maxAttempts, model);
     const effectiveTimeoutMs = resolveLlmTimeoutMs(model, timeoutMs);
 
@@ -399,7 +399,7 @@ export class LLMClient {
           `LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`
         );
       } catch (error) {
-        if (error instanceof CompletionLengthError) throw error;
+        if (error instanceof CompletionLengthError || error instanceof EstimatedRequestBudgetError) throw error;
         trigger = "outer-error-retry";
         lastError = error;
         if (options.tools && isToolsUnsupportedError(error)) {
@@ -455,6 +455,7 @@ export class LLMClient {
     let compatibility = 0;
     for (;;) {
       const request = this.buildMessagesRequest(messages, options);
+      assertRequestFits(request, this.estimatedRequestTokenBudget, request.max_tokens ?? request.max_completion_tokens ?? undefined);
       const record = this.usageLedger?.begin(options.usageContext, logicalCall, outerAttempt, ++compatibility,
         compatibility > 1 ? "compatibility-retry" : trigger, {
           model: this.model, stream: this.routerModel,
@@ -668,6 +669,7 @@ export class LLMClient {
     const request: ChatRequest = {
       model: this.model,
       messages,
+      stream: this.routerModel,
     };
 
     if (this.sendTemperature) {

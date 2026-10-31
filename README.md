@@ -20,6 +20,10 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 > agent-mode: off
 > ```
 >
+> **Request defaults also change:** Robin checks an estimated **256,000-token working budget per request**, with a **32,000-token output cap** when unset and **16,000** safety headroom. Both raw diff allowances now default to **500,000 characters**. These are configurable estimates, not model context guarantees. Total usage across turns/retries can exceed 256,000 tokens. See [request budgets](docs/ADVANCED.md#estimated-request-budget).
+>
+> For the previous single-shot/provider-default output shape, set both `agent-mode: off` and `estimated-request-token-budget: off`, and leave `max-output-tokens` unset. Explicit output and character caps still apply. Older reusable workflows may explicitly forward `50000`; Robin preserves that value.
+>
 > A nonblank workflow/action input overrides this file; change an existing `agent-mode: auto` input to `agent-mode: "off"` too. Some tagged reusable workflows call the action at `@main` and can receive this change before the release. See the [migration and model compatibility guide](docs/ADVANCED.md#default-change-and-migration) for input snippets, fallback limits and pin behavior. `/summary` stays single-shot.
 
 ## What you get
@@ -334,7 +338,7 @@ GitHub’s servers cannot reach `localhost` on your laptop. For Ollama at home, 
 
 ## Optional: config and custom rules
 
-Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to set `max-diff-size`, skip extra paths, and more. The same file is the normal place to change `reasoning-effort` for providers that expose reasoning controls; when it is unset Robin sends no reasoning control and the provider/model decides, and `off` is an explicit way to send nothing. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
+Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to tune `estimated-request-token-budget`, `max-diff-size` and `agent-max-diff-size` together, skip extra paths, and more. The same file is the normal place to change `reasoning-effort` for providers that expose reasoning controls; when it is unset Robin sends no reasoning control and the provider/model decides, and `off` is an explicit way to send nothing. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
 
 ### Optional settings index
 
@@ -365,7 +369,7 @@ Review scope, results, and instructions:
 
 | Setting | Default / behavior | Where |
 | --- | --- | --- |
-| `max-diff-size` | `50000` characters for single-shot reviews and `/summary`; a larger filtered diff fails before the model request | Workflow input or repo config; config wins when input equals `50000` |
+| `max-diff-size` | `500000` characters for single-shot reviews and `/summary`; complete diff or fail | Nonblank workflow input overrides base config; blank inherits |
 | `max-comments` | `15` inline comments; extra findings stay in the review body | Workflow input or repo config; config wins when input equals `15` |
 | `skip-paths` | No extra exclusions; built-in generated-file exclusions still apply | Repo config only |
 | `fail-on-high` | `false`; optionally fail the check on high findings | Workflow input |
@@ -379,17 +383,18 @@ Model requests and repository context:
 | Setting | Default / behavior | Where |
 | --- | --- | --- |
 | `llm-api-key` / `LLM_API_KEY` | Direct action default `ollama`; reusable workflow requires the secret | Direct action input / reusable workflow secret |
-| `max-output-tokens` | Unset; provider/model response limit | Workflow input |
+| `estimated-request-token-budget` | `256000` estimated tokens per request, including input, output and safety; `off` disables the estimate/default output cap | Nonblank workflow input overrides base config; blank inherits |
+| `max-output-tokens` | Unset: scales with enabled budget up to `32000`; guard off: provider/model default | Positive safe integer workflow input; explicit cap is preserved |
 | `reasoning-effort` | Unset; provider/model decides. `off` sends no reasoning configuration | Workflow input or repo config |
 | `llm-timeout-ms` | `600000` milliseconds (10 minutes) | Workflow input |
 | `llm-temperature` | `0.1`, range 0–2; model-specific exceptions apply | Workflow input |
 | `use-json-response-mode` / `json-response-mode` | `true`; request structured review output, with provider fallbacks | Workflow input / repo config key |
 | `agent-mode` | `auto` (repository tools with bounded diff-only fallback); explicit `off` uses single-shot | Nonblank workflow input overrides base-branch repo config; blank inputs defer |
 | `agent-max-turns` | `40`, capped at `100` | Workflow input or repo config |
-| `agent-max-diff-size` | `200000` characters up front in agent mode; a larger filtered diff fails before the agent request and the single-shot fallback uses `max-diff-size` | Workflow input or repo config |
+| `agent-max-diff-size` | `500000` characters up front in agent mode; a larger filtered diff fails before the agent request and the single-shot fallback uses `max-diff-size` | Workflow input or repo config |
 
 Blank inputs for `request-changes`, `reasoning-effort`, `use-json-response-mode`,
-and the three `agent-*` settings defer to repo config, then to these defaults. Omit the
+`max-diff-size`, `estimated-request-token-budget` and the three `agent-*` settings defer to repo config, then to these defaults. Omit the
 boolean `request-changes` input on reusable-workflow callers to defer to repo config.
 The required model and endpoint remain `LLM_MODEL` and `LLM_BASE_URL` secrets
 (direct action inputs `model` and `llm-base-url`).

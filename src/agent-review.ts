@@ -1,3 +1,4 @@
+import { EstimatedRequestBudgetError } from "./request-budget";
 import * as core from "@actions/core";
 import type { ChatMessage, LLMClient, ToolCall } from "./llm-client";
 import { isContextLengthError } from "./llm-retry";
@@ -8,9 +9,8 @@ import type { AgentProgress } from "./status-reporter";
 
 export const DEFAULT_AGENT_DEADLINE_MS = 30 * 60 * 1000;
 /**
- * Diff plus tool output kept verbatim before the conversation is compacted (~115-150k tokens),
- * which fits a 200k-token window with room for the prompt and answer. Larger windows are covered
- * too, because compaction also runs whenever the provider reports the context is full.
+ * Early character pressure valve for tool output, independent of request fit.
+ * The full-body estimated budget and provider context errors can also trigger compaction.
  */
 export const DEFAULT_AGENT_CONTEXT_CHARS = 450_000;
 /** Tool output always gets at least this much room, even next to a very large diff. */
@@ -92,7 +92,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
   ];
   let messages = freshMessages();
 
-  const compact = async (reason: string): Promise<boolean> => {
+  const compact = async (reason: string, requireShrink = false): Promise<boolean> => {
     if (compactions >= MAX_COMPACTIONS) {
       core.warning(`Compaction limit reached (${reason}); dropping the oldest tool results instead.`);
       return elideOldestToolOutputs(messages, Math.floor(toolOutputChars(messages) / 2));
@@ -102,6 +102,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
       return elideOldestToolOutputs(messages, Math.floor(toolOutputChars(messages) / 2));
     }
 
+    const previousSize = Buffer.byteLength(JSON.stringify(messages), "utf8");
     compactions++;
     core.info(`Compacting agent context #${compactions}: ${reason}`);
     await progress("compacting", "Context is getting full — summarizing the investigation so far");
@@ -109,7 +110,8 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
       notes = await summarizeInvestigation(options.llm, summarize, notes, compactions, turns);
       messages = [...freshMessages(), ...keep];
       core.info(`Compacted ${summarize.length} message(s) into ${notes.length} characters of notes.`);
-      return true;
+      return !requireShrink || Buffer.byteLength(JSON.stringify(messages), "utf8") < previousSize ||
+        elideOldestToolOutputs(messages, Math.floor(toolOutputChars(messages) / 2));
     } catch (error) {
       core.warning(`Context compaction failed (${error}); dropping the oldest tool results instead.`);
       return elideOldestToolOutputs(messages, Math.floor(budgets.maxContextChars / 2));
@@ -123,8 +125,9 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
       try {
         return await options.llm.chatWithTools(messages, REVIEW_TOOLS, { toolChoice, usageContext: { phase: toolChoice ? "forced-final" : "agent", agentTurn: toolChoice ? turns + 1 : turns, recovery } });
       } catch (error) {
-        if (!isContextLengthError(error)) throw error;
-        if (!(await compact("the provider reported the context window is full"))) throw error;
+        if (!(error instanceof EstimatedRequestBudgetError) && !isContextLengthError(error)) throw error;
+        if (!(await compact(error instanceof EstimatedRequestBudgetError
+          ? "the estimated request budget is full" : "the provider reported the context window is full", error instanceof EstimatedRequestBudgetError))) throw error;
         recovery = true;
       }
     }
@@ -271,7 +274,7 @@ async function summarizeInvestigation(
       lastError = new Error("empty summary");
     } catch (error) {
       lastError = error;
-      if (!isContextLengthError(error)) break;
+      if (!(error instanceof EstimatedRequestBudgetError) && !isContextLengthError(error)) break;
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));

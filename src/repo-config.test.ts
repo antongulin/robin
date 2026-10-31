@@ -165,9 +165,9 @@ skip-paths:
 });
 
 describe("resolveMaxDiffSize", () => {
-  it("uses repo config when action input is still the default", () => {
+  it("uses repo config when the action input is blank", () => {
     expect(
-      resolveMaxDiffSize(String(DEFAULT_ACTION_MAX_DIFF_SIZE), { maxDiffSize: 25000 })
+      resolveMaxDiffSize("", { maxDiffSize: 25000 })
     ).toBe(25000);
   });
 
@@ -284,6 +284,6 @@ describe("agent mode config", () => {
     expect(resolveAgentMaxDiffSize("", {})).toBe(DEFAULT_AGENT_MAX_DIFF_SIZE);
     expect(resolveAgentMaxDiffSize("", { agentMaxDiffSize: 90000, maxDiffSize: 25000 })).toBe(90000);
     expect(resolveAgentMaxDiffSize("300000", { agentMaxDiffSize: 90000 })).toBe(300000);
-    expect(resolveAgentMaxDiffSize("0", {})).toBe(DEFAULT_AGENT_MAX_DIFF_SIZE);
+    expect(() => resolveAgentMaxDiffSize("0", {})).toThrow(/positive safe integer/);
   });
 });

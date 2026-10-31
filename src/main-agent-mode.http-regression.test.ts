@@ -40,6 +40,10 @@ interface WireRequest {
 
 interface Scenario {
   input?: string;
+  diff?: string;
+  defaultProfile?: boolean;
+  overrides?: Record<string, string>;
+  headConfig?: string;
   config?: string;
   rejectTools?: boolean;
   singleShotCap?: number;
@@ -54,6 +58,7 @@ interface Scenario {
 }
 
 async function execute(scenario: Scenario = {}) {
+  const reviewDiff = scenario.diff ?? diff;
   const previousTemp = process.env.RUNNER_TEMP;
   const reportRoot = await mkdtemp(join(tmpdir(), "robin-usage-action-"));
   process.env.RUNNER_TEMP = reportRoot;
@@ -113,12 +118,15 @@ async function execute(scenario: Scenario = {}) {
     comment: { body: scenario.summary ? "/summary" : "/review", user: { login: "maintainer", type: "User" } },
   };
   const octokit = {
-    request: jest.fn().mockResolvedValue({ data: diff }),
+    request: jest.fn().mockResolvedValue({ data: reviewDiff }),
     paginate: jest.fn().mockResolvedValue([]),
     rest: {
       repos: { getCollaboratorPermissionLevel: jest.fn().mockResolvedValue({ data: { permission: "admin" } }), getContent: jest.fn(async ({ path, ref }: { path: string; ref: string }) => {
         if (path === ".github/robin.yml" && ref === BASE_SHA && scenario.config !== undefined) {
           return { data: { content: Buffer.from(scenario.config).toString("base64") } };
+        }
+        if (path === ".github/robin.yml" && ref === HEAD_SHA && scenario.headConfig !== undefined) {
+          return { data: { content: Buffer.from(scenario.headConfig).toString("base64") } };
         }
         throw Object.assign(new Error("Not found"), { status: 404 });
       }) },
@@ -143,9 +151,13 @@ async function execute(scenario: Scenario = {}) {
       "github-token": "synthetic-github-key", "llm-api-key": "synthetic-loopback-key",
       "llm-base-url": `http://127.0.0.1:${port}/v1`, model: "synthetic-local-model",
       "max-output-tokens": "2048", "llm-timeout-ms": "2000", "agent-max-turns": "3",
-      "agent-max-diff-size": String(diff.length),
-      "max-diff-size": String(scenario.singleShotCap ?? diff.length),
+      "agent-max-diff-size": String(reviewDiff.length),
+      "max-diff-size": String(scenario.singleShotCap ?? reviewDiff.length),
     };
+    if (scenario.defaultProfile) {
+      delete inputs["agent-max-diff-size"]; delete inputs["max-diff-size"]; delete inputs["max-output-tokens"];
+    }
+    Object.assign(inputs, scenario.overrides);
     if (scenario.input !== undefined) inputs["agent-mode"] = scenario.input;
     jest.mocked(core.getInput).mockImplementation(name => inputs[name] || "");
     jest.mocked(core.getBooleanInput).mockReturnValue(false);
@@ -165,7 +177,7 @@ async function execute(scenario: Scenario = {}) {
     const usageReport = rawReport ? JSON.parse(rawReport) : undefined;
     const reportPath = jest.mocked(core.setOutput).mock.calls.find(([name]) => name === "usage-report-path")?.[1];
     const fullReport = reportPath ? JSON.parse(await readFile(reportPath, "utf8")) : undefined;
-    const lastStatus = octokit.rest.issues.updateComment.mock.calls.at(-1)![0].body as string;
+    const lastStatus = octokit.rest.issues.updateComment.mock.calls.at(-1)?.[0].body as string | undefined;
     return { requests, credentials, octokit, cleanup, lastStatus, usageReport, fullReport };
   } finally {
     if (previousTemp === undefined) delete process.env.RUNNER_TEMP; else process.env.RUNNER_TEMP = previousTemp;
@@ -337,4 +349,105 @@ test("UR10 unavailable observed PR head stays null and does not use the Actions 
   expect(core.setFailed).not.toHaveBeenCalled();
   expect(r.requests).toHaveLength(1);
   expect(r.usageReport).toMatchObject({ head_sha: null, head_provenance: null, state: "completed" });
+});
+
+
+function sizedDiff(size: number, unicode = false) {
+  const prefix = "diff --git a/src/first.ts b/src/first.ts\n--- a/src/first.ts\n+++ b/src/first.ts\n@@ -1 +1 @@\n-old\n+";
+  const suffix = `FINAL_COMPLETE_HUNK_${TAIL}\n`;
+  return prefix + (unicode ? "界" : "x").repeat(size - prefix.length - suffix.length) + suffix;
+}
+
+test.each(["auto", "off"])("RB05 original 239722-character complete diff reaches provider under defaults: %s", async input => {
+  const original = sizedDiff(239722);
+  expect(original).toHaveLength(239722);
+  const result = await execute({ input, diff: original, defaultProfile: true });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(result.requests).toHaveLength(input === "auto" ? 2 : 1);
+  for (const body of result.requests) {
+    expect(JSON.stringify(body.messages)).toContain(`FINAL_COMPLETE_HUNK_${TAIL}`);
+    expect(body.max_tokens ?? body.max_completion_tokens).toBe(32000);
+    expect(Math.ceil(Buffer.byteLength(JSON.stringify(body, null, 2), "utf8") / 3) + 32000 + 16000).toBeLessThanOrEqual(256000);
+  }
+});
+
+test.each(["max-diff-size", "agent-max-diff-size"])("RB05 explicit old 50000 caller %s rejects original full diff", async setting => {
+  const result = await execute({ input: setting === "max-diff-size" ? "off" : "auto", diff: sizedDiff(239722),
+    defaultProfile: true, overrides: { [setting]: "50000" } });
+  expect(result.requests).toHaveLength(0);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("50000"));
+});
+
+test.each([false, true])("RB05 raw-eligible full body can fail independently (Unicode=%s)", async unicode => {
+  const result = await execute({ input: "off", diff: unicode ? sizedDiff(239722, true) : diff,
+    defaultProfile: true, overrides: unicode ? {} : { "review-instructions": "instructions".repeat(70000) } });
+  expect(result.requests).toHaveLength(0);
+  expect(result.usageReport.attempts).toBe(0);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("Estimated request budget exceeded"));
+  expect(result.lastStatus).not.toContain("instructionsinstructions");
+});
+
+test("RB01 base config and explicit budget precedence; head config cannot change policy", async () => {
+  const failed = await execute({ input: "off", defaultProfile: true,
+    config: 'estimated-request-token-budget: "100" # too small', headConfig: 'estimated-request-token-budget: off' });
+  expect(failed.requests).toHaveLength(0);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("budget 100"));
+  jest.clearAllMocks();
+  const passed = await execute({ input: "off", defaultProfile: true,
+    config: 'estimated-request-token-budget: 100', overrides: { "estimated-request-token-budget": "off" } });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(passed.requests).toHaveLength(1);
+  expect(passed.requests[0].max_tokens ?? passed.requests[0].max_completion_tokens).toBeUndefined();
+});
+
+test.each(["estimated-request-token-budget", "max-output-tokens"])("RB01 malformed %s fails before dispatch without echo", async setting => {
+  const result = await execute({ defaultProfile: true, overrides: { [setting]: "900_secret_invalid" } });
+  expect(result.requests).toHaveLength(0);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(`Invalid ${setting}`));
+  expect(JSON.stringify(jest.mocked(core.setFailed).mock.calls)).not.toContain("900_secret_invalid");
+});
+
+test("RB03 /summary uses the same preflight and has zero physical attempts on rejection", async () => {
+  const result = await execute({ summary: true, defaultProfile: true, overrides: { "estimated-request-token-budget": "100" } });
+  expect(result.requests).toHaveLength(0);
+  expect(result.usageReport.attempts).toBe(0);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("Estimated request budget exceeded"));
+});
+
+test.each(["auto", "off"])("RB05 default raw 500000 equality and +1 remain complete-or-fail: %s", async input => {
+  const fitting = await execute({ input, defaultProfile: true, diff: sizedDiff(500000) });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(fitting.requests.length).toBeGreaterThan(0);
+  for (const body of fitting.requests) expect(JSON.stringify(body.messages)).toContain(`FINAL_COMPLETE_HUNK_${TAIL}`);
+  jest.clearAllMocks();
+  const rejected = await execute({ input, defaultProfile: true, diff: sizedDiff(500001) });
+  expect(rejected.requests).toHaveLength(0);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("allows 500000 characters"));
+});
+
+test("RB03 structured retry is guarded against its actual extra instruction and retains earlier usage", async () => {
+  const first = await execute({ input: "off", structuredRetry: true });
+  const inputEstimate = Math.ceil(Buffer.byteLength(JSON.stringify(first.requests[0], null, 2), "utf8") / 3);
+  const budget = Math.ceil((inputEstimate + 2048) * 16 / 15);
+  expect(inputEstimate + 2048 + Math.ceil(budget / 16)).toBeLessThanOrEqual(budget);
+  jest.clearAllMocks();
+  const result = await execute({ input: "off", structuredRetry: true, overrides: { "estimated-request-token-budget": String(budget) } });
+  expect(result.requests).toHaveLength(1);
+  expect(result.usageReport.attempts).toBe(1);
+  expect(result.usageReport.metrics.prompt_tokens.observed_sum).toBe(100);
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("Estimated request budget exceeded"));
+});
+
+test("RB03 budget-rejected agent can use only a fitting complete single-shot fallback", async () => {
+  const baseline = await execute({ input: "off", overrides: { "use-json-response-mode": "false" } });
+  const inputEstimate = Math.ceil(Buffer.byteLength(JSON.stringify(baseline.requests[0], null, 2), "utf8") / 3);
+  const budget = Math.ceil((inputEstimate + 2048) * 16 / 15);
+  jest.clearAllMocks();
+  const result = await execute({ input: "auto", overrides: { "estimated-request-token-budget": String(budget), "use-json-response-mode": "false" } });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(result.requests).toHaveLength(1);
+  expect(result.requests[0].tools).toBeUndefined();
+  expectCompleteDiff(result.requests[0]);
+  expect(result.fullReport.ledger.map((a: any) => a.phase)).toEqual(["diff-only-fallback"]);
+  expect(result.cleanup).toHaveBeenCalledTimes(1);
 });

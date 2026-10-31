@@ -36,7 +36,7 @@ const WORKFLOW_ONLY_INPUTS = new Set(["runner"]);
  * - use-json-response-mode: string, default ""
  */
 const DEFER_BOOLEAN_NO_DEFAULT = ["request-changes"] as const;
-const DEFER_STRING_EMPTY_DEFAULT = ["use-json-response-mode", "bot-review-policy", "bot-allowlist", "agent-mode"] as const;
+const DEFER_STRING_EMPTY_DEFAULT = ["use-json-response-mode", "bot-review-policy", "bot-allowlist", "agent-mode", "max-diff-size", "agent-max-diff-size", "estimated-request-token-budget"] as const;
 
 function parseActionInputs(source: string): string[] {
   // Scope to the inputs: section so a future outputs: block cannot pollute parity.

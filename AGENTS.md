@@ -109,6 +109,7 @@ user documentation; `skills/robin/` is the companion chat skill shipped for codi
 | `src/main.ts` | Entry point: event/trigger policy, input parsing, orchestration |
 | `src/git-utils.ts`, `src/native-diff.ts`, `src/native-process.ts` | PR diff API, authenticated native Git fallback, and owned process-group lifecycle; see runner and coverage limits in `docs/ADVANCED.md` |
 | `src/llm-client.ts`, `src/llm-retry.ts`, `src/llm-provider.ts` | LLM request shape, retries, provider detection |
+| `src/request-budget.ts` | Complete serialized-request estimate, typed preflight rejection and output reserve; guard before physical-attempt accounting |
 | `src/usage-report.ts` | Passive per-invocation physical-attempt ledger, safe metric coverage, isolated Actions/local reporting |
 | `src/repo-config.ts` | `.github/robin.yml` parsing and input-vs-config resolvers |
 | `src/agent-review.ts`, `src/review-tools.ts`, `src/repo-snapshot.ts` | Multi-turn agent review and its read-only tools |
@@ -162,6 +163,17 @@ Diff input fails closed: every model request receives the complete filtered diff
 fails before that request, reporting the observed size, the cap that applied, and how to fix
 it (`src/input-limit.ts`). Do not reintroduce truncated diff input or claim that agent tools
 recover dropped hunks; commit the rebuilt `dist/index.js` with the change.
+
+**Estimated request budget.** Default decimal 256000 per request; `utf8-json-div3-v1`
+counts ceil(complete final SDK JSON UTF-8 bytes/3), plus actual output cap and
+ceil(budget/16) safety. Default output scales up to 32000; raw diff caps default 500000.
+Blank metadata inherits base config; explicit values, including old 50000, win.
+Guard every rebuilt body before ledger begin, including stream/private replay/tools/schema.
+Typed preflight errors bypass retries; bounded agent compaction may recover. No diff
+clipping, no silent output-cap dropping/clamping. Guard off plus agent-mode off and
+absent explicit output restores the previous request shape. Keep estimates separate
+from provider usage; no prompt/private/source text in budget diagnostics. See
+`docs/ADVANCED.md#estimated-request-budget`.
 
 **Usage reporting.** Keep accounting below both retry loops and observe before extraction or
 awaited stream progress. Pass phase context explicitly; never send it to the provider.

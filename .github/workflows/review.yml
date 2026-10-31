@@ -15,17 +15,22 @@ on:
         # No default: omitted must stay unset so .github/robin.yml can still win.
         # A boolean default of true would override repo-config advisor mode.
       max-diff-size:
-        description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, that path fails before its model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff."
+        description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, that path fails before its model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff. Empty defers to base-branch config, then 500000. The full request also faces the estimated token budget."
         required: false
         type: string
-        default: "50000"
+        default: ""
       max-comments:
         description: "Maximum inline review comments. Extra findings stay in the review body."
         required: false
         type: string
         default: "15"
+      estimated-request-token-budget:
+        description: "Estimated per-request working budget (default 256000), including complete UTF-8 JSON input / 3, output cap and ceil(budget / 16) safety. Empty defers to base-branch config; off disables this estimate and its default output cap. Not an exact provider token/context limit or whole-run cap."
+        required: false
+        type: string
+        default: ""
       max-output-tokens:
-        description: "Optional maximum tokens for the LLM response. Leave empty to use the provider/model default."
+        description: "Positive safe integer response cap, preserved across compatibility retries. Empty uses min(32000, floor(estimated-request-token-budget / 8)), at least 1, when the guard is enabled; off with no explicit cap uses the provider/model default."
         required: false
         type: string
         default: ""
@@ -95,7 +100,7 @@ on:
         type: string
         default: ""
       agent-max-diff-size:
-        description: "Diff characters sent up front in agent mode, counted after path filters. When the filtered diff is larger the run fails before the agent request with a size/limit status; agent tools read PR head files, not dropped hunks. The single-shot fallback keeps max-diff-size. Leave empty to use repo config (default 200000)."
+        description: "Diff characters sent up front in agent mode, counted after path filters. When the filtered diff is larger the run fails before the agent request with a size/limit status; agent tools read PR head files, not dropped hunks. The single-shot fallback keeps max-diff-size. Leave empty to use repo config (default 500000)."
         required: false
         type: string
         default: ""
@@ -161,6 +166,7 @@ jobs:
           request-changes: ${{ inputs.request-changes }}
           max-diff-size: ${{ inputs.max-diff-size }}
           max-comments: ${{ inputs.max-comments }}
+          estimated-request-token-budget: ${{ inputs.estimated-request-token-budget }}
           max-output-tokens: ${{ inputs.max-output-tokens }}
           reasoning-effort: ${{ inputs.reasoning-effort }}
           llm-timeout-ms: ${{ inputs.llm-timeout-ms }}

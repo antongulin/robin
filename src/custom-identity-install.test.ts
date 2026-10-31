@@ -37,7 +37,7 @@ describe.each(installers)("%s custom identity preservation", (_name, command, sc
       "  prepare:", "    runs-on: ubuntu-latest", "    steps:", "      - run: echo ready",
       "  review:", "    needs: prepare",
       "    uses: antongulin/robin/.github/workflows/review.yml@v2",
-      "    with:", '      llm-temperature: "1"', secrets, "",
+      "    with:", '      llm-temperature: "1"', '      estimated-request-token-budget: "off"', '      max-diff-size: "50000"', secrets, "",
     ].join("\r\n");
     const target = path.join(dir, ".github/workflows", filename);
     fs.writeFileSync(target, workflow);

@@ -1,3 +1,4 @@
+import { positiveSafeInteger } from "./request-budget";
 import { UsageLedger, UsageContext, publishUsageReport } from "./usage-report";
 import { detectLlmProvider } from "./llm-provider";
 import * as core from "@actions/core";
@@ -39,6 +40,7 @@ import {
   resolveJsonResponseMode,
   resolveMaxComments,
   resolveMaxDiffSize,
+  resolveEstimatedRequestTokenBudget,
   resolveReasoningEffort,
   resolveRequestChanges,
   resolveBotReviewSettings,
@@ -156,10 +158,10 @@ async function run(): Promise<void> {
       run_id: process.env.GITHUB_RUN_ID ?? null, run_attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
       requested_model: model, provider: detectLlmProvider(baseUrl) });
     const failOnHigh = core.getInput("fail-on-high") === "true";
-    const maxDiffSizeInput = core.getInput("max-diff-size") || "50000";
+    const maxDiffSizeInput = core.getInput("max-diff-size") || "";
     const maxCommentsInput = core.getInput("max-comments") || "25";
     const maxOutputTokensInput = core.getInput("max-output-tokens") || "";
-    const maxOutputTokens = maxOutputTokensInput ? parseInt(maxOutputTokensInput, 10) : undefined;
+    const maxOutputTokens = maxOutputTokensInput.trim() ? positiveSafeInteger(maxOutputTokensInput, "max-output-tokens") : undefined;
     const reasoningEffortInput = core.getInput("reasoning-effort") || "";
     const llmTimeoutMsInput = core.getInput("llm-timeout-ms") || "";
     const { value: llmTimeoutMs, valid: llmTimeoutValid } = parseLLMTimeout(llmTimeoutMsInput);
@@ -257,6 +259,7 @@ async function run(): Promise<void> {
       throw new Error("Input required and not supplied: model");
     }
 
+    const estimatedRequestTokenBudget = resolveEstimatedRequestTokenBudget(core.getInput("estimated-request-token-budget"), repoConfig);
     const maxDiffSize = resolveMaxDiffSize(maxDiffSizeInput, repoConfig);
     const maxComments = resolveMaxComments(maxCommentsInput, repoConfig);
     const jsonResponseMode = resolveJsonResponseMode(jsonResponseModeInput, repoConfig);
@@ -355,7 +358,8 @@ async function run(): Promise<void> {
       llmTemperature,
       (detail) => reporter?.setProvider(detail),
       reasoningEffort,
-      usage
+      usage,
+      estimatedRequestTokenBudget
     );
     const useJsonMode = command === "review" && jsonResponseMode;
     // Only a user-configured effort earns a PR-visible "fix your config" notice; a rejected
