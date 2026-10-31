@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.0](https://github.com/antongulin/robin/compare/v2.12.4...v2.13.0) (2026-10-31)
+
+
+### Features
+
+* enable agent reviews with request budgets and usage reporting ([#125](https://github.com/antongulin/robin/issues/125)) ([e374a03](https://github.com/antongulin/robin/commit/e374a032b0d0ebf9880204ad3db07dc3af209d35))
+
 ## [2.12.4](https://github.com/antongulin/robin/compare/v2.12.3...v2.12.4) (2026-10-30)
 
 
