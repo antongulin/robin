@@ -30,6 +30,16 @@ describe("RB01 configuration and safe arithmetic", () => {
     expect(resolveOutputTokenCap(undefined, "off")).toBeUndefined();
     expect(resolveOutputTokenCap(123, "off")).toBe(123);
   });
+  test.each([
+    ["max-diff-size", resolveMaxDiffSize],
+    ["agent-max-diff-size", resolveAgentMaxDiffSize],
+  ] as const)("RC1 %s preserves explicit malformed YAML and accepts quoted caps", (setting, resolve) => {
+    for (const value of ["", "25k"]) {
+      expect(() => resolve("", parseRepoConfigYaml(`${setting}: ${value}`)))
+        .toThrow(new RegExp(`^Invalid ${setting}; use a positive safe integer[.]$`));
+    }
+    expect(resolve("", parseRepoConfigYaml(`${setting}: "25000" # smaller cap`))).toBe(25000);
+  });
   test("unsafe sums cannot round into acceptance", () => {
     expect(() => assertRequestFits({}, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER)).toThrow(EstimatedRequestBudgetError);
     expect(() => assertRequestFits({}, 100, 94)).toThrow(EstimatedRequestBudgetError);

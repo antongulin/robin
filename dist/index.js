@@ -2297,10 +2297,11 @@ async function run() {
             core.info("No matching trigger found. Skipping.");
             return;
         }
-        const apiKey = core.getInput("llm-api-key") || "ollama";
+        const suppliedApiKey = core.getInput("llm-api-key");
+        const apiKey = suppliedApiKey || "ollama";
         const baseUrl = core.getInput("llm-base-url") || "";
         const model = core.getInput("model") || "";
-        usage = new usage_report_1.UsageLedger([apiKey, token]);
+        usage = new usage_report_1.UsageLedger([suppliedApiKey, token]);
         usage.configure({ repository: `${owner}/${repo}`, pr_number: prNumber, command,
             head_sha: eventName === "pull_request" ? payload.pull_request?.head?.sha ?? null : null,
             head_provenance: eventName === "pull_request" ? "event" : null,

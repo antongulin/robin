@@ -181,6 +181,8 @@ Preserve unknown/nonfinal coverage and preceding attempts; cached/reasoning coun
 breakdowns. Reporting is passive and nonfatal, with allowlisted metadata only. Keep
 `usage-report` action -> job -> workflow output wiring intact. `usage-report-path` is a
 same-job runner-local ledger, not a caller artifact. See `docs/ADVANCED.md#llm-usage-reports`.
+Redact explicitly supplied credentials, including short keys. Keep the omitted-key
+input blank so the public `ollama` fallback sent to the SDK does not suppress report identifiers.
 
 **Private assistant replay.** Preserve a provider-supplied string `reasoning_content`
 as private completion metadata, including empty strings and streamed string deltas.

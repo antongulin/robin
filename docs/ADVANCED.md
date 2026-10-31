@@ -106,6 +106,10 @@ working budget never increases an explicit raw cap. Numeric settings must be pos
 safe integers; malformed explicit values fail before dispatch without echoing them.
 Quoted config numbers/`off` and inline comments work.
 
+An empty value in `.github/robin.yml`, such as `max-diff-size:`, is invalid.
+Remove or comment out the key to inherit the default. Blank action/workflow
+inputs still defer to repository config.
+
 For the previous single-shot/provider-default output request shape:
 
 ```yaml
@@ -278,7 +282,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | Input | Default | Description |
 | --- | --- | --- |
 | `github-token` / `ROBIN_TOKEN` | `${{ github.token }}` | Token for PR API and comments. Direct action input / optional reusable-workflow secret. See [Custom review identity](#custom-review-identity) |
-| `llm-api-key` / `LLM_API_KEY` | Direct action: `ollama` | Provider API key; the reusable workflow requires the secret |
+| `llm-api-key` / `LLM_API_KEY` | Direct action: blank, using public `ollama` placeholder | Provider API key; the reusable workflow requires the secret |
 | `llm-base-url` / `LLM_BASE_URL` | — | OpenAI-compatible base URL (required) |
 | `model` / `LLM_MODEL` | — | Model name (required) |
 | `fail-on-high` | `false` | Fail the check if high-severity issues are found |
@@ -489,6 +493,19 @@ retry trigger, compatibility adjustment, streaming state, sent model/effort/outp
 limit, reported model, finish/outcome and numeric observations. Metadata-only phase
 context never goes to the provider.
 
+`state` describes the handled action outcome when Robin writes the report:
+
+| Value | Meaning |
+| --- | --- |
+| `skipped` | Robin created a ledger, then returned before model work, for example because no eligible changes remained or the bot policy skipped the review |
+| `completed` | The review or summary path finished without a caught failure or a `fail-on-high` failure |
+| `failed` | Preparation, provider, parsing or posting failed, or `fail-on-high` failed the check after a completed review |
+
+Use each ledger entry's `outcome` for the provider attempt result. A failed action
+can retain successful requests and their usage. A skipped report has zero attempts;
+a preflight failure can also have zero attempts with `state: failed`. Events that
+return before ledger creation, such as an unmatched trigger, publish no usage report.
+
 `metrics` contains `prompt_tokens`, `completion_tokens`, `total_tokens`,
 `cached_input_tokens` and `reasoning_tokens`. Each metric has:
 
@@ -530,6 +547,10 @@ configured credentials are suppressed. Treat provider-supplied identifiers as
 untrusted metadata; this does not audit existing SDK/debug/error logs. Only usage
 already exposed by the SDK (including a preserved `error.usage` envelope) is visible;
 usage discarded by SDK error parsing remains unknown.
+
+An omitted API key uses the public `ollama` placeholder on the wire without
+suppressing model names containing that word. Explicitly supplied keys, including
+`ollama` and short credentials, still suppress matching identifiers in the report.
 
 ## Review timing
 

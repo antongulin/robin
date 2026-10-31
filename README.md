@@ -382,7 +382,7 @@ Model requests and repository context:
 
 | Setting | Default / behavior | Where |
 | --- | --- | --- |
-| `llm-api-key` / `LLM_API_KEY` | Direct action default `ollama`; reusable workflow requires the secret | Direct action input / reusable workflow secret |
+| `llm-api-key` / `LLM_API_KEY` | Blank direct action input uses the public `ollama` placeholder; reusable workflow requires the secret | Direct action input / reusable workflow secret |
 | `estimated-request-token-budget` | `256000` estimated tokens per request, including input, output and safety; `off` disables the estimate/default output cap | Nonblank workflow input overrides base config; blank inherits |
 | `max-output-tokens` | Unset: scales with enabled budget up to `32000`; guard off: provider/model default | Positive safe integer workflow input; explicit cap is preserved |
 | `reasoning-effort` | Unset; provider/model decides. `off` sends no reasoning configuration | Workflow input or repo config |

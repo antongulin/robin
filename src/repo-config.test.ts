@@ -2,7 +2,6 @@ import {
   DEFAULT_AGENT_MAX_DIFF_SIZE,
   DEFAULT_AGENT_MAX_TURNS,
   DEFAULT_MAX_COMMENTS,
-  DEFAULT_ACTION_MAX_DIFF_SIZE,
   isReasoningEffortConfigured,
   parseRepoConfigYaml,
   resolveAgentMaxDiffSize,

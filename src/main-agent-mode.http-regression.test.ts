@@ -55,6 +55,7 @@ interface Scenario {
   terminalFailure?: boolean;
   postingFailure?: boolean;
   noObservedHead?: boolean;
+  reportedModel?: string;
 }
 
 async function execute(scenario: Scenario = {}) {
@@ -98,7 +99,7 @@ async function execute(scenario: Scenario = {}) {
         file: "src/first.ts", line: 1 }], suggestions: [],
       });
       res.end(JSON.stringify({
-        id: "synthetic", object: "chat.completion", model: "reported-backend",
+        id: "synthetic", object: "chat.completion", model: scenario.reportedModel ?? "reported-backend",
         usage: { prompt_tokens: requests.length * 100, completion_tokens: requests.length * 10, total_tokens: requests.length * 110 },
         choices: [{ index: 0, finish_reason: investigate ? "tool_calls" : "stop", message: investigate
           ? { role: "assistant", content: null, tool_calls: [{ id: "context_call", type: "function",
@@ -203,6 +204,37 @@ function expectCompleteDiff(request: WireRequest) {
 }
 
 beforeEach(() => { jest.clearAllMocks(); });
+
+test("ID1 omitted API key preserves local model identifiers and the Ollama wire placeholder", async () => {
+  const metadata = await readFile(join(__dirname, "..", "action.yml"), "utf8");
+  const apiKeySection = metadata.slice(metadata.indexOf("  llm-api-key:"), metadata.indexOf("  llm-base-url:"));
+  const declaredDefault = apiKeySection.match(/^\s+default: "(.*)"$/m)?.[1];
+  expect(declaredDefault).toBeDefined();
+  const result = await execute({ input: "off", reportedModel: "ollama/backend",
+    overrides: { "llm-api-key": declaredDefault!, model: "ollama/local-model" } });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(result.credentials).toEqual(["Bearer ollama"]);
+  expect(result.requests).toHaveLength(1);
+  expect(result.usageReport.requested_model).toBe("ollama/local-model");
+  expect(result.fullReport.ledger[0]).toMatchObject({ sent_model: "ollama/local-model", reported_model: "ollama/backend" });
+  expect(result.usageReport.model_groups[0].reported_model).toBe("ollama/backend");
+});
+
+test.each([
+  ["llm-api-key", "keyabc"],
+  ["llm-api-key", "ollama"],
+  ["github-token", "ghxyz"],
+])("ID2 explicit %s value %s remains suppressed in usage reports", async (input, secret) => {
+  const result = await execute({ input: "off", reportedModel: `${secret}/backend`,
+    overrides: { [input]: secret, model: `${secret}/local-model` } });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(result.credentials).toEqual([`Bearer ${input === "llm-api-key" ? secret : "synthetic-loopback-key"}`]);
+  expect(result.requests).toHaveLength(1);
+  expect(result.usageReport.requested_model).toBeNull();
+  expect(result.fullReport.ledger[0]).toMatchObject({ sent_model: null, reported_model: null });
+  expect(JSON.stringify({ compact: result.usageReport, full: result.fullReport,
+    summary: jest.mocked(core.summary.addRaw).mock.calls })).not.toContain(secret);
+});
 
 test.each([
   ["missing config", undefined, undefined],

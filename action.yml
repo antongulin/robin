@@ -11,9 +11,9 @@ inputs:
     required: true
     default: "${{ github.token }}"
   llm-api-key:
-    description: "API key for your LLM endpoint. Use \"ollama\" for self-hosted Ollama."
+    description: "API key for your LLM endpoint. Leave blank to use the public \"ollama\" placeholder for an unauthenticated local endpoint."
     required: false
-    default: "ollama"
+    default: ""
   llm-base-url:
     description: "Base URL for OpenAI-compatible API. Examples: https://api.openai.com/v1, http://your-server:11434/v1"
     required: true

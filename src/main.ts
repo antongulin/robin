@@ -148,10 +148,11 @@ async function run(): Promise<void> {
       return;
     }
 
-    const apiKey = core.getInput("llm-api-key") || "ollama";
+    const suppliedApiKey = core.getInput("llm-api-key");
+    const apiKey = suppliedApiKey || "ollama";
     const baseUrl = core.getInput("llm-base-url") || "";
     const model = core.getInput("model") || "";
-    usage = new UsageLedger([apiKey, token]);
+    usage = new UsageLedger([suppliedApiKey, token]);
     usage.configure({ repository: `${owner}/${repo}`, pr_number: prNumber, command,
       head_sha: eventName === "pull_request" ? payload.pull_request?.head?.sha ?? null : null,
       head_provenance: eventName === "pull_request" ? "event" : null,
