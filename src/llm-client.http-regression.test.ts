@@ -7,6 +7,9 @@ jest.mock("@actions/core", () => ({
 import * as http from "http";
 import { AddressInfo } from "net";
 import { IncomingHttpHeaders } from "http";
+import { UsageLedger } from "./usage-report";
+import * as retry from "./llm-retry";
+import { EstimatedRequestBudgetError } from "./request-budget";
 import { LLMClient } from "./llm-client";
 
 /**
@@ -28,7 +31,7 @@ interface Gateway {
 }
 
 function startGateway(
-  handler: (body: Body, headers: IncomingHttpHeaders) => { status: number; body: unknown },
+  handler: (body: Body, headers: IncomingHttpHeaders) => { status: number; body?: unknown; sse?: string },
 ): Promise<Gateway> {
   const requests: Body[] = [];
   const headers: IncomingHttpHeaders[] = [];
@@ -39,9 +42,9 @@ function startGateway(
       const parsed = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
       requests.push(parsed);
       headers.push(req.headers);
-      const { status, body } = handler(parsed, req.headers);
-      res.writeHead(status, { "content-type": "application/json" });
-      res.end(JSON.stringify(body));
+      const { status, body, sse } = handler(parsed, req.headers);
+      res.writeHead(status, { "content-type": sse === undefined ? "application/json" : "text/event-stream" });
+      res.end(sse === undefined ? JSON.stringify(body) : sse);
     });
   });
 
@@ -485,4 +488,155 @@ describe("OpenCode Go max effort (real OpenAI SDK and local endpoint)", () => {
       await gateway.close();
     }
   });
+});
+
+
+test("UR03 physical ledger spans compatibility and outer retry at real SDK wire", async () => {
+  const delay = jest.spyOn(retry, "delayMs").mockResolvedValue();
+  let accepted = 0;
+  const gateway = await startGateway(body => {
+    if (body.max_tokens !== undefined) return unsupportedField("max_tokens", "Use max_completion_tokens instead.");
+    accepted++;
+    const value = completion("reported-backend", accepted === 1 ? "" : "review");
+    value.body.usage = { prompt_tokens: accepted * 100, completion_tokens: accepted * 10, total_tokens: accepted * 110 };
+    return value;
+  });
+  const ledger = new UsageLedger();
+  try {
+    const client = new LLMClient(gateway.baseUrl, "synthetic-key", "requested-model", 1234, undefined, 2, undefined, undefined, "high", ledger);
+    await client.chatCompletion("synthetic system", "synthetic user", true);
+    const r = ledger.report();
+    expect(gateway.requests).toHaveLength(3);
+    expect(r.full.ledger.map(a => [a.logical_call, a.outer_attempt, a.compatibility_attempt, a.trigger, a.compatibility_adjustment])).toEqual([
+      [1, 1, 1, "initial", "output-limit"], [1, 1, 2, "compatibility-retry", null], [1, 2, 1, "outer-empty-retry", null],
+    ]);
+    expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 300, unknown_attempts: 1, complete: false });
+    expect(r.compact.metrics.completion_tokens.observed_sum).toBe(30);
+    expect(gateway.requests.every(body => hasAnyTokenField(body) && (body.reasoning as any).effort === "high" && !body.stream_options && !body.usageContext)).toBe(true);
+  } finally { delay.mockRestore(); await gateway.close(); }
+});
+
+test.each([false, true])("UR09 actual SDK SSE terminal usage and interruption (interrupted %s)", async interrupted => {
+  const chunks = [
+    { model: "backend", choices: [{ index: 0, delta: { content: "review" }, finish_reason: null }], usage: { prompt_tokens: 100, completion_tokens: 5 } },
+    { model: "backend", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+    { model: "backend", choices: [], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } },
+  ];
+  const gateway = await startGateway(() => ({ status: 200, sse: chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join("") +
+    (interrupted ? 'data: {"error":{"message":"synthetic stream failure","type":"server_error"}}\n\n' : "data: [DONE]\n\n") }));
+  const ledger = new UsageLedger();
+  try {
+    const client = new LLMClient(gateway.baseUrl, "synthetic-key", "openrouter/free", 1234, undefined, 1, undefined, undefined, undefined, ledger);
+    if (interrupted) await expect(client.chatCompletion("s", "u")).rejects.toThrow("synthetic stream failure");
+    else expect((await client.chatCompletion("s", "u")).content).toBe("review");
+    expect(gateway.requests).toHaveLength(1);
+    expect(gateway.requests[0]).toMatchObject({ stream: true, max_tokens: 1234 });
+    expect(gateway.requests[0]).not.toHaveProperty("stream_options");
+    const r = ledger.report();
+    expect(r.compact.attempts).toBe(1);
+    expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 100, final_attempts: interrupted ? 0 : 1, complete: !interrupted });
+    expect(r.compact.metrics.completion_tokens.observed_sum).toBe(10);
+  } finally { await gateway.close(); }
+});
+
+
+describe("RB02 actual rebuilt request preflight", () => {
+  function budgetClient(baseUrl: string, budget: number | "off", output?: number, ledger?: UsageLedger) {
+    return new LLMClient(baseUrl, "test-key", "unknown-local", output, undefined, 3, 0.5, undefined, undefined, ledger, budget);
+  }
+  // Independently specified SDK body, not the production estimator/builder.
+  function equalityInput() {
+    const fixture = { model: "unknown-local", messages: [{ role: "system", content: "s" }, { role: "user", content: "" }],
+      stream: false, temperature: 0.5, max_tokens: 125 };
+    return "x".repeat(2436 - Buffer.byteLength(JSON.stringify(fixture, null, 2), "utf8"));
+  }
+  test("equality sends complete body; one more estimated token dispatches zero times", async () => {
+    const gateway = await startGateway(() => completion("unknown-local"));
+    try {
+      await budgetClient(gateway.baseUrl, 1000).chatCompletion("s", equalityInput(), false);
+      expect(gateway.requests).toHaveLength(1);
+      expect(Buffer.byteLength(JSON.stringify(gateway.requests[0], null, 2), "utf8")).toBe(2436);
+      const ledger = new UsageLedger();
+      await expect(budgetClient(gateway.baseUrl, 1000, undefined, ledger).chatCompletion("s", equalityInput() + "xxx", false))
+        .rejects.toBeInstanceOf(EstimatedRequestBudgetError);
+      expect(gateway.requests).toHaveLength(1);
+      expect(ledger.report().full.ledger).toHaveLength(0);
+    } finally { await gateway.close(); }
+  });
+  test("compatibility rebuild is rechecked before accounting; earlier provider usage survives", async () => {
+    let count = 0;
+    const gateway = await startGateway(() => ++count === 1 ? completion("unknown-local") : ({ ...unsupportedField("max_tokens", "Use max_completion_tokens instead."),
+      body: { error: { message: "Unsupported parameter: 'max_tokens'. Use max_completion_tokens instead.", param: "max_tokens", type: "invalid_request_error" },
+        usage: { prompt_tokens: 7, completion_tokens: 0, total_tokens: 7 } } }));
+    const ledger = new UsageLedger();
+    try {
+      const client = budgetClient(gateway.baseUrl, 1000, undefined, ledger);
+      await client.chatCompletion("s", "small first call", false);
+      await expect(client.chatCompletion("s", equalityInput(), false))
+        .rejects.toBeInstanceOf(EstimatedRequestBudgetError);
+      expect(gateway.requests).toHaveLength(2);
+      expect(gateway.requests[1].max_tokens).toBe(125);
+      expect(ledger.report().full.ledger).toHaveLength(2);
+      expect(ledger.report().compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 1, unknown_attempts: 1 });
+    } finally { await gateway.close(); }
+  });
+  test("default cap is sent and explicit off restores the provider default or preserves explicit cap", async () => {
+    const gateway = await startGateway(() => completion("unknown-local"));
+    try {
+      for (const [budget, output] of [[256000, undefined], ["off", undefined], ["off", 123]] as const) {
+        await budgetClient(gateway.baseUrl, budget, output).chatCompletion("s", "u", false);
+      }
+      expect(gateway.requests.map(body => body.max_tokens)).toEqual([32000, undefined, 123]);
+    } finally { await gateway.close(); }
+  });
+});
+
+test("RB03 guarded outer empty retry keeps both physical attempts and full content", async () => {
+  let count = 0;
+  const gateway = await startGateway(() => completion("unknown-local", ++count === 1 ? "" : "review text"));
+  const delay = jest.spyOn(retry, "delayMs").mockResolvedValue();
+  const ledger = new UsageLedger();
+  try {
+    const client = new LLMClient(gateway.baseUrl, "test-key", "unknown-local", undefined, undefined, 2,
+      undefined, undefined, undefined, ledger, 256000);
+    await expect(client.chatCompletion("s", "COMPLETE_RETRY_TAIL", false)).resolves.toHaveProperty("content", "review text");
+    expect(gateway.requests).toHaveLength(2);
+    for (const body of gateway.requests) {
+      expect(JSON.stringify(body)).toContain("COMPLETE_RETRY_TAIL");
+      expect(body.max_tokens).toBe(32000);
+      expect(Math.ceil(Buffer.byteLength(JSON.stringify(body, null, 2)) / 3) + 32000 + 16000).toBeLessThanOrEqual(256000);
+    }
+    expect(ledger.report().full.ledger.map(a => a.trigger)).toEqual(["initial", "outer-empty-retry"]);
+  } finally { delay.mockRestore(); await gateway.close(); }
+});
+
+test("RB02 actual streaming body includes stream and budget cap; oversized private replay dispatches zero", async () => {
+  const gateway = await startGateway(() => ({ status: 200, sse:
+    'data: {"model":"backend","choices":[{"delta":{"content":"review"},"finish_reason":null}]}\n\n' +
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n' }));
+  const ledger = new UsageLedger();
+  try {
+    const client = new LLMClient(gateway.baseUrl, "test-key", "openrouter/free", undefined, undefined, 1,
+      undefined, undefined, undefined, ledger, 256000);
+    await expect(client.chatCompletion("s", "u", false)).resolves.toHaveProperty("content", "review");
+    expect(gateway.requests[0].stream).toBe(true);
+    expect(gateway.requests[0].max_tokens).toBe(32000);
+    await expect(client.chatWithTools([{ role: "assistant", content: null, reasoning_content: "PRIVATE_RB02".repeat(100000) }], []))
+      .rejects.toBeInstanceOf(EstimatedRequestBudgetError);
+    expect(gateway.requests).toHaveLength(1);
+    expect(ledger.report().full.ledger).toHaveLength(1);
+    expect(ledger.report().compact.metrics.prompt_tokens).toMatchObject({ observed_sum: null, unknown_attempts: 1 });
+  } finally { await gateway.close(); }
+});
+
+test("RB02 rejection of both spellings preserves default budget cap and never sends uncapped", async () => {
+  const gateway = await startGateway(body => unsupportedField(body.max_tokens !== undefined ? "max_tokens" : "max_completion_tokens", "Unsupported parameter."));
+  try {
+    const client = new LLMClient(gateway.baseUrl, "test-key", "unknown-local", undefined, undefined, 1,
+      undefined, undefined, undefined, undefined, 256000);
+    await expect(client.chatCompletion("s", "u", false)).rejects.toThrow("Unsupported parameter: 'max_completion_tokens'");
+    expect(gateway.requests).toHaveLength(2);
+    expect(gateway.requests.map(body => body.max_tokens ?? body.max_completion_tokens)).toEqual([32000, 32000]);
+    expect(gateway.requests.every(hasAnyTokenField)).toBe(true);
+  } finally { await gateway.close(); }
 });

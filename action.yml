@@ -11,9 +11,9 @@ inputs:
     required: true
     default: "${{ github.token }}"
   llm-api-key:
-    description: "API key for your LLM endpoint. Use \"ollama\" for self-hosted Ollama."
+    description: "API key for your LLM endpoint. Leave blank to use the public \"ollama\" placeholder for an unauthenticated local endpoint."
     required: false
-    default: "ollama"
+    default: ""
   llm-base-url:
     description: "Base URL for OpenAI-compatible API. Examples: https://api.openai.com/v1, http://your-server:11434/v1"
     required: true
@@ -29,11 +29,15 @@ inputs:
     required: false
     default: ""
   max-diff-size:
-    description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, that path fails before its model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff."
+    description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, that path fails before its model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff. Empty defers to base-branch config, then 500000. The full request also faces the estimated token budget."
     required: false
-    default: "50000"
+    default: ""
+  estimated-request-token-budget:
+    description: "Estimated per-request working budget (default 256000), including complete UTF-8 JSON input / 3, output cap and ceil(budget / 16) safety. Empty defers to base-branch config; off disables this estimate and its default output cap. Not an exact provider token/context limit or whole-run cap."
+    required: false
+    default: ""
   max-output-tokens:
-    description: "Optional maximum tokens for the LLM response. Leave empty to use the provider/model default."
+    description: "Positive safe integer response cap, preserved across compatibility retries. Empty uses min(32000, floor(estimated-request-token-budget / 8)), at least 1, when the guard is enabled; off with no explicit cap uses the provider/model default."
     required: false
     default: ""
   reasoning-effort:
@@ -81,7 +85,7 @@ inputs:
     required: false
     default: ".github/robin.yml"
   agent-mode:
-    description: "Multi-turn review where the model reads files, greps, and lists the repository at the PR head before answering. auto uses it and falls back to the single-shot diff review when the model does not support tool calling; off always uses the single-shot review. Leave empty to defer to .github/robin.yml; when both are unset the single-shot review runs."
+    description: "auto runs a multi-turn review with read-only repository tools at the PR head; off uses a single-shot diff review without a snapshot or tools. Leave empty to defer to base-branch .github/robin.yml; when both are unset auto runs. Tool rejection or snapshot failure attempts a complete diff-only fallback subject to max-diff-size."
     required: false
     default: ""
   agent-max-turns:
@@ -89,13 +93,19 @@ inputs:
     required: false
     default: ""
   agent-max-diff-size:
-    description: "Maximum diff characters sent up front in agent mode, counted after path filters. When the filtered diff is larger, the run fails before the agent model request and the failed status reports the observed size, this limit, and how to fix it. Agent tools read files at the PR head, not dropped diff hunks. The single-shot fallback keeps max-diff-size. Leave empty to use the repo config, which defaults to 200000."
+    description: "Maximum diff characters sent up front in agent mode, counted after path filters. When the filtered diff is larger, the run fails before the agent model request and the failed status reports the observed size, this limit, and how to fix it. Agent tools read files at the PR head, not dropped diff hunks. The single-shot fallback keeps max-diff-size. Leave empty to use the repo config, which defaults to 500000."
     required: false
     default: ""
   use-json-response-mode:
     description: "Request strict JSON-schema review responses (falls back to JSON-object mode, then none, if the provider rejects it). Leave empty to use repo config or default true."
     required: false
     default: ""
+
+outputs:
+  usage-report:
+    description: "Compact sanitized per-invocation LLM usage JSON; provider-reported tokens and coverage, not cost."
+  usage-report-path:
+    description: "Full sanitized JSON ledger in a runner-local file for subsequent steps in this job. Not a downloadable artifact."
 
 runs:
   using: "node24"

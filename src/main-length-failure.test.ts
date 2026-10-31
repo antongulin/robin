@@ -20,7 +20,7 @@ const clean = { summary: "Validated change.", high: [], medium: [], low: [], sug
 const diff = "diff --git a/src/value.ts b/src/value.ts\n--- a/src/value.ts\n+++ b/src/value.ts\n@@ -1 +1 @@\n-old\n+new\n";
 
 function completion(finishReason = "stop") {
-  return { choices: [{ message: { content: JSON.stringify(clean) }, finish_reason: finishReason }] };
+  return { usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 }, choices: [{ message: { content: JSON.stringify(clean) }, finish_reason: finishReason }] };
 }
 
 async function execute(create: jest.Mock, diffError?: Error) {
@@ -58,19 +58,14 @@ async function execute(create: jest.Mock, diffError?: Error) {
   };
   jest.mocked(core.getInput).mockImplementation(name => inputs[name] || "");
   jest.mocked(core.getBooleanInput).mockReturnValue(false);
-  let finish!: () => void;
-  const done = new Promise<void>(resolve => { finish = resolve; });
-  jest.mocked(core.info).mockImplementation(message => { if (message === "Done.") finish(); });
-  jest.mocked(core.setFailed).mockImplementation(() => finish());
   const signals = new Map((["SIGTERM", "SIGINT"] as const).map(signal => [signal, process.listeners(signal)]));
   let timeout: NodeJS.Timeout | undefined;
   try {
-    await jest.isolateModulesAsync(async () => { await import("./main"); });
-    await Promise.race([done, new Promise<never>((_, reject) => {
+    await Promise.race([jest.isolateModulesAsync(async () => {
+      const { actionCompletion } = await import("./main"); await actionCompletion;
+    }), new Promise<never>((_, reject) => {
       timeout = setTimeout(() => reject(new Error("Action did not finish")), 5000);
     })]);
-    await Promise.resolve();
-    await Promise.resolve();
   } finally {
     if (timeout) clearTimeout(timeout);
     for (const [signal, previous] of signals) {
@@ -79,7 +74,8 @@ async function execute(create: jest.Mock, diffError?: Error) {
       }
     }
   }
-  return { octokit, cleanup, executeTool };
+  const usageReport = JSON.parse(jest.mocked(core.setOutput).mock.calls.find(([name]) => name === "usage-report")![1]);
+  return { octokit, cleanup, executeTool, usageReport };
 }
 
 beforeEach(() => { jest.clearAllMocks(); });
@@ -92,7 +88,10 @@ test.each(["initial", "forced final"])("L5 %s agent length failure stops review 
     }] },
   }] });
   create.mockResolvedValueOnce(completion("length")).mockResolvedValue(completion());
-  const { octokit, cleanup, executeTool } = await execute(create);
+  const { octokit, cleanup, executeTool, usageReport } = await execute(create);
+  expect(usageReport).toMatchObject({ state: "failed", attempts: turn === "initial" ? 1 : 2 });
+  expect(usageReport.metrics.prompt_tokens.observed_sum).toBe(100);
+  expect(usageReport.phases[turn === "initial" ? "agent" : "forced-final"].outcomes.length).toBe(1);
   expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("finish_reason=length"));
   expect(create).toHaveBeenCalledTimes(turn === "initial" ? 1 : 2);
   expect(create.mock.calls.every(([request]) => request.tools?.length > 0)).toBe(true);
@@ -155,7 +154,9 @@ test.each([
 test("R2.1 GitHub diff rejection gets generic advice without LLM capacity diagnosis", async () => {
   const create = jest.fn();
   const error = Object.assign(new Error("GitHub diff acquisition rejected"), { status: 413 });
-  const { octokit } = await execute(create, error);
+  const { octokit, usageReport } = await execute(create, error);
+  expect(usageReport).toMatchObject({ state: "failed", attempts: 0 });
+  expect(usageReport.metrics.prompt_tokens).toMatchObject({ observed_sum: null, unknown_attempts: 0 });
   expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(error.message));
   expect(create).not.toHaveBeenCalled();
   expect(octokit.rest.pulls.createReview).not.toHaveBeenCalled();

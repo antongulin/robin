@@ -15,7 +15,7 @@ jest.mock("./github-reviewer");
 jest.mock("./status-reporter");
 jest.setTimeout(30_000);
 
-const config = "max-diff-size: 1000000\nagent-mode: off\nskip-paths:\n  - catalog/themes/**\n  - catalog/unmapped/**\n  - docs/tasks/checkpoint.md\n";
+const config = "max-diff-size: 1000000\nestimated-request-token-budget: 512000\nagent-mode: off\nskip-paths:\n  - catalog/themes/**\n  - catalog/unmapped/**\n  - docs/tasks/checkpoint.md\n";
 const paths = [
   ".dockerignore",
   ".github/AGENTS.md",
@@ -124,7 +124,7 @@ async function capture(baseConfig: boolean, small = false, lifecycleFailure = fa
   const inputs: Record<string, string> = {
     "github-token": "synthetic-github-key", "llm-api-key": "synthetic-loopback-key",
     "llm-base-url": `http://127.0.0.1:${address.port}/v1`, model: "synthetic-model",
-    "max-diff-size": "50000", "max-output-tokens": "2048", "llm-timeout-ms": "10000",
+    "max-diff-size": expectInputFailure ? "50000" : "", "max-output-tokens": "2048", "llm-timeout-ms": "10000",
     "max-comments": "20", "agent-mode": "off", "config-file": ".github/robin.yml",
     "review-instructions-file": ".github/robin-instructions.md",
   };
@@ -160,18 +160,15 @@ async function capture(baseConfig: boolean, small = false, lifecycleFailure = fa
   jest.mocked(github.getOctokit).mockReturnValue(octokit as any);
   jest.mocked(core.getInput).mockImplementation(name => inputs[name] || "");
   jest.mocked(core.getBooleanInput).mockReturnValue(false);
-  let finish!: () => void;
-  const done = new Promise<void>(resolve => { finish = resolve; });
-  jest.mocked(core.info).mockImplementation(message => { if (message === "Done.") finish(); });
-  jest.mocked(core.setFailed).mockImplementation(() => finish());
   jest.mocked(GitHubReviewer).mockImplementation(() => ({ postReview: jest.fn().mockResolvedValue(undefined) }) as any);
   let timer: NodeJS.Timeout | undefined;
   try {
     if (lifecycleFailure) jest.doMock("./native-diff", () => ({
       nativePullRequestDiff: jest.fn().mockRejectedValue(new Error("NATIVE_DIFF_LIFECYCLE_FAILED")),
     }));
-    await jest.isolateModulesAsync(async () => { await import("./main"); });
-    await Promise.race([done, new Promise<never>((_, reject) => {
+    await Promise.race([jest.isolateModulesAsync(async () => {
+      const { actionCompletion } = await import("./main"); await actionCompletion;
+    }), new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error("SYNTHETIC_MAIN_TIMEOUT")), 15_000);
     })]);
     if (lifecycleFailure) {

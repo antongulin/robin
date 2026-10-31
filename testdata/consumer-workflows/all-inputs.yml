@@ -25,6 +25,7 @@ jobs:
       request-changes: false
       max-diff-size: "25000"
       max-comments: "10"
+      estimated-request-token-budget: "256000"
       max-output-tokens: ""
       reasoning-effort: "high"
       llm-timeout-ms: "600000"

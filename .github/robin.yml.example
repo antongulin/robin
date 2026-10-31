@@ -1,9 +1,14 @@
 # Optional repo config (copy to .github/robin.yml)
 # Read from the PR base branch. Nonblank inputs override config for defer-to-config
-# settings. max-diff-size/max-comments use config when inputs equal 50000/15.
+# settings, including all three budget/character controls. max-comments alone
+# keeps the legacy default-15 convention. Explicit max-diff-size: 50000 still wins.
 # The 25000/10 values below are sample overrides, not defaults.
 
+# Estimated per-request working budget; includes output cap and safety, not total usage.
+# estimated-request-token-budget: 256000  # default; off restores absent-cap provider output when max-output-tokens is unset
+# Both raw character caps default to 500000; tune with the budget for your endpoint.
 max-diff-size: 25000
+agent-max-diff-size: 25000
 max-comments: 10
 json-response-mode: true
 # request-changes: true   # default; set false for advisor mode (never block the PR, even on high findings)
@@ -16,9 +21,10 @@ json-response-mode: true
 # Blank bot inputs defer here; workflow bot-allowlist: '[]' clears this list.
 # Authorized manual /review bypasses the author filter; command permissions still apply.
 # reasoning-effort: high   # unset: no reasoning control is sent, the provider/model decides. Set a value (low, medium, high, …) to send it, or "off" to be explicit
-# agent-mode: auto   # unset: single-shot diff review. Set auto for the multi-turn review that reads the repo with tools
+# agent-mode: off   # unset: auto (repository tools). Set off for diff-only reviews; recommended starting point for weak/local models
+# An explicit agent-mode input overrides this base-branch setting; see docs/ADVANCED.md#default-change-and-migration
 # agent-max-turns: 40   # default; tool-calling turns before the final review is requested
-# agent-max-diff-size: 200000   # default; diff characters sent up front in agent mode (max-diff-size above applies to the single-shot fallback)
+# The paired 25000 overrides above cover agent input and single-shot fallback/summary.
 
 skip-paths:
   - "**/generated/**"

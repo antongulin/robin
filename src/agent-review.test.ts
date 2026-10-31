@@ -115,7 +115,7 @@ describe("runAgentReview", () => {
 
     expect(result.content).toBe(FINAL_JSON);
     expect(calls).toHaveLength(3);
-    expect(calls[2].options).toEqual({ toolChoice: "none" });
+    expect(calls[2].options).toEqual(expect.objectContaining({ toolChoice: "none" }));
     const lastMessage = calls[2].messages[calls[2].messages.length - 1];
     expect(lastMessage).toMatchObject({ role: "user" });
     expect(String(lastMessage.content)).toContain("2-turn limit");
@@ -144,7 +144,7 @@ describe("runAgentReview", () => {
     });
 
     expect(calls).toHaveLength(2);
-    expect(calls[1].options).toEqual({ toolChoice: "none" });
+    expect(calls[1].options).toEqual(expect.objectContaining({ toolChoice: "none" }));
     expect(String(calls[1].messages[calls[1].messages.length - 1].content)).toContain("time limit");
   });
 
@@ -244,7 +244,7 @@ describe("runAgentReview", () => {
     });
 
     const retried = calls[2];
-    expect(retried.options).toEqual({ toolChoice: "none" });
+    expect(retried.options).toEqual(expect.objectContaining({ toolChoice: "none" }));
     expect(String(retried.messages[retried.messages.length - 1].content)).toContain("Do not call any more tools");
   });
 
@@ -335,7 +335,7 @@ it("RC04 retains private replay in the compaction tail and forced final, outside
   expect(summary).not.toContain("Inspecting b");
   expect(calls[1].messages.find(message => message.role === "assistant")).toHaveProperty("reasoning_content", removed);
   const final = calls[2];
-  expect(final.options).toEqual({ toolChoice: "none" });
+  expect(final.options).toEqual(expect.objectContaining({ toolChoice: "none" }));
   expect(String(final.messages[1].content)).toContain("CONTEXT WAS COMPACTED");
   expect(final.messages.slice(2)).toEqual([
     expect.objectContaining({ role: "assistant", reasoning_content: retained, tool_calls: [expect.objectContaining({ id: "c2" })] }),
@@ -349,4 +349,130 @@ it("RC04 retains private replay in the compaction tail and forced final, outside
   }
   expect(JSON.stringify([result, progress.mock.calls, (core.info as jest.Mock).mock.calls,
     (core.warning as jest.Mock).mock.calls, (core.error as jest.Mock).mock.calls])).not.toContain("PRIVATE_");
+});
+
+test("UR04 real client ledger covers compaction shrinking and forced-final context recovery", async () => {
+  const { LLMClient } = await import("./llm-client");
+  const { UsageLedger } = await import("./usage-report");
+  const ledger = new UsageLedger();
+  const llm = new LLMClient("https://provider.invalid/v1", "synthetic", "model", undefined, undefined, 1, undefined, undefined, undefined, ledger);
+  let count = 0;
+  const create = jest.fn(async (request: any) => {
+    count++;
+    const usage = { prompt_tokens: count * 10, completion_tokens: count, total_tokens: count * 11 };
+    if (count === 2 || count === 5) throw Object.assign(contextFull(), { error: { usage } });
+    const tool = count === 1 || count === 4;
+    return { model: "backend", usage, choices: [{ finish_reason: tool ? "tool_calls" : "stop", message: {
+      content: request.tools ? tool ? "private turn" : FINAL_JSON : "compacted notes",
+      reasoning_content: "private reasoning sentinel",
+      ...(tool ? { tool_calls: [{ id: `c${count}`, type: "function", function: { name: "read_file", arguments: '{"path":"file"}' } }] } : {}),
+    } }] };
+  });
+  (llm as any).client = { chat: { completions: { create } } };
+  const toolbox = makeToolbox();
+  toolbox.execute.mockResolvedValueOnce("x".repeat(2000)).mockResolvedValueOnce("y".repeat(200));
+  const result = await runAgentReview({ llm, toolbox, annotatedDiff: "diff", changedFiles: ["file"], instructions: "",
+    budgets: { maxTurns: 2, maxContextChars: 1000 } });
+  expect(result).toMatchObject({ content: FINAL_JSON, turns: 3, toolCalls: 2, compactions: 2 });
+  const r = ledger.report();
+  expect(r.full.ledger.map(a => [a.phase, a.agent_turn, a.compaction_index, a.compaction_attempt, a.recovery])).toEqual([
+    ["agent", 1, null, null, false],
+    ["compaction", 1, 1, 1, false], ["compaction", 1, 1, 2, false],
+    ["agent", 2, null, null, false],
+    ["forced-final", 3, null, null, false], ["compaction", 2, 2, 1, false],
+    ["forced-final", 3, null, null, true],
+  ]);
+  expect(r.compact.attempts).toBe(7);
+  expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 280, nonfinal_attempts: 2, complete: false });
+  expect(JSON.stringify(r)).not.toContain("private reasoning sentinel");
+  expect(toolbox.execute).toHaveBeenCalledTimes(2);
+});
+
+test("RB03 real guard shrinks an oversize summary, then forces final with complete diff and prior usage", async () => {
+  const { LLMClient } = await import("./llm-client");
+  const { UsageLedger } = await import("./usage-report");
+  const ledger = new UsageLedger();
+  const llm = new LLMClient("https://provider.invalid/v1", "synthetic", "unknown-model", undefined, undefined, 3, undefined, undefined, undefined, ledger, 10000);
+  const requests: any[] = [];
+  const create = jest.fn(async (body: any) => {
+    requests.push(JSON.parse(JSON.stringify(body)));
+    const first = requests.length === 1;
+    return { usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }, choices: [{
+      finish_reason: first ? "tool_calls" : "stop", message: {
+        content: first ? "investigation" : body.tools ? FINAL_JSON : "SHORT_INVESTIGATION_NOTES",
+        reasoning_content: "PRIVATE_BUDGET_REPLAY",
+        ...(first ? { tool_calls: Array.from({ length: 5 }, (_, i) => ({ id: `c${i}`, type: "function", function: { name: "read_file", arguments: '{}' } })) } : {}),
+      },
+    }] };
+  });
+  (llm as any).client = { chat: { completions: { create } } };
+  const toolbox = makeToolbox(); toolbox.execute.mockResolvedValue("x".repeat(20000));
+  const result = await runAgentReview({ llm, toolbox, annotatedDiff: "FULL_DIFF_END_RB03", changedFiles: ["file"], instructions: "",
+    budgets: { maxTurns: 1, maxContextChars: 1000000 } });
+  expect(result).toMatchObject({ content: FINAL_JSON, compactions: 1, turns: 2 });
+  expect(requests).toHaveLength(3);
+  expect(ledger.report().full.ledger.map(a => [a.phase, a.compaction_attempt, a.recovery])).toEqual([
+    ["agent", null, false], ["compaction", 2, false], ["forced-final", null, true],
+  ]);
+  expect(ledger.report().compact.metrics.prompt_tokens.observed_sum).toBe(30);
+  expect(JSON.stringify(requests[1])).not.toContain("PRIVATE_BUDGET_REPLAY");
+  for (const body of requests) {
+    const input = Math.ceil(Buffer.byteLength(JSON.stringify(body, null, 2), "utf8") / 3);
+    expect(input + 1250 + 625).toBeLessThanOrEqual(10000);
+    if (body.tools) expect(JSON.stringify(body.messages)).toContain("FULL_DIFF_END_RB03");
+  }
+  expect(requests[2].tool_choice).toBe("none");
+  expect(requests[2].messages.at(-1).content).toContain("Return the final review now");
+  expect(requests[2].messages[1].content).toContain("SHORT_INVESTIGATION_NOTES");
+});
+
+test("RB03 base input alone fails without provider or compaction calls", async () => {
+  const { LLMClient } = await import("./llm-client");
+  const { UsageLedger } = await import("./usage-report");
+  const { EstimatedRequestBudgetError } = await import("./request-budget");
+  const ledger = new UsageLedger();
+  const llm = new LLMClient("https://provider.invalid/v1", "synthetic", "unknown-model", undefined, undefined, 3, undefined, undefined, undefined, ledger, 100);
+  const create = jest.fn(); (llm as any).client = { chat: { completions: { create } } };
+  await expect(runAgentReview({ llm, toolbox: makeToolbox(), annotatedDiff: "whole diff", changedFiles: [], instructions: "" }))
+    .rejects.toBeInstanceOf(EstimatedRequestBudgetError);
+  expect(create).not.toHaveBeenCalled();
+  expect(ledger.report().compact.attempts).toBe(0);
+});
+
+test("RB03 oversized assistant history cannot be summarized/elided; stops with earlier usage intact", async () => {
+  const { LLMClient } = await import("./llm-client");
+  const { UsageLedger } = await import("./usage-report");
+  const { EstimatedRequestBudgetError } = await import("./request-budget");
+  const ledger = new UsageLedger();
+  const llm = new LLMClient("https://provider.invalid/v1", "synthetic", "unknown-model", undefined, undefined, 3, undefined, undefined, undefined, ledger, 10000);
+  const create = jest.fn(async () => ({ usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+    choices: [{ finish_reason: "tool_calls", message: { content: "a".repeat(50000),
+      tool_calls: [{ id: "c1", type: "function", function: { name: "read_file", arguments: '{}' } }] } }] }));
+  (llm as any).client = { chat: { completions: { create } } };
+  const toolbox = makeToolbox(); toolbox.execute.mockResolvedValue("short result");
+  await expect(runAgentReview({ llm, toolbox, annotatedDiff: "whole diff", changedFiles: [], instructions: "",
+    budgets: { maxTurns: 1, maxContextChars: 1000000 } })).rejects.toBeInstanceOf(EstimatedRequestBudgetError);
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(ledger.report().full.ledger).toHaveLength(1);
+  expect(ledger.report().compact.metrics.prompt_tokens.observed_sum).toBe(10);
+});
+
+test("RB03 summary notes that cannot shrink the full conversation stop after one summary", async () => {
+  const { LLMClient } = await import("./llm-client");
+  const { UsageLedger } = await import("./usage-report");
+  const { EstimatedRequestBudgetError } = await import("./request-budget");
+  const ledger = new UsageLedger();
+  const llm = new LLMClient("https://provider.invalid/v1", "synthetic", "unknown-model", undefined, undefined, 3, undefined, undefined, undefined, ledger, 10000);
+  let calls = 0;
+  const create = jest.fn(async () => ({ usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+    choices: [{ finish_reason: ++calls === 1 ? "tool_calls" : "stop", message: calls === 1
+      ? { content: "inspect", tool_calls: [{ id: "c1", type: "function", function: { name: "read_file", arguments: '{}' } }] }
+      : { content: "n".repeat(2500) } }] }));
+  (llm as any).client = { chat: { completions: { create } } };
+  const toolbox = makeToolbox(); toolbox.execute.mockResolvedValue("x".repeat(2000));
+  await expect(runAgentReview({ llm, toolbox, annotatedDiff: "whole diff", changedFiles: [], instructions: "i".repeat(13000),
+    budgets: { maxTurns: 1, maxContextChars: 1000000 } })).rejects.toBeInstanceOf(EstimatedRequestBudgetError);
+  expect(create).toHaveBeenCalledTimes(2);
+  expect(ledger.report().full.ledger.map(a => a.phase)).toEqual(["agent", "compaction"]);
+  expect(ledger.report().compact.metrics.prompt_tokens.observed_sum).toBe(20);
 });

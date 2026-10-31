@@ -206,6 +206,9 @@ describe("curl installer", () => {
         '      llm-temperature: "1"',
         "",
         '      max-comments: "10"',
+        '      estimated-request-token-budget: "64000"',
+        '      max-diff-size: "50000"',
+        '      agent-max-diff-size: "100000"',
         "    secrets:",
         "      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}",
         "",
@@ -218,6 +221,7 @@ describe("curl installer", () => {
 
     expect(canonical).toContain('llm-temperature: "1"');
     expect(canonical).toContain('max-comments: "10"');
+    for (const value of ['estimated-request-token-budget: "64000"', 'max-diff-size: "50000"', 'agent-max-diff-size: "100000"']) expect(canonical).toContain(value);
     expect(canonical).toMatch(/llm-temperature: "1"\n\n      max-comments: "10"/);
     expect(secondOutput).toContain("is already current");
   });

@@ -8,29 +8,30 @@ Copy [`.github/robin.yml.example`](../.github/robin.yml.example) to `.github/rob
 
 ```yaml
 max-diff-size: 25000
+agent-max-diff-size: 25000
 max-comments: 10
 json-response-mode: true
 request-changes: true
 # bot-review-policy: none   # optional: skip automatic reviews of GitHub Bot authors; default all
 # bot-allowlist: []   # use a sequence of logins with bot-review-policy: allowlist
 # reasoning-effort: high   # unset: no reasoning control is sent (provider default). Set low/medium/high/… to send it, or "off" to be explicit
-# agent-mode: auto   # unset: single-shot diff review. Set auto for the multi-turn agent review
+# agent-mode: off   # unset: auto (repository tools). Set off for a diff-only review
 # agent-max-turns: 40
-# agent-max-diff-size: 200000
 skip-paths:
   - "**/generated/**"
 ```
 
 | Key | Purpose |
 | --- | --- |
-| `max-diff-size` | Used when the workflow still passes the action default (`50000`). Counted after `skip-paths` and built-in exclusions; a larger filtered diff fails before the corresponding single-shot review or summary request instead of being truncated. This also applies to a single-shot fallback or structured retry after an agent request |
+| `max-diff-size` | Blank input inherits base config, then `500000`. Counted after `skip-paths` and built-in exclusions; a larger filtered diff fails before the corresponding single-shot review or summary request instead of being truncated. This also applies to a single-shot fallback or structured retry after an agent request |
 | `max-comments` | Used when the workflow still passes the action default (`15`) |
 | `json-response-mode` | Used when `use-json-response-mode` is empty (action default defers to this file) |
 | `request-changes` | Used when `request-changes` input is empty. `true` (default) blocks on high findings; `false` posts advisor-only comments |
 | `reasoning-effort` | Used when the `reasoning-effort` action/workflow input is empty. Provider-dependent reasoning value; when both are unset no reasoning control is sent and the provider/model decides, `off` also sends no reasoning configuration |
-| `agent-mode` | Used when the `agent-mode` input is empty. `auto` runs the [multi-turn agent review](#agent-mode-multi-turn-review-with-repository-context); when both are unset (or `off`) the single-shot diff review runs |
+| `agent-mode` | Used when the `agent-mode` input is empty. When both are unset, `auto` runs the [multi-turn agent review](#agent-mode-multi-turn-review-with-repository-context). Explicit `off` uses a single-shot diff review without a snapshot or tools |
 | `agent-max-turns` | Used when the `agent-max-turns` input is empty. Tool-calling turns before the final review is requested (default `40`, max `100`) |
-| `agent-max-diff-size` | Used when the `agent-max-diff-size` input is empty. Diff characters sent up front in agent mode (default `200000`); a larger filtered diff fails before the agent request. `max-diff-size` still applies to the single-shot fallback |
+| `agent-max-diff-size` | Used when the `agent-max-diff-size` input is empty. Diff characters sent up front in agent mode (default `500000`); a larger filtered diff fails before the agent request. `max-diff-size` still applies to the single-shot fallback |
+| `estimated-request-token-budget` | Blank input inherits this setting, then `256000`; positive safe integer or `off`. See [request budgets](#estimated-request-budget) |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
 | `bot-review-policy` | `all` (default), `none`, or `allowlist`; blank action/workflow input defers here. Applies to automatic PR reviews only |
 | `bot-allowlist` | YAML sequence of string logins (default empty); blank action/workflow input defers here. Used by `allowlist` policy; `[]` clears the list |
@@ -41,17 +42,94 @@ The config file uses a small YAML subset (line-based keys only), not full YAML n
 
 Read configuration from the PR base branch: changing it only in the PR does not
 change that PR's settings. For `bot-review-policy`, `bot-allowlist`,
-`reasoning-effort`, `request-changes`, `use-json-response-mode`, and the three
-`agent-*` inputs, a nonblank input overrides the corresponding config key. Empty
+`reasoning-effort`, `request-changes`, `use-json-response-mode`, the three `agent-*`
+inputs, `max-diff-size` and `estimated-request-token-budget`, a nonblank input
+overrides the corresponding config key. Empty
 or omitted input defers to config, then to the documented default. Omit the boolean
 `request-changes` input on reusable-workflow callers to defer; direct action callers
 can use an empty string. `use-json-response-mode` maps to config `json-response-mode`.
 
-`max-diff-size` and `max-comments` use their existing numeric-default convention:
-config wins when the workflow passes `50000` or `15`, respectively, even if you wrote
-that value explicitly. A different valid input overrides config. `skip-paths` has
-no workflow input. Other inputs have no repository-config equivalent; put them in
-the caller workflow. The example's `25000` and `10` are sample overrides, not defaults.
+`max-diff-size` no longer uses the old numeric-default sentinel: an explicit
+`50000` wins over config, including values forwarded by older reusable workflows.
+All three budget/character metadata defaults stay blank. `max-comments` retains its
+existing convention: config wins when the workflow passes `15`. `skip-paths` has
+no workflow input. Other inputs have no repository-config equivalent. The example
+sets both diff caps to `25000` for agent and single-shot paths; `25000` and `10`
+are sample overrides, not defaults.
+
+## Estimated request budget
+
+Robin defaults to a decimal **256000 estimated tokens per request**. This working
+budget applies to arbitrary provider/model IDs, including custom local endpoints;
+Robin does not discover capacity or load a tokenizer/model registry. Set it below
+your endpoint's effective context when needed. Published context sizes and supported
+output caps can differ from the capacity your deployment makes available.
+
+The `utf8-json-div3-v1` heuristic uses the complete final Chat Completions JSON body
+serialized by the installed SDK (two-space indentation):
+
+- Estimated input = `ceil(UTF-8 bytes / 3)`, including stream mode, annotated diff,
+  instructions, history, private assistant replay, tool schemas/calls/results and
+  response format. Authentication headers and usage-report metadata are excluded.
+- Safety headroom = `ceil(budget / 16)`.
+- Unset `max-output-tokens` sends `max(1, min(32000, floor(budget / 8)))` as the output
+  cap. An explicit positive safe integer is sent unchanged and reserved in full.
+- A request proceeds only if estimated input + output cap + safety <= budget.
+  Equality passes. Preflight failure makes no provider call and adds no physical
+  attempt to the usage ledger; earlier observed usage stays in that report.
+
+At 256000, the 32000 output cap and 16000 safety leave **208000 estimated input**.
+The output cap is a behavior change, not passive usage reporting. Robin tries the
+endpoint's alternate cap spelling on parameter rejection but never drops or clamps
+the cap. Unsupported caps can fail; choose a supported explicit value.
+
+This heuristic can accept a request the provider cannot fit or reject one it could
+fit. JSON bytes differ from actual tokenization and chat framing; the safety reserve
+is heuristic too. Unicode, escaped content, annotations and large instructions can
+push an otherwise eligible diff over budget. Estimates do not replace provider-reported
+tokens, establish a hard token ceiling, or prove that a request fits your model.
+
+Both independent raw limits default to **500000 JavaScript string characters**.
+This allowance leaves working room; it is not an exact conversion from 256k.
+Passing a raw cap does not establish whole-request fit. Tune all three controls for
+your endpoint, for example on the **PR base branch**:
+
+```yaml
+estimated-request-token-budget: 64000
+max-diff-size: 100000
+agent-max-diff-size: 100000
+```
+
+The same controls work in a caller job/direct step's existing `with:` block as quoted
+strings. A nonblank input wins over config, then internal defaults. Increasing the
+working budget never increases an explicit raw cap. Numeric settings must be positive
+safe integers; malformed explicit values fail before dispatch without echoing them.
+Quoted config numbers/`off` and inline comments work.
+
+An empty value in `.github/robin.yml`, such as `max-diff-size:`, is invalid.
+Remove or comment out the key to inherit the default. Blank action/workflow
+inputs still defer to repository config.
+
+For the previous single-shot/provider-default output request shape:
+
+```yaml
+# .github/robin.yml on the PR base branch
+agent-mode: off
+estimated-request-token-budget: off
+# Leave the workflow's max-output-tokens unset for provider-default output.
+```
+
+The estimate and default output cap turn off together. Explicit output/character caps
+still apply. Override any existing nonblank workflow inputs too. There is no automatic
+disable on provider rejection. `/summary`, structured retries, outer retries,
+compatibility rebuilds, compaction and forced-final requests all face the same guard.
+A complete diff-only fallback must fit its actual request; Robin never clips the diff.
+
+Each agent turn resends its accumulated investigation after bounded compaction.
+**Total invocation usage can exceed 256000 tokens** across these requests. A new
+`/robin` starts a fresh conversation with the current PR diff/head; it does not resume
+the previous investigation. The [usage report](#llm-usage-reports) records actual
+provider observations separately from this per-request estimate.
 
 ## Automatic bot PR reviews
 
@@ -110,17 +188,25 @@ still ignores bot-authored comments. Synchronize reviews also require the existi
 
 ## Pinning the action
 
+These refs describe a **direct action step**, `uses: antongulin/robin@…`:
+
 | Ref | When to use |
 | --- | --- |
 | `@main` | Latest changes on the default branch |
-| `@v1` | Latest `1.x` release (floating tag, updated each release) |
-| `@v1.2.3` | Exact semver from [GitHub Releases](https://github.com/antongulin/robin/releases) |
-| Full commit SHA | Maximum supply-chain safety in regulated environments |
+| `@v2` | Latest `2.x` release (floating tag, updated each release) |
+| `@v2.12.4` | The action implementation in that release |
+| Full commit SHA | The action implementation at that commit |
 | `@v0` | **Do not use** — outdated; workflows often fail |
 
 ```yaml
-uses: antongulin/robin/.github/workflows/review.yml@v1
+uses: antongulin/robin@v2.12.4
 ```
+
+A reusable-workflow ref pins only its workflow file. The workflows at `main`,
+`v2` and `v2.12.4` call `antongulin/robin@main` internally, so even an exact
+workflow tag or SHA can receive action changes from `main`. See the
+[migration guide](#default-change-and-migration) for explicit compatibility settings
+and the [direct action example](#custom-review-identity) for permissions and credentials.
 
 ## Releases
 
@@ -151,7 +237,7 @@ for commands and failure states. Do not create tags or releases by hand.
 | `LLM_BASE_URL` | `https://openrouter.ai/api/v1` |
 | `LLM_MODEL` | `openrouter/free` |
 
-Smaller diffs help free models stay fast and accurate:
+Set both diff caps to limit input on agent and single-shot paths:
 
 ```yaml
 jobs:
@@ -159,6 +245,7 @@ jobs:
     uses: antongulin/robin/.github/workflows/review.yml@main
     with:
       max-diff-size: "25000"
+      agent-max-diff-size: "25000"
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
@@ -168,7 +255,7 @@ jobs:
 ### Save GitHub Actions minutes
 
 - Leave `synchronize` out of the trigger (the shipped default) so Robin reviews once when the PR opens and you comment `/review` after fixes (see [Review every push (opt-in)](#review-every-push-opt-in)).
-- Use a smaller `max-diff-size` for huge PRs.
+- Lower `max-diff-size` and `agent-max-diff-size` to reject larger diffs before review.
 - **Free tier:** GitHub Free includes about **2,000 Actions minutes/month** for public and private repos; GitHub Pro about **3,000 minutes/month** (limits can change — see [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) for your account).
 - **Heavy usage:** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
 
@@ -195,13 +282,14 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | Input | Default | Description |
 | --- | --- | --- |
 | `github-token` / `ROBIN_TOKEN` | `${{ github.token }}` | Token for PR API and comments. Direct action input / optional reusable-workflow secret. See [Custom review identity](#custom-review-identity) |
-| `llm-api-key` / `LLM_API_KEY` | Direct action: `ollama` | Provider API key; the reusable workflow requires the secret |
+| `llm-api-key` / `LLM_API_KEY` | Direct action: blank, using public `ollama` placeholder | Provider API key; the reusable workflow requires the secret |
 | `llm-base-url` / `LLM_BASE_URL` | — | OpenAI-compatible base URL (required) |
 | `model` / `LLM_MODEL` | — | Model name (required) |
 | `fail-on-high` | `false` | Fail the check if high-severity issues are found |
 | `request-changes` | omit → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode). Reusable workflow input is a boolean with no default — omit it to let `.github/robin.yml` win |
-| `max-diff-size` | `50000` | Max diff characters for a single-shot review or `/summary`, after path filters. A larger filtered diff fails before the model request with its observed size and this limit |
-| `max-output-tokens` | empty | Cap response tokens (optional) |
+| `max-diff-size` | empty (base config, then `500000`) | Max diff characters for a single-shot review or `/summary`, after path filters. A larger filtered diff fails before the model request with its observed size and this limit |
+| `estimated-request-token-budget` | empty (base config, then `256000`) | Estimated input + sent output cap + safety per request; `off` disables this guard/default output cap. See [request budgets](#estimated-request-budget) |
+| `max-output-tokens` | empty | Positive safe integer; unset with enabled budget sends a scaled cap (default `32000`); unset with guard off uses provider/model default |
 | `reasoning-effort` | empty (defer to repo config; unset anywhere sends nothing) | Provider reasoning effort, provider-dependent (for example `low`, `medium`, `high`). Empty defers to `.github/robin.yml`; if that is also unset, no reasoning control is sent and the provider/model default applies. `off` also sends no reasoning configuration |
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
 | `llm-temperature` | `0.1` | Sampling temperature (0–2). Raise only if your model rejects the default — some models accept a single fixed value (Kimi requires `1`) |
@@ -215,16 +303,85 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch for code reviews; empty disables this file. Missing files do not block review |
 | `config-file` | `.github/robin.yml` | Repo config path on the base branch |
 | `use-json-response-mode` | empty (defer to repo config, else true) | Request strict JSON-schema output (`response_format: json_schema`) for reviews, stepping down to `json_object` and then to no `response_format` if the provider rejects it. Pass `"true"` / `"false"` on the reusable workflow |
-| `agent-mode` | empty (defer to repo config, then single-shot) | `auto` lets the model read the repository with tools before reviewing, falling back to the single-shot diff review when the model has no tool support; unset or `off` always uses the single-shot review |
+| `agent-mode` | empty (defer to repo config, then `auto`) | `auto` lets the model read the repository with tools before reviewing. Tool rejection or snapshot failure attempts a complete diff-only fallback subject to `max-diff-size`; explicit `off` skips the snapshot/tools and uses single-shot |
 | `agent-max-turns` | empty (defer to repo config, then `40`) | Maximum tool-calling turns in agent mode (capped at 100) |
-| `agent-max-diff-size` | empty (defer to repo config, then `200000`) | Diff characters sent up front in agent mode, after path filters. A larger filtered diff fails before the agent request with its observed size and this limit; agent tools read PR head files, so they cannot restore dropped diff hunks. `max-diff-size` still applies to the single-shot fallback |
+| `agent-max-diff-size` | empty (defer to repo config, then `500000`) | Diff characters sent up front in agent mode, after path filters. A larger filtered diff fails before the agent request with its observed size and this limit; agent tools read PR head files, so they cannot restore dropped diff hunks. `max-diff-size` still applies to the single-shot fallback |
 
 ## Agent mode (multi-turn review with repository context)
 
-When enabled (`agent-mode: auto`), `/review` is a multi-turn conversation instead of a
-single request. Agent mode is opt-in: when neither the input nor `.github/robin.yml` sets
-`agent-mode`, Robin runs the classic single-shot diff review. Set `auto` to enable the
-investigation below; set `off` to force the single-shot review.
+With `agent-mode: auto`, `/review` uses a multi-turn conversation with repository tools.
+Robin selects `auto` when neither the input nor base-branch `.github/robin.yml` sets
+`agent-mode`. Explicit `off` selects a single-shot diff review and skips snapshot/tool
+work. `/summary` stays single-shot in either mode.
+
+### Default change and migration
+
+The new default applies on `main` and is planned for v2.13.0, the next v2 minor release.
+In v2.12.4's direct action, an unset mode selected `off`. The reusable workflows at
+`main`, `v2` and `v2.12.4` call the action at `@main` inside the job, so their callers
+can receive this change when it merges to `main`, before the minor release publishes.
+A tag or SHA pin of those workflow files pins only the outer workflow. Direct action
+refs differ: `antongulin/robin@v2.12.4` keeps that release's implementation, a full
+action SHA keeps that commit, and direct `@v2` follows the floating release tag.
+
+To keep the previous diff-only behavior, commit this to the **PR base branch**
+(usually your default branch). A config change only on the feature head does not
+affect that PR's settings:
+
+```yaml
+# .github/robin.yml
+agent-mode: off
+```
+
+For a reusable-workflow caller, add or update the mode in the job's existing `with:`
+block, keeping its other inputs and secrets:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    with:
+      agent-mode: "off"
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+For a direct action step, add the same input to that step's existing `with:` block:
+
+```yaml
+- uses: antongulin/robin@main
+  with:
+    github-token: ${{ github.token }}
+    llm-api-key: ${{ secrets.LLM_API_KEY }}
+    llm-base-url: ${{ secrets.LLM_BASE_URL }}
+    model: ${{ secrets.LLM_MODEL }}
+    agent-mode: "off"
+```
+
+A recognized nonblank input (`auto` or `off`) wins over base-branch config. Blank or
+omitted inputs defer to that config, then to `auto`. If your workflow already passes
+`auto`, change that input to `"off"`; adding config `off` alone will not override it.
+Robin leaves both metadata defaults blank to preserve this precedence.
+
+### Model compatibility and usage
+
+Repository tools let the model check callers, types and tests before reporting findings.
+They also let it send additional repository content to your configured LLM endpoint.
+The snapshot download and extra requests can add network traffic, runner time, tokens
+and provider usage. Choose explicit `off` for weak, local or small-context models until
+you have verified their behavior on representative changes.
+
+Tool support is a protocol requirement, separate from review quality and context
+capacity. A local endpoint may reject tools; a model may accept tools but ignore them,
+misuse them or return poor findings. Robin does not detect model quality or choose a
+mode from the model name. Neither mode guarantees compatibility with a local model.
+Character caps are not token/context guarantees: even a 50k-character diff plus prompts
+and output may exceed a small model's effective context. Lower limits or reduce the PR
+scope to match the model you run; compaction cannot guarantee a fit.
+
+### Investigation and limits
 
 1. Robin downloads the PR head commit as a tarball through the GitHub API and unpacks it
    into the runner's temp directory. No `actions/checkout` step is needed, and the code is
@@ -236,13 +393,12 @@ investigation below; set `off` to force the single-shot review.
    exact replacement for the affected lines, which Robin posts as a one-click GitHub
    **suggested change** when every line in the range is in the same diff hunk.
 
-The defaults favor finding bugs over saving tokens, sized for frontier models with
-200k-token or larger context windows:
+The investigation uses these limits. Match them to your model and workload:
 
 | Limit | Default |
 | --- | --- |
 | Tool-calling turns | 40 (`agent-max-turns`, max 100) |
-| Diff sent up front | 200k characters (`agent-max-diff-size`); a larger filtered diff fails before the agent request. The single-shot fallback keeps `max-diff-size` (50k) so small-context models still fit, and fails before that request when the filtered diff does not fit it either |
+| Diff sent up front | 500k characters (`agent-max-diff-size`); a larger filtered diff fails before the agent request. The single-shot fallback keeps `max-diff-size` (500k) and fails before that request if the filtered diff exceeds it. Neither cap guarantees a fit in the model's context |
 | Tool calls per turn | 16 |
 | Investigation time | 30 minutes |
 | Output per tool call | about 50k characters (`read_file` returns up to 2000 lines and says where to continue) |
@@ -253,20 +409,28 @@ The defaults favor finding bugs over saving tokens, sized for frontier models wi
 When the turn or time limit runs out, Robin asks the model for its final review without
 tools.
 
-**Context compaction.** The diff and the tool output kept in the conversation share a
-budget of about 450k characters (roughly 115-150k tokens). Tool output always gets at least
-150k of it, so the larger the diff, the sooner compaction starts. Once tool output passes
-its share, or whenever the provider reports that the context window is full, Robin compacts the conversation the way Cursor does. The model writes
+**Context compaction.** An early pressure valve targets about 450k characters across
+the diff and tool output, with at least 150k for tool output. This is independent of
+request fit and makes no token-capacity guarantee. Robin also compacts when the
+estimated request guard or provider context limit rejects a request. The model writes
 notes about the investigation so far: suspected bugs with evidence, facts it established,
 what it already checked, and what's left. Robin then continues from those notes plus the
 latest tool turn. If the summary request itself fails, Robin falls back to dropping the
-oldest tool results. A review can compact up to six times.
+oldest tool results. Summary requests use the same estimate, with up to three
+shrinking transcripts. A review can compact up to six times; local budget recovery
+stops when it cannot shrink the conversation. Base input and oversized notes or
+assistant history can still fail without a provider call.
 
 **Fallback.** If the model or provider rejects tool calling (for example OpenRouter's
 "No endpoints found that support tool use", or Ollama's "does not support tools"), the
-snapshot download fails, or the agent loop errors, Robin logs a warning and runs the
-single-shot diff review instead, so the PR still gets a review. `/summary` is always
-single-shot.
+snapshot download fails, or the agent loop errors, Robin logs a warning and attempts a
+single-shot diff review. The final status identifies a completed fallback and its reason;
+a failed status reports the failure. The fallback sends the complete filtered diff only
+if it fits `max-diff-size` and the estimated request budget; a larger diff or
+request fails before dispatch. Provider or output
+failures can still prevent a review. Robin downloads the snapshot before it can learn
+that the endpoint rejects tools. Explicit `off` avoids that work. `/summary` stays
+single-shot and uses `max-diff-size`.
 
 Explicit `finish_reason=length` is an exception: the output is incomplete, even if it
 contains text or tool calls. Robin discards that partial output and fails the review
@@ -280,11 +444,113 @@ After adjusting the cause, comment `/robin` to try again. Missing finish metadat
 If a compaction summary fails, the mechanical recovery described above still drops old
 tool results and continues with changed context.
 
-Agent mode sends more tokens than a single-shot review (the model reads extra files) and
-takes longer. The reusable workflow's job timeout is 45 minutes to leave room for a full
-investigation plus the final answer. Lower `agent-max-turns` if you want faster or cheaper
-reviews. Leave `agent-mode` unset (or set `agent-mode: off`) in `.github/robin.yml` to keep
-diff-only reviews.
+Agent mode can make more requests and consume more tokens than a single-shot review.
+The reusable workflow's job timeout is 45 minutes. Lower `agent-max-turns` to limit
+investigation turns, or set explicit `agent-mode: off` for diff-only reviews. Turn, tool-call
+and compaction statistics describe the investigation; they are not total request counts,
+cost analytics, a whole-run token ceiling or a measure of review quality. Retries,
+compaction and a fallback can add requests beyond the reported investigation turns.
+
+## LLM usage reports
+
+Robin records metadata at each physical SDK dispatch, below its outer and
+request-compatibility retry loops. The ledger retains preceding work when an empty
+response, truncation, compaction failure, parsing/posting error or diff-only fallback
+ends or changes the review. `/summary` has its own phase. Accounting does not change
+request parameters, effort, output limits, retries, character caps or the verdict.
+It does not request extra usage chunks from providers that omit them.
+
+### Outputs and retention
+
+| Surface | Contents and lifetime |
+| --- | --- |
+| Actions job summary | Concise branded totals/coverage and escaped aggregate JSON in a details block |
+| `usage-report` action output | Compact aggregate JSON, also mapped through the reusable job to `workflow_call.outputs.usage-report` |
+| `usage-report-path` action output | Full sanitized JSON ledger in a uniquely owned runner-temp file; available to later steps in the **same job** |
+
+Use `needs.<review-job>.outputs.usage-report` in a dependent caller job. The reusable
+workflow does **not** forward its local file path or upload an artifact. To retain
+individual attempts, use the direct action in a job you control, give its step an
+`id`, and consume `steps.<id>.outputs.usage-report-path` in a later step. You own
+optional upload, access and retention. Runner/OS temp cleanup controls the local
+file's lifetime; it is not a durable download.
+
+Robin attempts each sink independently on handled completion/failure. A reporting
+failure produces a fixed warning and does not fail the review. Failed-job outputs
+may be unavailable; the summary also contains the compact JSON. Abrupt termination,
+the existing signal-exit path, OOM and runner loss can prevent any final report.
+No report guarantees consumption visibility for an interrupted in-flight request.
+
+### Schema version 1 and coverage
+
+The aggregate contains invocation UUID, repository/PR, head SHA and provenance,
+command, Actions run ID/attempt, state, requested model/effort, provider class,
+logical-call and physical-attempt counts, outcomes/triggers, per-phase counts and
+metrics, model groups, and agent activity when a completed agent review supplies it.
+The full file adds `ledger`, one record per physical attempt, with logical-call ID,
+phase and optional agent/compaction ordinals, outer/compatibility attempt ordinals,
+retry trigger, compatibility adjustment, streaming state, sent model/effort/output
+limit, reported model, finish/outcome and numeric observations. Metadata-only phase
+context never goes to the provider.
+
+`state` describes the handled action outcome when Robin writes the report:
+
+| Value | Meaning |
+| --- | --- |
+| `skipped` | Robin created a ledger, then returned before model work, for example because no eligible changes remained or the bot policy skipped the review |
+| `completed` | The review or summary path finished without a caught failure or a `fail-on-high` failure |
+| `failed` | Preparation, provider, parsing or posting failed, or `fail-on-high` failed the check after a completed review |
+
+Use each ledger entry's `outcome` for the provider attempt result. A failed action
+can retain successful requests and their usage. A skipped report has zero attempts;
+a preflight failure can also have zero attempts with `state: failed`. Events that
+return before ledger creation, such as an unmatched trigger, publish no usage report.
+
+`metrics` contains `prompt_tokens`, `completion_tokens`, `total_tokens`,
+`cached_input_tokens` and `reasoning_tokens`. Each metric has:
+
+| Field | Meaning |
+| --- | --- |
+| `observed_sum` | Sum of known safe nonnegative integers, or `null` with no observations or arithmetic overflow |
+| `observed_attempts` / `final_attempts` | Attempts with a numeric observation / a final, nonconflicting observation |
+| `unknown_attempts` / `nonfinal_attempts` | Attempts missing that metric / attempts with observations that cannot establish final counts |
+| `complete` / `overflow` | Whether all dispatched attempts have final counts and collector coverage is intact / safe integer addition overflowed |
+
+An explicit reported zero is valid. Missing usage, timeouts and failed requests do
+not mean zero tokens. A zero-dispatch failure has no known token sum and zero
+unknown dispatched attempts. Prompt, completion and reported total sum independently;
+Robin does not invent absent totals or reconcile provider inconsistencies. Cached
+input and reasoning are breakdowns (subsets of prompt and completion in OpenAI's
+contract); Robin never adds them again. Compatible providers may define these
+fields differently. Totals do not establish dollars, OpenCode Go plan percentages,
+account-level attribution or review quality, and enforce no token budget.
+
+For cumulative stream usage, Robin keeps the latest valid value **per metric** and
+counts it once. Earlier-only fields, decreasing counters and interrupted streams
+retain observations with incomplete coverage. A reported model change sets
+`model_conflict`. No response model means `null`; Robin does not substitute the
+requested model. Requested effort and the actual sent field/value/state remain
+separate, including `off`, `unset`, `not-sent` and `removed-by-compatibility`.
+`collector_incomplete` marks an observation failure. Compact JSON stays within
+64 KiB UTF-8 by omitting only model-group details with `model_groups_omitted` set to
+the omitted count; all counts/metrics and the full local ledger remain intact.
+
+PR events supply an `event` head snapshot. Comment-triggered runs reuse fetched PR
+metadata or try a best-effort read and label the head `observed`. Unknown stays
+`null`; the Actions checkout SHA is not a substitute for the PR head. This is
+correlation, not proof that the diff and head were acquired atomically.
+
+The report copies allowlisted metadata and safe numeric fields. It excludes prompt,
+source, tool arguments/results, private reasoning, credential values and raw request,
+response and error bodies. Model/effort identifiers have a bounded grammar and known
+configured credentials are suppressed. Treat provider-supplied identifiers as
+untrusted metadata; this does not audit existing SDK/debug/error logs. Only usage
+already exposed by the SDK (including a preserved `error.usage` envelope) is visible;
+usage discarded by SDK error parsing remains unknown.
+
+An omitted API key uses the public `ollama` placeholder on the wire without
+suppressing model names containing that word. Explicitly supplied keys, including
+`ollama` and short credentials, still suppress matching identifiers in the report.
 
 ## Review timing
 
@@ -704,8 +970,10 @@ constraints in mind — they are why reviews stay usable across models:
   changed lines only, not the whole file — so it doesn't invent bugs about code it can't
   see. The agent-mode prompt replaces this with "verify with the tools before flagging".
   The companion skill mirrors this: it treats findings as hypotheses to verify, not orders.
-- **Graceful tool fallback.** Agent mode is only used when the model accepts tool calls;
-  otherwise the same single-shot prompt runs, so weak or free models keep working.
+- **Bounded tool fallback.** On an explicit tool rejection, Robin attempts the single-shot
+  prompt with the complete diff subject to `max-diff-size`. This does not detect weak
+  reviews from a model that accepts tools, and the fallback can still fail. See
+  [model compatibility](#model-compatibility-and-usage).
 
 The parser (`src/review-parser.ts`) is deliberately forgiving — it normalizes severity,
 drops unparseable findings, and falls back to a markdown review if JSON mode fails — so a

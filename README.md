@@ -10,11 +10,27 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node 24](https://img.shields.io/badge/runtime-node24-brightgreen.svg)](action.yml)
 
+> [!IMPORTANT]
+> **Default change on `main`, planned for v2.13.0:** When you leave `agent-mode` unset in both inputs and repository config, Robin now uses `auto`. The model can read callers, types and tests before reporting findings.
+>
+> Reviews may make extra model requests, take longer and use more tokens, runner time and network traffic. Files read through tools go to your configured LLM endpoint. Tool support alone does not ensure good reviews or enough context capacity. For weak, local or small-context models, start with explicit diff-only mode:
+>
+> ```yaml
+> # .github/robin.yml on the PR base branch
+> agent-mode: off
+> ```
+>
+> **Request defaults also change:** Robin checks an estimated **256,000-token working budget per request**, with a **32,000-token output cap** when unset and **16,000** safety headroom. Both raw diff allowances now default to **500,000 characters**. These are configurable estimates, not model context guarantees. Total usage across turns/retries can exceed 256,000 tokens. See [request budgets](docs/ADVANCED.md#estimated-request-budget).
+>
+> For the previous single-shot/provider-default output shape, set both `agent-mode: off` and `estimated-request-token-budget: off`, and leave `max-output-tokens` unset. Explicit output and character caps still apply. Older reusable workflows may explicitly forward `50000`; Robin preserves that value.
+>
+> A nonblank workflow/action input overrides this file; change an existing `agent-mode: auto` input to `agent-mode: "off"` too. Some tagged reusable workflows call the action at `@main` and can receive this change before the release. See the [migration and model compatibility guide](docs/ADVANCED.md#default-change-and-migration) for input snippets, fallback limits and pin behavior. `/summary` stays single-shot.
+
 ## What you get
 
 - A review when you open a pull request (or when someone comments `/robin`)
 - A short summary plus inline comments on changed lines, with one-click suggested fixes when the model can pin one down
-- Optional reviews that check the rest of your repo (callers, definitions) when you enable agent mode and your model supports tool calling
+- Reviews with repository tools by default, so tool-capable models can check callers, types and tests; explicit `agent-mode: off` keeps diff-only reviews
 - Your choice of AI provider — including **free** options
 
 When there's nothing worth flagging, Robin reports **No issues found**.
@@ -62,15 +78,16 @@ older Robin or Universal Code Reviewer workflow under another name, it moves tha
 canonical workflow. Inspect the archived copy, then remove it after confirming the
 migration. An unrelated file already using the canonical path is never overwritten.
 Run an installer separately in every repository that should use Robin. Re-running it is
-safe and idempotent — your pinned version and any `with:` overrides (for example
+safe and idempotent — your workflow ref and any `with:` overrides (for example
 `llm-temperature`) are preserved.
 You still need to add the three secrets — do **Steps 1 and 2** below, then commit and push.
 You can **skip Step 3**: the installer already did it.
 
 **Auto-updates:** the generated workflow references
-`antongulin/robin/.github/workflows/review.yml@main`, so every
-review runs the latest Robin automatically — nothing to bump or re-install. Prefer fixed
-versions? Pin a tag with `ROBIN_REF=v2 npx robin-review` (see [Version pins](#version-pins)).
+`antongulin/robin/.github/workflows/review.yml@main` and follows changes on `main`.
+`ROBIN_REF=v2 npx robin-review` selects the floating v2 workflow ref. That workflow
+still calls the action at `@main`; see [Version pins](#version-pins) to pin the action
+implementation or keep diff-only mode across updates.
 
 Prefer to do it by hand, or read the installer first? It's
 [bin/robin-review.js](bin/robin-review.js) (npm) / [scripts/install.sh](scripts/install.sh)
@@ -148,7 +165,23 @@ Commit and push, then open a pull request. Follow the run in **Actions**; [revie
 By default Robin reviews when the PR opens (and on `/review`), not on every push. To also review each push, add `synchronize` to the `pull_request` `types:` and set `review-on-synchronize: true` in the job's `with:` block.
 
 > [!IMPORTANT]
-> Use **`@main`** for the latest fixes, or pin a release tag (for example `@v2` or `@v2.7.0`) from [releases](https://github.com/antongulin/robin/releases). Do **not** use `@v0`. See [Version pins](#version-pins) below.
+> Use **`@main`** to follow the default branch, or choose a workflow ref from [releases](https://github.com/antongulin/robin/releases). A reusable-workflow tag does not pin its nested action at `@main`. Do **not** use `@v0`. See [Version pins](#version-pins) below.
+
+## LLM usage reports
+
+Open the **LLM usage** section of the Actions job summary to see provider-reported
+prompt, completion, cached-input and reasoning tokens across the invocation. Robin
+counts physical requests, including retries, compaction and diff-only fallback.
+Missing or interrupted usage stays unknown; known sums can be partial.
+
+The reusable workflow exposes compact JSON as `usage-report`; dependent jobs read
+`needs.<your-review-job>.outputs.usage-report`. Direct action
+steps also expose `usage-report-path`, a full sanitized ledger for later steps in
+that same job. The local file is not a downloadable artifact. See
+[report fields and retention](docs/ADVANCED.md#llm-usage-reports).
+
+These observations do not establish billed dollars, plan percentages or a token
+budget. Robin adds no model requests or usage-request parameters for reporting.
 
 ## Running on a self-hosted runner
 
@@ -254,18 +287,17 @@ Focused change. Main risk: timeout errors are not handled clearly.
 
 ## Agent mode: reviews with repository context
 
-Robin doesn't only look at the diff. When you enable agent mode (`agent-mode: auto`) and your
-model supports tool calling, the review is a short multi-turn investigation: the model can
-read full files, grep for callers of a changed function, and list directories at the PR's
-head commit before it decides what's a bug. Findings can come with a one-click GitHub
+Robin defaults to `agent-mode: auto` when neither an input nor base-branch config sets
+the mode. A tool-capable model can read full files, grep for callers of a changed function,
+and check types and tests at the PR's head commit before reporting a bug. Findings can come with a one-click GitHub
 **suggested change** containing the exact fix.
 
-- Nothing to set up: Robin downloads a read-only snapshot of the PR through the GitHub API (no checkout, and PR code is never run).
-- If the model doesn't support tools (some free OpenRouter routes, many small Ollama models), Robin quietly falls back to the classic diff-only review.
-- Agent mode is opt-in: set `agent-mode: auto` in `.github/robin.yml`, and cap the investigation with `agent-max-turns` (default 40). Unset keeps the single-shot diff review.
-- Long investigations don't hit a wall: when the context fills up, Robin has the model summarize what it has found so far and keeps going, like Cursor's context compaction.
+- Robin downloads a read-only snapshot through the GitHub API; no checkout is needed and Robin never executes PR code.
+- Tool rejection or snapshot failure triggers an attempted complete diff-only fallback, subject to `max-diff-size`. Warnings and the final status show the fallback reason; size or provider failures can still stop the review.
+- Set `agent-mode: off` to skip the snapshot and tools. Use this for weak/local models until you have checked tool behavior, review quality and context capacity. `agent-max-turns` defaults to 40; extra requests can add time and usage.
+- Context compaction summarizes investigation history within existing limits. It cannot guarantee that a small-context model fits or that a review completes. Explicit truncated output fails the review.
 
-Details: [Agent mode](docs/ADVANCED.md#agent-mode-multi-turn-review-with-repository-context).
+Details: [Agent mode](docs/ADVANCED.md#agent-mode-multi-turn-review-with-repository-context) and [migration guidance](docs/ADVANCED.md#default-change-and-migration).
 
 ## Robin in your editor
 
@@ -306,7 +338,7 @@ GitHub’s servers cannot reach `localhost` on your laptop. For Ollama at home, 
 
 ## Optional: config and custom rules
 
-Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to set `max-diff-size`, skip extra paths, and more. The same file is the normal place to change `reasoning-effort` for providers that expose reasoning controls; when it is unset Robin sends no reasoning control and the provider/model decides, and `off` is an explicit way to send nothing. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
+Copy [`.github/robin.yml.example`](.github/robin.yml.example) to `.github/robin.yml` to tune `estimated-request-token-budget`, `max-diff-size` and `agent-max-diff-size` together, skip extra paths, and more. The same file is the normal place to change `reasoning-effort` for providers that expose reasoning controls; when it is unset Robin sends no reasoning control and the provider/model decides, and `off` is an explicit way to send nothing. Details: [docs/ADVANCED.md](docs/ADVANCED.md#repository-config-file) and [Reasoning effort](docs/ADVANCED.md#reasoning-effort-provider-dependent).
 
 ### Optional settings index
 
@@ -337,7 +369,7 @@ Review scope, results, and instructions:
 
 | Setting | Default / behavior | Where |
 | --- | --- | --- |
-| `max-diff-size` | `50000` characters for single-shot reviews and `/summary`; a larger filtered diff fails before the model request | Workflow input or repo config; config wins when input equals `50000` |
+| `max-diff-size` | `500000` characters for single-shot reviews and `/summary`; complete diff or fail | Nonblank workflow input overrides base config; blank inherits |
 | `max-comments` | `15` inline comments; extra findings stay in the review body | Workflow input or repo config; config wins when input equals `15` |
 | `skip-paths` | No extra exclusions; built-in generated-file exclusions still apply | Repo config only |
 | `fail-on-high` | `false`; optionally fail the check on high findings | Workflow input |
@@ -350,18 +382,19 @@ Model requests and repository context:
 
 | Setting | Default / behavior | Where |
 | --- | --- | --- |
-| `llm-api-key` / `LLM_API_KEY` | Direct action default `ollama`; reusable workflow requires the secret | Direct action input / reusable workflow secret |
-| `max-output-tokens` | Unset; provider/model response limit | Workflow input |
+| `llm-api-key` / `LLM_API_KEY` | Blank direct action input uses the public `ollama` placeholder; reusable workflow requires the secret | Direct action input / reusable workflow secret |
+| `estimated-request-token-budget` | `256000` estimated tokens per request, including input, output and safety; `off` disables the estimate/default output cap | Nonblank workflow input overrides base config; blank inherits |
+| `max-output-tokens` | Unset: scales with enabled budget up to `32000`; guard off: provider/model default | Positive safe integer workflow input; explicit cap is preserved |
 | `reasoning-effort` | Unset; provider/model decides. `off` sends no reasoning configuration | Workflow input or repo config |
 | `llm-timeout-ms` | `600000` milliseconds (10 minutes) | Workflow input |
 | `llm-temperature` | `0.1`, range 0–2; model-specific exceptions apply | Workflow input |
 | `use-json-response-mode` / `json-response-mode` | `true`; request structured review output, with provider fallbacks | Workflow input / repo config key |
-| `agent-mode` | `off` (single-shot); `auto` enables repository tools with fallback | Workflow input or repo config |
+| `agent-mode` | `auto` (repository tools with bounded diff-only fallback); explicit `off` uses single-shot | Nonblank workflow input overrides base-branch repo config; blank inputs defer |
 | `agent-max-turns` | `40`, capped at `100` | Workflow input or repo config |
-| `agent-max-diff-size` | `200000` characters up front in agent mode; a larger filtered diff fails before the agent request and the single-shot fallback uses `max-diff-size` | Workflow input or repo config |
+| `agent-max-diff-size` | `500000` characters up front in agent mode; a larger filtered diff fails before the agent request and the single-shot fallback uses `max-diff-size` | Workflow input or repo config |
 
 Blank inputs for `request-changes`, `reasoning-effort`, `use-json-response-mode`,
-and the three `agent-*` settings defer to repo config, then to these defaults. Omit the
+`max-diff-size`, `estimated-request-token-budget` and the three `agent-*` settings defer to repo config, then to these defaults. Omit the
 boolean `request-changes` input on reusable-workflow callers to defer to repo config.
 The required model and endpoint remain `LLM_MODEL` and `LLM_BASE_URL` secrets
 (direct action inputs `model` and `llm-base-url`).
@@ -396,16 +429,28 @@ More fixes: [docs/ADVANCED.md#troubleshooting](docs/ADVANCED.md#troubleshooting)
 
 ## Version pins
 
-| Pin | When to use |
+For a **direct action step** (`uses: antongulin/robin@…`):
+
+| Action ref | Behavior |
 | --- | --- |
 | `@main` | Latest changes on the default branch |
 | `@v2` | Latest `2.x` release (updated on each release) |
-| `@v2.7.0` | Exact version (most predictable) |
-| Full commit SHA | Maximum supply-chain safety |
+| `@v2.12.4` | That release's action implementation, including its previous default of `off` |
+| Full commit SHA | The action implementation at that commit |
+
+For a **reusable workflow**, the ref selects the workflow file. The verified workflow
+files at `main`, `v2` and `v2.12.4` call `antongulin/robin@main` inside the job. Even an
+exact tag or SHA of those workflow files does not freeze the nested action. Those
+callers can receive the new default when it lands on `main`, before v2.13.0 publishes.
 
 ```yaml
 uses: antongulin/robin/.github/workflows/review.yml@v2
 ```
+
+This example follows the v2 workflow while its nested action follows `main`. To keep
+diff-only mode, set [explicit `off`](docs/ADVANCED.md#default-change-and-migration).
+To pin the implementation, use a direct action step at an exact release or full SHA
+with the required permissions and credentials; see the [direct action example](docs/ADVANCED.md#custom-review-identity).
 
 Releases and notes are published automatically from [CHANGELOG.md](CHANGELOG.md) when changes land on `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for commit message format.
 

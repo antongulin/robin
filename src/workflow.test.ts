@@ -36,7 +36,7 @@ const WORKFLOW_ONLY_INPUTS = new Set(["runner"]);
  * - use-json-response-mode: string, default ""
  */
 const DEFER_BOOLEAN_NO_DEFAULT = ["request-changes"] as const;
-const DEFER_STRING_EMPTY_DEFAULT = ["use-json-response-mode", "bot-review-policy", "bot-allowlist"] as const;
+const DEFER_STRING_EMPTY_DEFAULT = ["use-json-response-mode", "bot-review-policy", "bot-allowlist", "agent-mode", "max-diff-size", "agent-max-diff-size", "estimated-request-token-budget"] as const;
 
 function parseActionInputs(source: string): string[] {
   // Scope to the inputs: section so a future outputs: block cannot pollute parity.
@@ -56,7 +56,7 @@ function publicActionInputs(): string[] {
 /** Keys under `on.workflow_call.inputs` (4-space indent under `inputs:`). */
 function workflowCallInputNames(source: string): string[] {
   const callSection = source.split(/\n\s+secrets:\n/)[0] ?? source;
-  const inputsBlock = callSection.split(/\n\s+inputs:\n/)[1];
+  const inputsBlock = callSection.split(/\n\s+inputs:\n/)[1]?.split(/\n    (?:outputs|secrets):\n/)[0];
   if (!inputsBlock) return [];
   return [...inputsBlock.matchAll(/^      ([a-z0-9-]+):\n/gm)].map((match) => match[1]);
 }
@@ -182,7 +182,7 @@ describe("reusable review workflow", () => {
     ]);
   });
 
-  it("keeps defer-to-config knobs from forcing a boolean default", () => {
+  it("keeps defer-to-config knobs from forcing an input default", () => {
     for (const name of DEFER_BOOLEAN_NO_DEFAULT) {
       const block = workflowCallInputBlock(reviewWorkflow, name);
       expect(block).toBeDefined();
@@ -196,6 +196,12 @@ describe("reusable review workflow", () => {
       expect(block).toContain("type: string");
       expect(block).toContain('default: ""');
     }
+    const agentActionInput = actionYml.match(/^  agent-mode:\n((?:    [^\n]*\n)+)/m)?.[1];
+    expect(agentActionInput).toBeDefined();
+    expect(agentActionInput).toContain('default: ""');
+    expect(reviewWorkflow.match(/^          agent-mode: .+$/m)?.[0].trim()).toBe(
+      "agent-mode: ${{ inputs.agent-mode }}",
+    );
   });
 
   it("documents every public action input in ADVANCED.md", () => {
@@ -263,4 +269,15 @@ describe("reusable review workflow", () => {
       "If no matching runner is online, GitHub queues the job until one comes online.",
     );
   });
+});
+
+
+test("UR12 usage output maps from action step through job to workflow without exporting a local path", () => {
+  expect(actionYml).toMatch(/outputs:\n  usage-report:\n    description:/);
+  expect(actionYml).toMatch(/  usage-report-path:\n    description:/);
+  expect(reviewWorkflow).toContain("id: robin");
+  expect(reviewWorkflow).toContain("usage-report: ${{ steps.robin.outputs.usage-report }}");
+  expect(reviewWorkflow).toContain("value: ${{ jobs.review.outputs.usage-report }}");
+  expect(reviewWorkflow).not.toContain("usage-report-path");
+  expect(reviewWorkflow).not.toContain("actions/upload-artifact");
 });

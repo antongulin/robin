@@ -1,9 +1,7 @@
 import {
   DEFAULT_AGENT_MAX_DIFF_SIZE,
   DEFAULT_AGENT_MAX_TURNS,
-  DEFAULT_AGENT_MODE,
   DEFAULT_MAX_COMMENTS,
-  DEFAULT_ACTION_MAX_DIFF_SIZE,
   isReasoningEffortConfigured,
   parseRepoConfigYaml,
   resolveAgentMaxDiffSize,
@@ -166,9 +164,9 @@ skip-paths:
 });
 
 describe("resolveMaxDiffSize", () => {
-  it("uses repo config when action input is still the default", () => {
+  it("uses repo config when the action input is blank", () => {
     expect(
-      resolveMaxDiffSize(String(DEFAULT_ACTION_MAX_DIFF_SIZE), { maxDiffSize: 25000 })
+      resolveMaxDiffSize("", { maxDiffSize: 25000 })
     ).toBe(25000);
   });
 
@@ -257,12 +255,16 @@ describe("agent mode config", () => {
     expect(parseRepoConfigYaml("agent-mode: sometimes").agentMode).toBeUndefined();
   });
 
-  it("preserves single-shot by default and honors an explicit auto from input or repo config", () => {
-    expect(DEFAULT_AGENT_MODE).toBe("off");
-    expect(resolveAgentMode("", {})).toBe("off");
+  it("defaults to auto only after explicit input and repo config", () => {
+    expect(resolveAgentMode("", undefined)).toBe("auto");
+    expect(resolveAgentMode("", {})).toBe("auto");
+    expect(resolveAgentMode("  ", {})).toBe("auto");
     expect(resolveAgentMode("", { agentMode: "off" })).toBe("off");
     expect(resolveAgentMode("", { agentMode: "auto" })).toBe("auto");
     expect(resolveAgentMode("auto", { agentMode: "off" })).toBe("auto");
+    expect(resolveAgentMode("off", { agentMode: "auto" })).toBe("off");
+    expect(resolveAgentMode("  AuTo  ", { agentMode: "off" })).toBe("auto");
+    expect(resolveAgentMode("  OFF  ", { agentMode: "auto" })).toBe("off");
     expect(resolveAgentMode("OFF", {})).toBe("off");
     expect(resolveAgentMode("bogus", { agentMode: "off" })).toBe("off");
     expect(resolveAgentMode("bogus", { agentMode: "auto" })).toBe("auto");
@@ -281,6 +283,6 @@ describe("agent mode config", () => {
     expect(resolveAgentMaxDiffSize("", {})).toBe(DEFAULT_AGENT_MAX_DIFF_SIZE);
     expect(resolveAgentMaxDiffSize("", { agentMaxDiffSize: 90000, maxDiffSize: 25000 })).toBe(90000);
     expect(resolveAgentMaxDiffSize("300000", { agentMaxDiffSize: 90000 })).toBe(300000);
-    expect(resolveAgentMaxDiffSize("0", {})).toBe(DEFAULT_AGENT_MAX_DIFF_SIZE);
+    expect(() => resolveAgentMaxDiffSize("0", {})).toThrow(/positive safe integer/);
   });
 });

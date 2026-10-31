@@ -12,11 +12,13 @@
 - Optional automatic bot filter: `bot-review-policy` is `all` (default), `none` (exclude GitHub Bot authors), or `allowlist` (humans plus listed bots). Match the PR author's login exactly, case-insensitively, not the event actor. Ordinary automated User accounts remain eligible. Authorized manual commands bypass the filter; bot comments and unauthorized commands remain blocked.
 - Findings are tiered High / Medium / Low / Suggestion, each with a confidence signal, posted inline on changed lines plus a summary.
 - Designed to stay robust even when a weak, randomly-routed free model is used: the diff is line-numbered, the prompt is calibrated, and responses are retried with provider fallbacks.
+- On main, planned for v2.13.0, unset `agent-mode` defaults to `auto`: a tool-capable model can read callers, types and tests before findings. This can add model requests, time, tokens, runner/network usage and repository content sent to the configured endpoint. Tool support does not prove review quality or adequate context. For weak/local/small-context models, start with explicit `agent-mode: off` in base-branch `.github/robin.yml`, or `agent-mode: "off"` in the caller job/direct step's existing `with:` block. Nonblank mode input overrides config; blank inputs defer to config then auto. Feature-head config alone does not apply. See docs/ADVANCED.md#default-change-and-migration.
+- Tool rejection, snapshot failure or agent errors attempt a complete diff-only fallback subject to `max-diff-size`; oversize input fails before the corresponding request and explicit truncated output fails the review. Fallback does not guarantee success or detect poor tool use. Explicit off skips snapshot/tools; `/summary` stays tool-free single-shot. Character caps do not guarantee context fit.
 
 ## Setup
 
 - From the target Git repository root, run `npx robin-review` or `curl -fsSL https://robinreview.dev/install.sh | bash`. The installer keeps one canonical `.github/workflows/robin.yml`, archives recognized historical Robin or Universal Code Reviewer workflows outside `.github/workflows`, and installs or updates the companion agent skill globally. Running either command from `~` fails because there is no target Git repository.
-- Or add `.github/workflows/robin.yml` calling `antongulin/robin/.github/workflows/review.yml@main` (or pin a release tag such as `@v2`).
+- Or add `.github/workflows/robin.yml` calling `antongulin/robin/.github/workflows/review.yml@main` (or choose the floating workflow ref `@v2`). Verified workflow files at main, v2 and v2.12.4 call `antongulin/robin@main` internally, so an outer workflow tag/SHA does not freeze the action and can receive the default change before release. Direct `antongulin/robin@v2.12.4` or a full action SHA pins implementation; direct `@v2` follows releases. See README.md#version-pins.
 - Three secrets: `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`. Free OpenRouter: base `https://openrouter.ai/api/v1`, model `openrouter/free`.
 - Optional custom identity: pass `ROBIN_TOKEN` as a reusable-workflow secret; omitted/empty keeps `github.token`. For new GitHub App setups, prefer Client ID (passed to the token action’s app-id input at @v2); existing numeric App IDs remain supported. For a GitHub App, create its token and run the direct action in the same job, never through job outputs. PATs post as their owner and may require manual dismissal of stale blocking reviews. Installers preserve custom identity workflows and inherited-secret callers; update their refs manually. See docs/ADVANCED.md#custom-review-identity.
 - Providers: any OpenAI-compatible endpoint. OpenAI (`https://api.openai.com/v1`), Anthropic Claude via its OpenAI-compatible endpoint (`https://api.anthropic.com/v1`, regular Anthropic API key), OpenRouter, Groq, Ollama, gateways, and OpenCode Go (`https://opencode.ai/zen/go/v1`). The base URL is normalized (trailing slash, pasted `/chat/completions` or `/messages` suffix, missing `/v1` on the OpenAI and Anthropic hosts).
@@ -31,11 +33,14 @@
 
 - Review duration depends on queue/start delay, diff size, review mode, model requests and retries. Measure job duration and the Robin step separately; an LLM attempt interval includes request overhead and parameter fallback, not just inference. See docs/ADVANCED.md#review-timing.
 - A successful Actions run can skip work or handle help. Confirm a posted PR review before counting it. Agent time-limit/final-answer failures can lead to a single-shot fallback with its own requests and retries. Masked model/base-URL logs and secret receipts do not directly prove the serving provider or model, and unmatched samples do not establish a speedup.
+- Agent turns, tool calls and compactions describe the investigation, not total requests, whole-run tokens/cost or model quality. Existing limits and output controls remain in effect; there is no whole-run token budget.
+
+- Passive per-invocation LLM usage reports count physical requests across turns, compatibility/outer retries, compaction, structured retry and fallback. Actions summary and `usage-report` output expose aggregate JSON with missing/nonfinal metric coverage; direct action `usage-report-path` is a full sanitized runner-local ledger for same-job consumers, not a downloadable/reusable caller artifact. No uploads, extra inference or usage-request controls. Provider observations do not establish billed cost, plan percentages or a token budget. See docs/ADVANCED.md#llm-usage-reports.
 
 ## Key files
 
 - [README.md](README.md): human setup and usage
-- [action.yml](action.yml): action inputs
+- [action.yml](action.yml): action inputs and usage outputs
 - [.github/workflows/review.yml](.github/workflows/review.yml): reusable workflow consumers call
 - [skills/robin/SKILL.md](skills/robin/SKILL.md): companion chat skill — drives a bounded PR review→fix→merge loop from a coding agent
 - [docs/ADVANCED.md](docs/ADVANCED.md): all settings, strict mode, self-hosted runners
@@ -44,6 +49,11 @@
 ## Links
 
 - Site: https://robinreview.dev
+- Estimated request budget: blank action/workflow input inherits base-branch `estimated-request-token-budget`, then decimal 256000. Both `max-diff-size` and `agent-max-diff-size` inherit likewise, default 500000 characters; explicit 50000 from older callers wins. Full raw diff or fail, independent of full-body fit.
+- `utf8-json-div3-v1` estimates ceil(complete final SDK JSON UTF-8 bytes /3), including stream, messages/private replay, tools and schema. Add ceil(budget/16) safety and the actual output cap. Unset output sends max(1,min(32000,floor(budget/8))); at 256000 this reserves 32000 output + 16000 safety, leaving 208000 estimated input. This is a disclosed output-control change, not exact token counting or a model capacity guarantee.
+- Guard each rebuild before physical-attempt accounting. Preflight rejection is no provider call; earlier usage remains. Agent recovery can compact/elide bounded history; summaries and complete fallback also must fit. No raw diff clipping. Explicit caps never silently clamp/drop; malformed positive-safe-integer controls fail without raw-value diagnostics.
+- Compatibility: `estimated-request-token-budget: off` disables estimate/default output cap; pair with `agent-mode: off` and unset max-output-tokens for previous single-shot/provider-default output shape. Explicit output/character caps remain. Lower the paired controls for smaller effective context. Total usage across requests can exceed 256000. Each new /robin uses current diff/head and fresh conversation. See docs/ADVANCED.md#estimated-request-budget.
+
 - Repository: https://github.com/antongulin/robin
 - License: MIT
 - Author: Anton Gulin — https://www.anton.qa
