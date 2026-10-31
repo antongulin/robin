@@ -143,6 +143,9 @@ structure guidance of [agent0ai/dox](https://github.com/agent0ai/dox) at pinned 
 [`765ae4ac`](https://github.com/agent0ai/dox/tree/765ae4ac02cc884eefcd41a3d0f71941721adb89)
 (MIT, Copyright 2026 Agent Zero).
 
+**Merge strategy.** Use squash merges for cohesive PRs; squash is the repository's
+only enabled merge method.
+
 **Verification.** Run the existing checks before pushing:
 
 ```bash
