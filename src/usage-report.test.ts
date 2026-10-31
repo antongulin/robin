@@ -76,14 +76,14 @@ test.each([false, true])("UR02 empty outer retry retains both attempts (stream %
   expect(create.mock.calls.every(([body]) => body.max_tokens === 2048 && body.reasoning.effort === "high" && !body.usageContext && !body.stream_options)).toBe(true);
 });
 
-test("UR07 blocking extraction failure preserves usage and terminal status before parsing", async () => {
+test("UR07 blocking extraction failure preserves usage before malformed tool calls throw", async () => {
   const { client, create, ledger } = setup();
-  create.mockResolvedValue({ ...response(), choices: [{ message: { tool_calls: [{ function: null }] }, finish_reason: "length" }] });
-  await expect(client.chatCompletion("s", "u")).rejects.toThrow();
+  create.mockResolvedValue({ ...response(), choices: [{ message: { tool_calls: { malformed: true } }, finish_reason: "stop" }] });
+  await expect(client.chatCompletion("s", "u")).rejects.toThrow("filter is not a function");
   const r = ledger.report();
   expect(r.compact.attempts).toBe(1);
   expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 100, complete: true });
-  expect(r.full.ledger[0].outcome).toBe("length");
+  expect(r.full.ledger[0]).toMatchObject({ outcome: "error", finish_reason: "stop" });
 });
 
 test("UR07 preceding work and SDK-preserved error usage survive without raw errors", async () => {
