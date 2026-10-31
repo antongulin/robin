@@ -435,8 +435,8 @@ For a **direct action step** (`uses: antongulin/robin@…`):
 | --- | --- |
 | `@main` | Latest changes on the default branch |
 | `@v2` | Latest `2.x` release (updated on each release) |
-| `@v2.13.0` | This release's action implementation, with the default of `auto` |
-| `@v2.12.4` | That release's action implementation, including its previous default of `off` |
+| `@v2.13.1` | Exact release pin with the default of `auto` |
+| `@v2.12.4` | Exact release pin with the default of `off` |
 | Full commit SHA | The action implementation at that commit |
 
 For a **reusable workflow**, the ref selects the workflow file. The verified workflow

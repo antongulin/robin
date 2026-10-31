@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.13.1](https://github.com/antongulin/robin/compare/v2.13.0...v2.13.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* keep usage outputs available when model names are secrets ([#127](https://github.com/antongulin/robin/issues/127)) ([9819fc1](https://github.com/antongulin/robin/commit/9819fc16de4aac494e3dbff8e28da941e1b21d08))
+
+
+### Documentation
+
+* record repository squash merge strategy ([0f0ec48](https://github.com/antongulin/robin/commit/0f0ec48c80eb158bfe2c322f41a9098a004a5e88))
+
 ## [2.13.0](https://github.com/antongulin/robin/compare/v2.12.4...v2.13.0) (2026-10-31)
 
 > [!IMPORTANT]
