@@ -194,13 +194,13 @@ These refs describe a **direct action step**, `uses: antongulin/robin@…`:
 | --- | --- |
 | `@main` | Latest changes on the default branch |
 | `@v2` | Latest `2.x` release (floating tag, updated each release) |
-| `@v2.13.0` | This release's action implementation, with the default of `auto` |
-| `@v2.12.4` | The previous release's action implementation, with the default of `off` |
+| `@v2.13.1` | Exact release pin with the default of `auto` |
+| `@v2.12.4` | Exact release pin with the default of `off` |
 | Full commit SHA | The action implementation at that commit |
 | `@v0` | **Do not use** — outdated; workflows often fail |
 
 ```yaml
-uses: antongulin/robin@v2.13.0
+uses: antongulin/robin@v2.13.1
 ```
 
 A reusable-workflow ref pins only its workflow file. The workflows at `main`,
