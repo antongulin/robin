@@ -20,8 +20,8 @@ export interface RepoConfig {
 }
 
 export type AgentMode = "auto" | "off";
-/** Single-shot diff review unless the caller explicitly opts into the multi-turn agent review. */
-export const DEFAULT_AGENT_MODE: AgentMode = "off";
+/** Multi-turn repository review unless the input or base-branch config selects off. */
+export const DEFAULT_AGENT_MODE: AgentMode = "auto";
 export const DEFAULT_AGENT_MAX_TURNS = 40;
 const MAX_AGENT_MAX_TURNS = 100;
 /** Diff characters sent up front in agent mode (~50-65k tokens); a larger filtered diff fails before the agent request. The single-shot fallback keeps max-diff-size. */
@@ -259,7 +259,7 @@ export function resolveRequestChanges(actionInput: string, repoConfig?: RepoConf
   return repoConfig?.requestChanges ?? true;
 }
 
-/** Multi-turn tool review: explicit input first, then `.github/robin.yml`, else single-shot (`off`). */
+/** Multi-turn tool review: explicit input first, then base-branch `.github/robin.yml`, else `auto`. */
 export function resolveAgentMode(actionInput: string, repoConfig?: RepoConfig): AgentMode {
   const input = actionInput.trim().toLowerCase();
   if (input === "auto" || input === "off") return input;

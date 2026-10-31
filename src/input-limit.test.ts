@@ -322,7 +322,7 @@ describe("normal complete input", () => {
     const result = await execute({
       diff,
       summaryCommand: true,
-      inputs: { "max-diff-size": String(diff.length * 2) },
+      inputs: { "max-diff-size": String(diff.length * 2), "agent-mode": "" },
       create: jest.fn().mockResolvedValue({
         choices: [{ message: { content: "Synthetic summary of the complete diff." }, finish_reason: "stop" }],
       }),
@@ -334,6 +334,9 @@ describe("normal complete input", () => {
     expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
     expect(result.comments).toHaveLength(2);
     expect(result.comments[1]).toContain("Synthetic summary of the complete diff.");
+    expect(createRepoSnapshot).not.toHaveBeenCalled();
+    expect(ReviewToolbox).not.toHaveBeenCalled();
+    expect(result.requests[0].tools).toBeUndefined();
     expect(result.lastStatus).toContain("Summary's ready above.");
     expect(result.lastStatus).not.toContain("max-diff-size");
   });
@@ -467,7 +470,7 @@ describe("summary input completeness", () => {
     const result = await execute({
       diff,
       summaryCommand: true,
-      inputs: { "max-diff-size": "50000" },
+      inputs: { "max-diff-size": "50000", "agent-mode": "" },
     });
 
     expect(result.requests).toHaveLength(0);
@@ -475,6 +478,8 @@ describe("summary input completeness", () => {
     expect(result.comments[0]).not.toContain(TAIL);
     expect(result.lastStatus).not.toContain("Summary's ready above.");
     expect(result.lastStatus).toContain("couldn't finish the summary");
+    expect(createRepoSnapshot).not.toHaveBeenCalled();
+    expect(ReviewToolbox).not.toHaveBeenCalled();
     expect(result.lastStatus).toContain("summary");
     expect(result.lastStatus).toContain(`${diff.length} characters`);
     expect(result.lastStatus).toContain("Raise `max-diff-size`");

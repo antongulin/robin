@@ -3511,8 +3511,8 @@ exports.DEFAULT_CONFIG_FILE = ".github/robin.yml";
 exports.DEFAULT_ACTION_MAX_DIFF_SIZE = 50000;
 /** Single default shared by action.yml and the reusable review.yml workflow. */
 exports.DEFAULT_MAX_COMMENTS = 15;
-/** Single-shot diff review unless the caller explicitly opts into the multi-turn agent review. */
-exports.DEFAULT_AGENT_MODE = "off";
+/** Multi-turn repository review unless the input or base-branch config selects off. */
+exports.DEFAULT_AGENT_MODE = "auto";
 exports.DEFAULT_AGENT_MAX_TURNS = 40;
 const MAX_AGENT_MAX_TURNS = 100;
 /** Diff characters sent up front in agent mode (~50-65k tokens); a larger filtered diff fails before the agent request. The single-shot fallback keeps max-diff-size. */
@@ -3715,7 +3715,7 @@ function resolveRequestChanges(actionInput, repoConfig) {
         return false;
     return repoConfig?.requestChanges ?? true;
 }
-/** Multi-turn tool review: explicit input first, then `.github/robin.yml`, else single-shot (`off`). */
+/** Multi-turn tool review: explicit input first, then base-branch `.github/robin.yml`, else `auto`. */
 function resolveAgentMode(actionInput, repoConfig) {
     const input = actionInput.trim().toLowerCase();
     if (input === "auto" || input === "off")

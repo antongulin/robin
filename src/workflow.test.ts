@@ -36,7 +36,7 @@ const WORKFLOW_ONLY_INPUTS = new Set(["runner"]);
  * - use-json-response-mode: string, default ""
  */
 const DEFER_BOOLEAN_NO_DEFAULT = ["request-changes"] as const;
-const DEFER_STRING_EMPTY_DEFAULT = ["use-json-response-mode", "bot-review-policy", "bot-allowlist"] as const;
+const DEFER_STRING_EMPTY_DEFAULT = ["use-json-response-mode", "bot-review-policy", "bot-allowlist", "agent-mode"] as const;
 
 function parseActionInputs(source: string): string[] {
   // Scope to the inputs: section so a future outputs: block cannot pollute parity.
@@ -182,7 +182,7 @@ describe("reusable review workflow", () => {
     ]);
   });
 
-  it("keeps defer-to-config knobs from forcing a boolean default", () => {
+  it("keeps defer-to-config knobs from forcing an input default", () => {
     for (const name of DEFER_BOOLEAN_NO_DEFAULT) {
       const block = workflowCallInputBlock(reviewWorkflow, name);
       expect(block).toBeDefined();
@@ -196,6 +196,12 @@ describe("reusable review workflow", () => {
       expect(block).toContain("type: string");
       expect(block).toContain('default: ""');
     }
+    const agentActionInput = actionYml.match(/^  agent-mode:\n((?:    [^\n]*\n)+)/m)?.[1];
+    expect(agentActionInput).toBeDefined();
+    expect(agentActionInput).toContain('default: ""');
+    expect(reviewWorkflow.match(/^          agent-mode: .+$/m)?.[0].trim()).toBe(
+      "agent-mode: ${{ inputs.agent-mode }}",
+    );
   });
 
   it("documents every public action input in ADVANCED.md", () => {

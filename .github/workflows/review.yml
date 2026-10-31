@@ -85,7 +85,7 @@ on:
         type: string
         default: ""
       agent-mode:
-        description: "auto runs a multi-turn review with repository tools and falls back to single-shot when the model lacks tool support; off always runs single-shot. Leave empty to defer to .github/robin.yml; when both are unset the single-shot review runs."
+        description: "auto runs a multi-turn review with read-only repository tools; off uses a single-shot diff review without a snapshot or tools. Leave empty to defer to base-branch .github/robin.yml; when both are unset auto runs. Tool rejection or snapshot failure attempts a complete diff-only fallback subject to max-diff-size."
         required: false
         type: string
         default: ""

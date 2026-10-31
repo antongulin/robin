@@ -1,7 +1,6 @@
 import {
   DEFAULT_AGENT_MAX_DIFF_SIZE,
   DEFAULT_AGENT_MAX_TURNS,
-  DEFAULT_AGENT_MODE,
   DEFAULT_MAX_COMMENTS,
   DEFAULT_ACTION_MAX_DIFF_SIZE,
   isReasoningEffortConfigured,
@@ -257,12 +256,16 @@ describe("agent mode config", () => {
     expect(parseRepoConfigYaml("agent-mode: sometimes").agentMode).toBeUndefined();
   });
 
-  it("preserves single-shot by default and honors an explicit auto from input or repo config", () => {
-    expect(DEFAULT_AGENT_MODE).toBe("off");
-    expect(resolveAgentMode("", {})).toBe("off");
+  it("defaults to auto only after explicit input and repo config", () => {
+    expect(resolveAgentMode("", undefined)).toBe("auto");
+    expect(resolveAgentMode("", {})).toBe("auto");
+    expect(resolveAgentMode("  ", {})).toBe("auto");
     expect(resolveAgentMode("", { agentMode: "off" })).toBe("off");
     expect(resolveAgentMode("", { agentMode: "auto" })).toBe("auto");
     expect(resolveAgentMode("auto", { agentMode: "off" })).toBe("auto");
+    expect(resolveAgentMode("off", { agentMode: "auto" })).toBe("off");
+    expect(resolveAgentMode("  AuTo  ", { agentMode: "off" })).toBe("auto");
+    expect(resolveAgentMode("  OFF  ", { agentMode: "auto" })).toBe("off");
     expect(resolveAgentMode("OFF", {})).toBe("off");
     expect(resolveAgentMode("bogus", { agentMode: "off" })).toBe("off");
     expect(resolveAgentMode("bogus", { agentMode: "auto" })).toBe("auto");

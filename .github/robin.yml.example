@@ -16,7 +16,8 @@ json-response-mode: true
 # Blank bot inputs defer here; workflow bot-allowlist: '[]' clears this list.
 # Authorized manual /review bypasses the author filter; command permissions still apply.
 # reasoning-effort: high   # unset: no reasoning control is sent, the provider/model decides. Set a value (low, medium, high, …) to send it, or "off" to be explicit
-# agent-mode: auto   # unset: single-shot diff review. Set auto for the multi-turn review that reads the repo with tools
+# agent-mode: off   # unset: auto (repository tools). Set off for diff-only reviews; recommended starting point for weak/local models
+# An explicit agent-mode input overrides this base-branch setting; see docs/ADVANCED.md#default-change-and-migration
 # agent-max-turns: 40   # default; tool-calling turns before the final review is requested
 # agent-max-diff-size: 200000   # default; diff characters sent up front in agent mode (max-diff-size above applies to the single-shot fallback)
 

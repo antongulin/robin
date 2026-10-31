@@ -14,7 +14,7 @@ request-changes: true
 # bot-review-policy: none   # optional: skip automatic reviews of GitHub Bot authors; default all
 # bot-allowlist: []   # use a sequence of logins with bot-review-policy: allowlist
 # reasoning-effort: high   # unset: no reasoning control is sent (provider default). Set low/medium/high/… to send it, or "off" to be explicit
-# agent-mode: auto   # unset: single-shot diff review. Set auto for the multi-turn agent review
+# agent-mode: off   # unset: auto (repository tools). Set off for a diff-only review
 # agent-max-turns: 40
 # agent-max-diff-size: 200000
 skip-paths:
@@ -28,7 +28,7 @@ skip-paths:
 | `json-response-mode` | Used when `use-json-response-mode` is empty (action default defers to this file) |
 | `request-changes` | Used when `request-changes` input is empty. `true` (default) blocks on high findings; `false` posts advisor-only comments |
 | `reasoning-effort` | Used when the `reasoning-effort` action/workflow input is empty. Provider-dependent reasoning value; when both are unset no reasoning control is sent and the provider/model decides, `off` also sends no reasoning configuration |
-| `agent-mode` | Used when the `agent-mode` input is empty. `auto` runs the [multi-turn agent review](#agent-mode-multi-turn-review-with-repository-context); when both are unset (or `off`) the single-shot diff review runs |
+| `agent-mode` | Used when the `agent-mode` input is empty. When both are unset, `auto` runs the [multi-turn agent review](#agent-mode-multi-turn-review-with-repository-context). Explicit `off` uses a single-shot diff review without a snapshot or tools |
 | `agent-max-turns` | Used when the `agent-max-turns` input is empty. Tool-calling turns before the final review is requested (default `40`, max `100`) |
 | `agent-max-diff-size` | Used when the `agent-max-diff-size` input is empty. Diff characters sent up front in agent mode (default `200000`); a larger filtered diff fails before the agent request. `max-diff-size` still applies to the single-shot fallback |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
@@ -215,16 +215,85 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch for code reviews; empty disables this file. Missing files do not block review |
 | `config-file` | `.github/robin.yml` | Repo config path on the base branch |
 | `use-json-response-mode` | empty (defer to repo config, else true) | Request strict JSON-schema output (`response_format: json_schema`) for reviews, stepping down to `json_object` and then to no `response_format` if the provider rejects it. Pass `"true"` / `"false"` on the reusable workflow |
-| `agent-mode` | empty (defer to repo config, then single-shot) | `auto` lets the model read the repository with tools before reviewing, falling back to the single-shot diff review when the model has no tool support; unset or `off` always uses the single-shot review |
+| `agent-mode` | empty (defer to repo config, then `auto`) | `auto` lets the model read the repository with tools before reviewing. Tool rejection or snapshot failure attempts a complete diff-only fallback subject to `max-diff-size`; explicit `off` skips the snapshot/tools and uses single-shot |
 | `agent-max-turns` | empty (defer to repo config, then `40`) | Maximum tool-calling turns in agent mode (capped at 100) |
 | `agent-max-diff-size` | empty (defer to repo config, then `200000`) | Diff characters sent up front in agent mode, after path filters. A larger filtered diff fails before the agent request with its observed size and this limit; agent tools read PR head files, so they cannot restore dropped diff hunks. `max-diff-size` still applies to the single-shot fallback |
 
 ## Agent mode (multi-turn review with repository context)
 
-When enabled (`agent-mode: auto`), `/review` is a multi-turn conversation instead of a
-single request. Agent mode is opt-in: when neither the input nor `.github/robin.yml` sets
-`agent-mode`, Robin runs the classic single-shot diff review. Set `auto` to enable the
-investigation below; set `off` to force the single-shot review.
+With `agent-mode: auto`, `/review` uses a multi-turn conversation with repository tools.
+Robin selects `auto` when neither the input nor base-branch `.github/robin.yml` sets
+`agent-mode`. Explicit `off` selects a single-shot diff review and skips snapshot/tool
+work. `/summary` stays single-shot in either mode.
+
+### Default change and migration
+
+The new default applies on `main` and is planned for v2.13.0, the next v2 minor release.
+In v2.12.4's direct action, an unset mode selected `off`. The reusable workflows at
+`main`, `v2` and `v2.12.4` call the action at `@main` inside the job, so their callers
+can receive this change when it merges to `main`, before the minor release publishes.
+A tag or SHA pin of those workflow files pins only the outer workflow. Direct action
+refs differ: `antongulin/robin@v2.12.4` keeps that release's implementation, a full
+action SHA keeps that commit, and direct `@v2` follows the floating release tag.
+
+To keep the previous diff-only behavior, commit this to the **PR base branch**
+(usually your default branch). A config change only on the feature head does not
+affect that PR's settings:
+
+```yaml
+# .github/robin.yml
+agent-mode: off
+```
+
+For a reusable-workflow caller, add or update the mode in the job's existing `with:`
+block, keeping its other inputs and secrets:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    with:
+      agent-mode: "off"
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+For a direct action step, add the same input to that step's existing `with:` block:
+
+```yaml
+- uses: antongulin/robin@main
+  with:
+    github-token: ${{ github.token }}
+    llm-api-key: ${{ secrets.LLM_API_KEY }}
+    llm-base-url: ${{ secrets.LLM_BASE_URL }}
+    model: ${{ secrets.LLM_MODEL }}
+    agent-mode: "off"
+```
+
+A recognized nonblank input (`auto` or `off`) wins over base-branch config. Blank or
+omitted inputs defer to that config, then to `auto`. If your workflow already passes
+`auto`, change that input to `"off"`; adding config `off` alone will not override it.
+Robin leaves both metadata defaults blank to preserve this precedence.
+
+### Model compatibility and usage
+
+Repository tools let the model check callers, types and tests before reporting findings.
+They also let it send additional repository content to your configured LLM endpoint.
+The snapshot download and extra requests can add network traffic, runner time, tokens
+and provider usage. Choose explicit `off` for weak, local or small-context models until
+you have verified their behavior on representative changes.
+
+Tool support is a protocol requirement, separate from review quality and context
+capacity. A local endpoint may reject tools; a model may accept tools but ignore them,
+misuse them or return poor findings. Robin does not detect model quality or choose a
+mode from the model name. Neither mode guarantees compatibility with a local model.
+Character caps are not token/context guarantees: even a 50k-character diff plus prompts
+and output may exceed a small model's effective context. Lower limits or reduce the PR
+scope to match the model you run; compaction cannot guarantee a fit.
+
+### Investigation and limits
 
 1. Robin downloads the PR head commit as a tarball through the GitHub API and unpacks it
    into the runner's temp directory. No `actions/checkout` step is needed, and the code is
@@ -236,13 +305,12 @@ investigation below; set `off` to force the single-shot review.
    exact replacement for the affected lines, which Robin posts as a one-click GitHub
    **suggested change** when every line in the range is in the same diff hunk.
 
-The defaults favor finding bugs over saving tokens, sized for frontier models with
-200k-token or larger context windows:
+The investigation uses these limits. Match them to your model and workload:
 
 | Limit | Default |
 | --- | --- |
 | Tool-calling turns | 40 (`agent-max-turns`, max 100) |
-| Diff sent up front | 200k characters (`agent-max-diff-size`); a larger filtered diff fails before the agent request. The single-shot fallback keeps `max-diff-size` (50k) so small-context models still fit, and fails before that request when the filtered diff does not fit it either |
+| Diff sent up front | 200k characters (`agent-max-diff-size`); a larger filtered diff fails before the agent request. The single-shot fallback keeps `max-diff-size` (50k) and fails before that request if the filtered diff exceeds it. Neither cap guarantees a fit in the model's context |
 | Tool calls per turn | 16 |
 | Investigation time | 30 minutes |
 | Output per tool call | about 50k characters (`read_file` returns up to 2000 lines and says where to continue) |
@@ -264,9 +332,13 @@ oldest tool results. A review can compact up to six times.
 
 **Fallback.** If the model or provider rejects tool calling (for example OpenRouter's
 "No endpoints found that support tool use", or Ollama's "does not support tools"), the
-snapshot download fails, or the agent loop errors, Robin logs a warning and runs the
-single-shot diff review instead, so the PR still gets a review. `/summary` is always
-single-shot.
+snapshot download fails, or the agent loop errors, Robin logs a warning and attempts a
+single-shot diff review. The final status identifies a completed fallback and its reason;
+a failed status reports the failure. The fallback sends the complete filtered diff only
+if it fits `max-diff-size`; a larger diff fails before that request. Provider or output
+failures can still prevent a review. Robin downloads the snapshot before it can learn
+that the endpoint rejects tools. Explicit `off` avoids that work. `/summary` stays
+single-shot and uses `max-diff-size`.
 
 Explicit `finish_reason=length` is an exception: the output is incomplete, even if it
 contains text or tool calls. Robin discards that partial output and fails the review
@@ -280,11 +352,12 @@ After adjusting the cause, comment `/robin` to try again. Missing finish metadat
 If a compaction summary fails, the mechanical recovery described above still drops old
 tool results and continues with changed context.
 
-Agent mode sends more tokens than a single-shot review (the model reads extra files) and
-takes longer. The reusable workflow's job timeout is 45 minutes to leave room for a full
-investigation plus the final answer. Lower `agent-max-turns` if you want faster or cheaper
-reviews. Leave `agent-mode` unset (or set `agent-mode: off`) in `.github/robin.yml` to keep
-diff-only reviews.
+Agent mode can make more requests and consume more tokens than a single-shot review.
+The reusable workflow's job timeout is 45 minutes. Lower `agent-max-turns` to limit
+investigation turns, or set explicit `agent-mode: off` for diff-only reviews. Turn, tool-call
+and compaction statistics describe the investigation; they are not total request counts,
+cost analytics, a whole-run token ceiling or a measure of review quality. Retries,
+compaction and a fallback can add requests beyond the reported investigation turns.
 
 ## Review timing
 
@@ -704,8 +777,10 @@ constraints in mind — they are why reviews stay usable across models:
   changed lines only, not the whole file — so it doesn't invent bugs about code it can't
   see. The agent-mode prompt replaces this with "verify with the tools before flagging".
   The companion skill mirrors this: it treats findings as hypotheses to verify, not orders.
-- **Graceful tool fallback.** Agent mode is only used when the model accepts tool calls;
-  otherwise the same single-shot prompt runs, so weak or free models keep working.
+- **Bounded tool fallback.** On an explicit tool rejection, Robin attempts the single-shot
+  prompt with the complete diff subject to `max-diff-size`. This does not detect weak
+  reviews from a model that accepts tools, and the fallback can still fail. See
+  [model compatibility](#model-compatibility-and-usage).
 
 The parser (`src/review-parser.ts`) is deliberately forgiving — it normalizes severity,
 drops unparseable findings, and falls back to a markdown review if JSON mode fails — so a

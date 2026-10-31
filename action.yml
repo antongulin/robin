@@ -81,7 +81,7 @@ inputs:
     required: false
     default: ".github/robin.yml"
   agent-mode:
-    description: "Multi-turn review where the model reads files, greps, and lists the repository at the PR head before answering. auto uses it and falls back to the single-shot diff review when the model does not support tool calling; off always uses the single-shot review. Leave empty to defer to .github/robin.yml; when both are unset the single-shot review runs."
+    description: "auto runs a multi-turn review with read-only repository tools at the PR head; off uses a single-shot diff review without a snapshot or tools. Leave empty to defer to base-branch .github/robin.yml; when both are unset auto runs. Tool rejection or snapshot failure attempts a complete diff-only fallback subject to max-diff-size."
     required: false
     default: ""
   agent-max-turns:
