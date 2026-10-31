@@ -22,7 +22,7 @@ For a direct action step, `antongulin/robin@main` follows main and `@v2` follows
 the latest v2 release; an exact action release or full SHA pins its implementation.
 Do not present a reusable-workflow pin as an implementation pin.
 
-Unset `agent-mode` now defaults to `auto` (planned v2.13.0). Keep the action and
+Unset `agent-mode` defaults to `auto` on `main` and from v2.13.0. Keep the action and
 workflow input defaults blank so base-branch `.github/robin.yml` can select `off`.
 Explicit mode input overrides that config. For weak/local/small-context models,
 recommend explicit `off` until tool behavior, quality and context capacity have been

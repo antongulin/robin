@@ -194,12 +194,13 @@ These refs describe a **direct action step**, `uses: antongulin/robin@…`:
 | --- | --- |
 | `@main` | Latest changes on the default branch |
 | `@v2` | Latest `2.x` release (floating tag, updated each release) |
-| `@v2.12.4` | The action implementation in that release |
+| `@v2.13.0` | This release's action implementation, with the default of `auto` |
+| `@v2.12.4` | The previous release's action implementation, with the default of `off` |
 | Full commit SHA | The action implementation at that commit |
 | `@v0` | **Do not use** — outdated; workflows often fail |
 
 ```yaml
-uses: antongulin/robin@v2.12.4
+uses: antongulin/robin@v2.13.0
 ```
 
 A reusable-workflow ref pins only its workflow file. The workflows at `main`,
@@ -316,10 +317,10 @@ work. `/summary` stays single-shot in either mode.
 
 ### Default change and migration
 
-The new default applies on `main` and is planned for v2.13.0, the next v2 minor release.
+The new default applies on `main` and from v2.13.0 onward.
 In v2.12.4's direct action, an unset mode selected `off`. The reusable workflows at
 `main`, `v2` and `v2.12.4` call the action at `@main` inside the job, so their callers
-can receive this change when it merges to `main`, before the minor release publishes.
+receive action changes from `main` independently of the outer workflow's release.
 A tag or SHA pin of those workflow files pins only the outer workflow. Direct action
 refs differ: `antongulin/robin@v2.12.4` keeps that release's implementation, a full
 action SHA keeps that commit, and direct `@v2` follows the floating release tag.

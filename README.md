@@ -11,7 +11,7 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 [![Node 24](https://img.shields.io/badge/runtime-node24-brightgreen.svg)](action.yml)
 
 > [!IMPORTANT]
-> **Default change on `main`, planned for v2.13.0:** When you leave `agent-mode` unset in both inputs and repository config, Robin now uses `auto`. The model can read callers, types and tests before reporting findings.
+> **Default change on `main` and from v2.13.0:** When you leave `agent-mode` unset in both inputs and repository config, Robin now uses `auto`. The model can read callers, types and tests before reporting findings.
 >
 > Reviews may make extra model requests, take longer and use more tokens, runner time and network traffic. Files read through tools go to your configured LLM endpoint. Tool support alone does not ensure good reviews or enough context capacity. For weak, local or small-context models, start with explicit diff-only mode:
 >
@@ -435,13 +435,14 @@ For a **direct action step** (`uses: antongulin/robin@…`):
 | --- | --- |
 | `@main` | Latest changes on the default branch |
 | `@v2` | Latest `2.x` release (updated on each release) |
+| `@v2.13.0` | This release's action implementation, with the default of `auto` |
 | `@v2.12.4` | That release's action implementation, including its previous default of `off` |
 | Full commit SHA | The action implementation at that commit |
 
 For a **reusable workflow**, the ref selects the workflow file. The verified workflow
 files at `main`, `v2` and `v2.12.4` call `antongulin/robin@main` inside the job. Even an
 exact tag or SHA of those workflow files does not freeze the nested action. Those
-callers can receive the new default when it lands on `main`, before v2.13.0 publishes.
+callers receive action changes from `main` independently of the outer workflow's release.
 
 ```yaml
 uses: antongulin/robin/.github/workflows/review.yml@v2

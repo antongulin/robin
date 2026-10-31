@@ -2,6 +2,12 @@
 
 ## [2.13.0](https://github.com/antongulin/robin/compare/v2.12.4...v2.13.0) (2026-10-31)
 
+> [!IMPORTANT]
+> Unset `agent-mode` now defaults to `auto`. Reviews can use repository tools and consume more model requests, tokens and runner time. Set `agent-mode: off` for diff-only reviews.
+>
+> Each request defaults to an estimated **256,000-token working budget**, including a **32,000-token output cap** and **16,000** safety headroom. Both raw diff caps default to **500,000 characters**. Choose supported limits for your endpoint; these estimates do not guarantee model capacity. Total usage across turns and retries can exceed the per-request budget.
+>
+> For the previous single-shot/provider-default output shape, also set `estimated-request-token-budget: off` and leave `max-output-tokens` unset. Explicit output and character caps still apply. See the [migration guide](https://github.com/antongulin/robin/blob/main/docs/ADVANCED.md#default-change-and-migration).
 
 ### Features
 
