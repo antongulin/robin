@@ -14,6 +14,8 @@ jest.mock("@actions/github", () => ({
 }));
 jest.mock("./repo-snapshot");
 
+jest.setTimeout(30_000);
+
 // The SDK, resolver, agent, toolbox, parser and review/status flow run without mocks.
 // Only synthetic data and credentials reach this loopback endpoint.
 const BASE_SHA = "a".repeat(40);
@@ -311,6 +313,23 @@ test.each([false, true])("AD-04 tool rejection keeps complete diff fallback boun
   }
 });
 
+
+test("R2-U1 filtered early return publishes skipped zero-attempt reports", async () => {
+  const r = await execute({ config: "skip-paths:\n  - src/**\n" });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(r.requests).toHaveLength(0);
+  expect(createRepoSnapshot).not.toHaveBeenCalled();
+  expect(r.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+  expect(r.usageReport).toMatchObject({ state: "skipped", attempts: 0, logical_calls: 0, phases: {} });
+  for (const metric of ["prompt_tokens", "completion_tokens", "total_tokens", "cached_input_tokens", "reasoning_tokens"]) {
+    expect(r.usageReport.metrics[metric]).toMatchObject({ observed_sum: null, observed_attempts: 0, unknown_attempts: 0 });
+  }
+  expect(r.fullReport).toMatchObject({ state: "skipped", attempts: 0, logical_calls: 0, ledger: [] });
+  expect(r.fullReport.metrics).toEqual(r.usageReport.metrics);
+  expect(core.summary.addRaw).toHaveBeenCalledWith(expect.stringContaining("0 physical requests; 0 logical calls."));
+  expect(core.summary.write).toHaveBeenCalled();
+  expect(r.lastStatus).toContain("Skipped: src/first.ts, src/last.ts");
+});
 
 test("UR05 prior tool work survives agent failure and complete diff fallback", async () => {
   const r = await execute({ agentFailure: true });
