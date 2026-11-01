@@ -22,7 +22,7 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 >
 > **Request defaults:** the estimated request guard is **off** by default, so an unset `max-output-tokens` leaves the output cap to the provider/model. Set a positive `estimated-request-token-budget` to enable the estimate, its derived output cap (up to **32,000 tokens** when `max-output-tokens` is unset) and safety headroom of `ceil(budget / 16)`. Both raw diff allowances default to **500,000 characters**. These are configurable estimates, not model context guarantees. Total usage across turns/retries can exceed any per-request budget. See [request budgets](docs/ADVANCED.md#estimated-request-budget).
 >
-> `estimated-request-token-budget: off` remains valid and matches the default; explicit output and character caps still apply. Older reusable workflows may explicitly forward `50000`; Robin preserves that value.
+> `estimated-request-token-budget: off` remains valid and matches the default. It turns off only the local estimate, its safety headroom and its derived output cap; an explicit `max-output-tokens`, both raw diff caps, agent turn limits, the agent deadline and the working-history target still apply. Older reusable workflows may explicitly forward `50000`; Robin preserves that value.
 >
 > A nonblank workflow/action input overrides this file; change an existing `agent-mode: auto` input to `agent-mode: "off"` too. Some tagged reusable workflows call the action at `@main` and can receive this change before the release. See the [migration and model compatibility guide](docs/ADVANCED.md#default-change-and-migration) for input snippets, fallback limits and pin behavior. `/summary` stays single-shot.
 

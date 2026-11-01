@@ -60,8 +60,10 @@ are sample overrides, not defaults.
 ## Estimated request budget
 
 Robin sends the complete filtered request by default: the estimated request guard is
-**off** unless you set a numeric budget, and an unset `max-output-tokens` leaves the
-output cap to the provider/model. The guard applies to arbitrary provider/model IDs,
+**off** unless you set a numeric budget. In that state Robin applies no byte-based
+token estimate, no `ceil(budget / 16)` safety reserve and no budget-derived output cap,
+so an unset `max-output-tokens` leaves the output cap to the provider/model.
+The guard applies to arbitrary provider/model IDs,
 including custom local endpoints; Robin does not discover capacity or load a
 tokenizer/model registry. Set a numeric budget below your endpoint's effective context
 when needed. Published context sizes and supported output caps can differ from the
@@ -125,6 +127,21 @@ apply. There is no automatic disable on provider rejection. Once you set a numer
 budget, `/summary`, structured retries, outer retries, compatibility rebuilds, compaction
 and forced-final requests all face the same guard. A complete diff-only fallback must fit
 its actual request; Robin never clips the diff.
+
+**Limits with the estimate off.** These controls stay in force:
+
+| Control | Default or behavior |
+| --- | --- |
+| `max-output-tokens` | An explicit value is sent unchanged. Unset, the provider/model chooses the cap |
+| `max-diff-size`, `agent-max-diff-size` | 500000 characters each. A larger filtered diff fails before its request |
+| `agent-max-turns` | 40, maximum 100 |
+| Agent deadline | 30 minutes, including the finalization reserve |
+| Working-history target | Soft target of 450000 UTF-8 bytes; excludes the immutable system prompt and original review input |
+| Agent context recovery | One initial dispatch plus at most two strictly smaller recovery dispatches per logical request |
+
+Provider context and output limits, request timeouts, rate limits and transport errors can
+stop a run with the guard on or off. Disabling the estimate does not guarantee that a
+review completes.
 
 Each agent turn resends its accumulated investigation after bounded compaction.
 **Total invocation usage can exceed any per-request budget** across these requests. A new
