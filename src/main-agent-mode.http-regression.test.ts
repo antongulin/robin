@@ -62,6 +62,7 @@ interface Scenario {
   reportedModel?: string;
   snapshotFailure?: boolean;
   expireDuringAgent?: boolean;
+  contextRecoveryCutoff?: boolean;
 }
 
 async function execute(scenario: Scenario = {}) {
@@ -91,6 +92,9 @@ async function execute(scenario: Scenario = {}) {
       if (scenario.expireDuringAgent && requests.length === 1) {
         agentClockTime = realNow() + 31 * 60_000;
       }
+      if (scenario.contextRecoveryCutoff && requests.length === 3) {
+        agentClockTime = realNow() + 28.5 * 60_000;
+      }
       res.setHeader("content-type", "application/json");
       if (body.tools && scenario.rejectTools) {
         res.writeHead(400);
@@ -101,6 +105,11 @@ async function execute(scenario: Scenario = {}) {
         return;
       }
       const toolResult = body.messages.find(message => message.role === "tool");
+      if (scenario.contextRecoveryCutoff && body.tools && toolResult) {
+        res.writeHead(413);
+        res.end(JSON.stringify({ error: { message: "synthetic context rejection", type: "invalid_request_error" } }));
+        return;
+      }
       if ((scenario.agentFailure && body.tools && toolResult) || scenario.terminalFailure) {
         res.writeHead(401); res.end(JSON.stringify({ error: { message: "synthetic terminal failure", type: "authentication_error" } })); return;
       }
@@ -188,7 +197,7 @@ async function execute(scenario: Scenario = {}) {
       jest.mocked(core.summary.write).mockRejectedValueOnce(new Error("private reporting failure"));
       jest.mocked(core.setOutput).mockImplementation(() => { throw new Error("private output failure"); });
     }
-    if (scenario.expireDuringAgent) {
+    if (scenario.expireDuringAgent || scenario.contextRecoveryCutoff) {
       clockSpy = jest.spyOn(Date, "now").mockImplementation(() => agentClockTime ?? realNow());
     }
     await Promise.race([jest.isolateModulesAsync(async () => {
@@ -238,6 +247,21 @@ test("A6 total deadline failure posts the cause without starting a diff-only fal
   expect(result.lastStatus).toContain("deadline");
   expect(result.fullReport.ledger.map((attempt: { phase: string }) => attempt.phase)).toEqual(["agent"]);
   expect(result.fullReport.metrics.prompt_tokens.observed_sum).toBe(100);
+  expect(result.cleanup).toHaveBeenCalledTimes(1);
+});
+
+test("A6 recovery cutoff before total expiry permits complete diff-only fallback and keeps prior usage", async () => {
+  const result = await execute({ contextRecoveryCutoff: true });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(result.requests).toHaveLength(4);
+  expect(result.requests[2].tools).toBeUndefined();
+  expect(result.requests[3].tools).toBeUndefined();
+  expectCompleteDiff(result.requests[3]);
+  expect(result.octokit.rest.pulls.createReview).toHaveBeenCalledTimes(1);
+  expect(result.lastStatus).toContain("diff-only review");
+  expect(result.fullReport.ledger.map((attempt: { phase: string }) => attempt.phase))
+    .toEqual(["agent", "agent", "compaction", "diff-only-fallback"]);
+  expect(result.fullReport.ledger[0].usage.prompt_tokens.value).toBe(100);
   expect(result.cleanup).toHaveBeenCalledTimes(1);
 });
 

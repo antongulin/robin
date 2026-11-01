@@ -327,7 +327,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
             lastPrimaryError = cause;
           }
           lastPrimaryError = primaryError ?? lastPrimaryError;
-          if (primaryError !== undefined) throw deadlineError(phase, primaryError);
+          if (primaryError !== undefined) throw surfacePrimary(primaryError, phase);
           // A plain investigation call that runs out of time can still finalize from the
           // evidence already gathered; a finalization call that runs out of time cannot.
           if (finalizing) throw error;
@@ -347,7 +347,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
         try {
           recovered = await cleanup(target, now() < investigationCutoff);
         } catch (cleanupError) {
-          if (cleanupError instanceof AgentDeadlineError) throw deadlineError(phase, primaryError);
+          if (cleanupError instanceof AgentDeadlineError) throw surfacePrimary(primaryError, phase);
           throw cleanupError;
         }
         // Every recovery dispatch must be strictly smaller than the rejected body and meet

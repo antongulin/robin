@@ -86,10 +86,11 @@ The derived output cap applies only while the guard is enabled. Robin tries the
 endpoint's alternate cap spelling on parameter rejection but never drops or clamps an
 explicit cap. Unsupported caps can fail; choose a supported explicit value.
 
-Agent review measures its working history with the same serialized bytes. When a
-preflight rejection reports the excess, Robin tightens the recovery target by exactly
-that many bytes, so a retry removes enough conversation instead of resending the same
-overfull body.
+Agent review measures its working history with the same serialized bytes. Recovery aims
+to remove half of that history or the estimated excess (three bytes per estimated token),
+whichever is larger. If the excess consumes all mutable history, Robin stops without
+attempting a summary. The original diff and instructions stay intact; every retry must
+meet the smaller target and pass the full-request guard again.
 
 This heuristic can accept a request the provider cannot fit or reject one it could
 fit. JSON bytes differ from actual tokenization and chat framing; the safety reserve
@@ -98,7 +99,7 @@ push an otherwise eligible diff over budget. Estimates do not replace provider-r
 tokens, establish a hard token ceiling, or prove that a request fits your model.
 
 Both independent raw limits default to **500000 JavaScript string characters**.
-This allowance leaves working room; it is not an exact conversion from 256k.
+This allowance leaves working room; it is not an exact conversion from a token budget.
 Passing a raw cap does not establish whole-request fit. Tune the controls for
 your endpoint, for example on the **PR base branch**:
 
@@ -439,7 +440,10 @@ oversized notes or assistant history can still fail without a provider call.
 enough to ask for the final review without tools. Each request is aborted at its own
 deadline, and nothing is dispatched after it. If time runs out mid-turn, remaining tool
 calls receive explicit "not executed" results so the transcript stays valid.
-Deadline expiry or cancellation is terminal and does not start a diff-only fallback.
+Expiry of the overall agent deadline or caller cancellation is terminal and does not
+start a diff-only fallback. If context recovery reaches the investigation cutoff while
+time remains, Robin surfaces the original context error, allowing the existing complete
+diff-only fallback. It does not resend an unchanged overfull agent request to finalize.
 
 **Fallback.** If the model or provider rejects tool calling (for example OpenRouter's
 "No endpoints found that support tool use", or Ollama's "does not support tools"), the
@@ -599,7 +603,7 @@ cancelled, skipped and still-running jobs separately.
 
 Agent mode can make many model requests before producing a review. At its turn limit or
 investigation cutoff, Robin asks for a final answer without tools while time remains.
-Deadline expiry and cancellation stop the run without fallback. Other eligible failures
+Overall agent deadline expiry and caller cancellation stop the run without fallback. Other eligible failures
 can start a single-shot fallback, whose requests have their own timeout and retries.
 Snapshot preparation, fallback and posting also take time, so the agent deadline does
 not cap total job duration; the workflow job timeout still applies. Look for `Agent turn`, fallback warnings,

@@ -8,7 +8,7 @@ import * as core from "@actions/core";
 import { runAgentReview } from "./agent-review";
 import type { ChatCompletionResult, ChatMessage } from "./llm-client";
 import { CompletionLengthError, LLMRequestError, ToolsUnsupportedError } from "./llm-client";
-import { AgentDeadlineError } from "./llm-retry";
+import { AgentDeadlineError, isCancellationError } from "./llm-retry";
 import { assertRequestFits, EstimatedRequestBudgetError, serializedJsonBytes } from "./request-budget";
 
 const FINAL_JSON = '{"summary":"ok","high":[],"medium":[],"low":[],"suggestions":[]}';
@@ -596,6 +596,40 @@ it("A6-2 makes exactly one summary request and stops when that summary hits the 
   ).rejects.toThrow(/maximum context length/);
   expect(chatCompletion).toHaveBeenCalledTimes(1);
 });
+
+it.each(["summary-result", "summary-error", "recovery-result", "recovery-error"])(
+  "preserves the original context error at the investigation cutoff before total expiry (%s)", async (mode) => {
+    let clock = 0;
+    const primary = contextFull();
+    const calls: Array<{ messages: ChatMessage[]; options?: { toolChoice?: string } }> = [];
+    const chatWithTools = jest.fn(async (messages: ChatMessage[], _tools: unknown, options?: { toolChoice?: string }) => {
+      calls.push({ messages: messages.map((message) => ({ ...message })), options });
+      if (calls.length === 1) return { content: "", toolCalls: [toolCall("c1", "read_file", {})] };
+      if (calls.length === 2) throw primary;
+      clock = 28_000;
+      if (mode === "recovery-error") throw new Error("late transport failure");
+      return { content: FINAL_JSON };
+    });
+    const chatCompletion = jest.fn(async () => {
+      if (mode.startsWith("summary")) clock = 28_000;
+      if (mode === "summary-error") throw new Error("late summary failure");
+      return { content: "SHORT_NOTES" };
+    });
+    const toolbox = makeToolbox();
+    toolbox.execute.mockResolvedValue("x".repeat(10_000));
+    const error = await runAgentReview({
+      llm: { chatWithTools, chatCompletion }, toolbox, annotatedDiff: "diff", changedFiles: [], instructions: "",
+      budgets: { deadlineMs: 30_000 }, now: () => clock,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBe(primary);
+    expect(isCancellationError(error)).toBe(false);
+    expect(chatCompletion).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(mode.startsWith("summary") ? 2 : 3);
+    expect(calls.every((call) => call.options?.toolChoice !== "none")).toBe(true);
+    if (calls.length === 3) expect(bytesOf(calls[2].messages)).toBeLessThan(bytesOf(calls[1].messages));
+  }
+);
 
 it("rejects an oversized summary without truncating or adopting it", async () => {
   const { llm, calls, chatCompletion } = makeLlm(

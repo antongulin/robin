@@ -323,7 +323,7 @@ async function runAgentReview(options) {
                     }
                     lastPrimaryError = primaryError ?? lastPrimaryError;
                     if (primaryError !== undefined)
-                        throw deadlineError(phase, primaryError);
+                        throw surfacePrimary(primaryError, phase);
                     // A plain investigation call that runs out of time can still finalize from the
                     // evidence already gathered; a finalization call that runs out of time cannot.
                     if (finalizing)
@@ -351,7 +351,7 @@ async function runAgentReview(options) {
                 }
                 catch (cleanupError) {
                     if (cleanupError instanceof llm_retry_1.AgentDeadlineError)
-                        throw deadlineError(phase, primaryError);
+                        throw surfacePrimary(primaryError, phase);
                     throw cleanupError;
                 }
                 // Every recovery dispatch must be strictly smaller than the rejected body and meet
