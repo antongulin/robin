@@ -16,15 +16,18 @@ import {
   errorMessage,
   findUnsupportedRequestParam,
   getLlmCompletionAttemptCount,
+  isCancellationError,
   isInvalidReasoningEffortError,
   isOpenRouterRouterModel,
   isContextLengthError,
   isRetriableLlmError,
   isToolsUnsupportedError,
   isUnsupportedReasoningEffortError,
+  LlmRequestCancelledError,
   openRouterStallError,
   resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
+  throwIfAborted,
 } from "./llm-retry";
 import {
   detectLlmProvider,
@@ -82,7 +85,33 @@ export class CompletionLengthError extends Error {
   }
 }
 
-/** Identifies an LLM request failure while retaining its native provider cause. */
+/** Unknown completion metadata must not become diagnostic text. */
+function finishReasonLabel(reason: unknown): string {
+  return typeof reason === "string" && ["stop", "length", "tool_calls", "content_filter", "function_call"].includes(reason)
+    ? reason : "unknown";
+}
+
+/** Provider bodies can echo credentials and private replay. Only local labels leave this boundary. */
+function providerFailureSummary(error: unknown): string {
+  const value = error && typeof error === "object" ? (error as { status?: unknown }).status : undefined;
+  const status = typeof value === "number" && Number.isInteger(value) && value >= 400 && value <= 599
+    ? value : undefined;
+  const suffix = status === undefined ? "" : ` (HTTP ${status})`;
+  if (isContextLengthError(error)) return `Provider context or payload limit exceeded${suffix}`;
+  if (/^OpenRouter stall: no first response within \d+ ms$/.test(errorMessage(error))) {
+    return "OpenRouter stall: no first response";
+  }
+  const category = status === 401 ? "Provider authentication failed"
+    : status === 403 ? "Provider access denied"
+      : status === 404 ? "Provider endpoint unavailable"
+        : status === 429 ? "Provider rate limit exceeded"
+          : status !== undefined && status >= 500 ? "Provider server error"
+            : status === 400 || status === 422 ? "Provider rejected request parameters"
+              : "Provider request failed";
+  return category + suffix;
+}
+
+/** Identifies an LLM request failure while retaining its native provider cause internally. */
 export class LLMRequestError extends Error {
   constructor(message: string, options: ErrorOptions) {
     super(message, options);
@@ -124,12 +153,23 @@ export interface ToolChatOptions {
   usageContext?: UsageContext;
   /** "none" asks for a final text answer while keeping the tool definitions the history needs. */
   toolChoice?: "auto" | "none";
+  /**
+   * Per-call cancellation. Additive: when omitted nothing changes. Aborting is terminal for
+   * this call — no outer or compatibility retry — and the signal is never serialized.
+   */
+  signal?: AbortSignal;
+}
+
+/** Optional per-request controls; kept separate from `usageContext` so accounting stays intact. */
+export interface RequestControl {
+  /** Terminal per-call cancellation; never sent to the provider. */
+  signal?: AbortSignal;
 }
 
 /** The provider or model cannot take `tools`; callers should fall back to a plain completion. */
 export class ToolsUnsupportedError extends Error {
   constructor(cause: unknown) {
-    super(`Model does not support tool calling: ${errorMessage(cause)}`);
+    super(`Model does not support tool calling: ${providerFailureSummary(cause)}`, { cause });
     this.name = "ToolsUnsupportedError";
   }
 }
@@ -139,6 +179,7 @@ interface CompletionOptions {
   jsonResponseMode: boolean;
   tools?: ToolDefinition[];
   toolChoice?: "auto" | "none";
+  signal?: AbortSignal;
 }
 
 export type LlmProgressHandler = (detail: string) => void | Promise<void>;
@@ -270,7 +311,7 @@ export class LLMClient {
     if (param === "response_format" && this.responseFormat === "json_schema" && this.provider !== "anthropic") {
       this.responseFormat = "json_object";
       core.warning(
-        `Provider rejected the JSON schema response_format (${errorMessage(error)}). Retrying once with plain JSON-object mode and keeping that shape for the rest of this run.`
+        `Provider rejected the JSON schema response_format (${providerFailureSummary(error)}). Retrying once with plain JSON-object mode and keeping that shape for the rest of this run.`
       );
       return true;
     }
@@ -293,7 +334,7 @@ export class LLMClient {
           // Both spellings have now been rejected. Never fall back to an uncapped request for a
           // configured cap — surface the provider's error instead.
           core.error(
-            `Provider rejected both max_tokens and max_completion_tokens (${errorMessage(error)}). ` +
+            `Provider rejected both max_tokens and max_completion_tokens (${providerFailureSummary(error)}). ` +
               "The configured max-output-tokens cap cannot be enforced on this endpoint, so the request is not sent uncapped."
           );
           return false;
@@ -310,7 +351,7 @@ export class LLMClient {
     }
 
     core.warning(
-      `Provider rejected the ${param} parameter (${errorMessage(error)}). Retrying once ${action} and keeping that shape for the rest of this run.`
+      `Provider rejected the ${param} parameter (${providerFailureSummary(error)}). Retrying once ${action} and keeping that shape for the rest of this run.`
     );
     return true;
   }
@@ -336,14 +377,15 @@ export class LLMClient {
     systemPrompt: string,
     userContent: string,
     jsonResponseMode = false,
-    usageContext?: UsageContext
+    usageContext?: UsageContext,
+    control?: RequestControl
   ): Promise<ChatCompletionResult> {
     return this.complete(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
-      { jsonResponseMode, usageContext }
+      { jsonResponseMode, usageContext, signal: control?.signal }
     );
   }
 
@@ -361,6 +403,7 @@ export class LLMClient {
       tools,
       toolChoice: options.toolChoice,
       usageContext: options.usageContext,
+      signal: options.signal,
     });
   }
 
@@ -374,6 +417,7 @@ export class LLMClient {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      throwIfAborted(options.signal);
       const useJson = shouldUseJsonResponseMode(attempt, options.jsonResponseMode);
 
       try {
@@ -382,6 +426,8 @@ export class LLMClient {
           `Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`
         );
         const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson }, logicalCall, attempt, trigger);
+        // An aborted caller discards any late result: cancellation is terminal, never a success.
+        throwIfAborted(options.signal);
 
         if (result.finishReason === "length") {
           throw new CompletionLengthError(result.usage);
@@ -394,40 +440,42 @@ export class LLMClient {
         }
 
         trigger = "outer-empty-retry";
-        lastFinishReason = result.finishReason || "unknown";
+        lastFinishReason = finishReasonLabel(result.finishReason);
         core.warning(
           `LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`
         );
       } catch (error) {
+        // Cancellation is terminal: no retry, no compatibility step, no stall reclassification.
+        if (options.signal?.aborted || isCancellationError(error)) throw new LlmRequestCancelledError();
         if (error instanceof CompletionLengthError || error instanceof EstimatedRequestBudgetError) throw error;
         trigger = "outer-error-retry";
         lastError = error;
         if (options.tools && isToolsUnsupportedError(error)) {
           throw new ToolsUnsupportedError(error);
         }
-        core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${error}`);
+        core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${providerFailureSummary(error)}`);
 
         if (!isRetriableLlmError(error, this.retryContext()) || attempt === this.maxAttempts) {
-          core.error(`LLM API error: ${error}`);
-          throw new LLMRequestError(`Failed to get response from LLM: ${error}`, { cause: error });
+          core.error(`LLM API error: ${providerFailureSummary(error)}`);
+          throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
         }
       }
 
       if (attempt < this.maxAttempts) {
         const waitMs = computeRetryDelayMs(attempt, this.retryContext());
-        const reason = lastError instanceof Error ? lastError.message : "empty response";
+        const reason = lastError === undefined ? "empty response" : providerFailureSummary(lastError);
         core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
         await this.progress(
           `Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`
         );
-        await delayMs(waitMs);
+        await delayMs(waitMs, options.signal);
       }
     }
 
     if (lastError && isRetriableLlmError(lastError, this.retryContext())) {
-      core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
+      core.error(`LLM API error after ${this.maxAttempts} attempts: ${providerFailureSummary(lastError)}`);
       throw new LLMRequestError(
-        `Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`,
+        `Failed to get response from LLM after ${this.maxAttempts} attempts: ${providerFailureSummary(lastError)}`,
         { cause: lastError }
       );
     }
@@ -454,6 +502,9 @@ export class LLMClient {
   ): Promise<ChatCompletionResult> {
     let compatibility = 0;
     for (;;) {
+      // Checked before the physical ledger row and dispatch, and again after any awaited
+      // progress or compatibility work above.
+      throwIfAborted(options.signal);
       const request = this.buildMessagesRequest(messages, options);
       assertRequestFits(request, this.estimatedRequestTokenBudget, request.max_tokens ?? request.max_completion_tokens ?? undefined);
       const record = this.usageLedger?.begin(options.usageContext, logicalCall, outerAttempt, ++compatibility,
@@ -468,11 +519,13 @@ export class LLMClient {
       let outcome: "accepted" | "empty" | "length" | "error" = "error";
       let adjustment: CompatibilityAdjustment | null = null;
       try {
-        const result = await this.dispatch(request, record);
+        const result = await this.dispatch(request, record, options.signal);
+        throwIfAborted(options.signal);
         outcome = result.finishReason === "length" ? "length" : result.content || result.toolCalls?.length ? "accepted" : "empty";
         return result;
       } catch (error) {
         this.usageLedger?.captureError(record, error);
+        if (options.signal?.aborted || isCancellationError(error)) throw new LlmRequestCancelledError();
         if (await this.applyReasoningFallback(error)) { adjustment = "reasoning"; continue; }
         if (this.applyParameterFallback(error, request)) {
           const param = findUnsupportedRequestParam(error, this.sentDroppableParams(request));
@@ -501,7 +554,7 @@ export class LLMClient {
     this.reasoningFallbackActive = true;
     this.reasoningFallbackReason = fallbackReason;
     core.warning(
-      `Provider rejected the configured reasoning effort as ${fallbackReason === "invalid-value" ? "invalid" : "unsupported"} (${errorMessage(error)}). ` +
+      `Provider rejected the configured reasoning effort as ${fallbackReason === "invalid-value" ? "invalid" : "unsupported"} (${providerFailureSummary(error)}). ` +
         "Retrying once without the reasoning parameter and continuing this run without reasoning controls."
     );
     await this.progress(
@@ -512,17 +565,17 @@ export class LLMClient {
     return true;
   }
 
-  private async dispatch(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
+  private async dispatch(request: ChatRequest, record?: UsageAttempt, signal?: AbortSignal): Promise<ChatCompletionResult> {
     return this.routerModel
-      ? await this.streamChatCompletion(request, record)
-      : await this.blockingChatCompletion(request, record);
+      ? await this.streamChatCompletion(request, record, signal)
+      : await this.blockingChatCompletion(request, record, signal);
   }
 
-  private async blockingChatCompletion(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
+  private async blockingChatCompletion(request: ChatRequest, record?: UsageAttempt, signal?: AbortSignal): Promise<ChatCompletionResult> {
     const response = await this.client.chat.completions.create({
       ...(request as OpenAI.Chat.Completions.ChatCompletionCreateParams),
       stream: false,
-    });
+    }, signal ? { signal } : undefined);
     this.usageLedger?.capture(record, response);
     this.usageLedger?.received(record);
     const toolCalls = this.extractToolCalls(response);
@@ -538,7 +591,11 @@ export class LLMClient {
   }
 
   /** Stream so the first SSE chunk (model id) proves OpenRouter routed; abort if none arrives. */
-  private async streamChatCompletion(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
+  private async streamChatCompletion(
+    request: ChatRequest,
+    record?: UsageAttempt,
+    signal?: AbortSignal
+  ): Promise<ChatCompletionResult> {
     const firstChunkMs = DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
     const controller = new AbortController();
     let gotFirstChunk = false;
@@ -556,7 +613,13 @@ export class LLMClient {
       }
     };
 
+    // The parent signal joins the first-chunk stall controller; the listener and timer are
+    // always removed, and the parent signal itself is never serialized.
+    const onParentAbort = () => controller.abort();
+    if (signal) signal.addEventListener("abort", onParentAbort, { once: true });
+
     try {
+      throwIfAborted(signal);
       const stream = await this.client.chat.completions.create(
         { ...(request as OpenAI.Chat.Completions.ChatCompletionCreateParams), stream: true },
         { signal: controller.signal }
@@ -604,6 +667,9 @@ export class LLMClient {
         }
       }
 
+      // The SDK can end iteration on abort without throwing. Preserve observed usage as
+      // nonfinal instead of marking a partial stream complete.
+      throwIfAborted(signal);
       this.usageLedger?.received(record);
       const toolCalls = [...toolCallParts.entries()]
         .sort(([a], [b]) => a - b)
@@ -620,6 +686,8 @@ export class LLMClient {
     } catch (error) {
       this.usageLedger?.captureError(record, error);
       clearStallTimer();
+      // A caller abort is terminal and must not be reclassified as a router stall.
+      if (signal?.aborted) throw new LlmRequestCancelledError();
       if (finishReason === "length") throw new CompletionLengthError(usage);
       if (!gotFirstChunk) {
         if ((request.tools && isToolsUnsupportedError(error)) || isContextLengthError(error)) {
@@ -648,6 +716,9 @@ export class LLMClient {
         throw openRouterStallError(firstChunkMs);
       }
       throw error;
+    } finally {
+      if (signal) signal.removeEventListener("abort", onParentAbort);
+      clearStallTimer();
     }
   }
 
@@ -758,7 +829,7 @@ export class LLMClient {
     }
 
     core.warning(
-      `LLM choice has no text content (finish_reason=${choice.finish_reason || "unknown"}).`
+      `LLM choice has no text content (finish_reason=${finishReasonLabel(choice.finish_reason)}).`
     );
     return "";
   }

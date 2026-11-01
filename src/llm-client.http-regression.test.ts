@@ -240,9 +240,10 @@ describe("max-output-tokens compatibility (real local endpoint)", () => {
       try {
         const client = makeClient(gateway.baseUrl, model, 8);
 
-        await expect(client.chatCompletion("system", "user")).rejects.toThrow(
-          /Invalid value for/,
-        );
+        await expect(client.chatCompletion("system", "user")).rejects.toMatchObject({
+          name: "LLMRequestError", message: expect.stringContaining(`HTTP ${status}`),
+          cause: expect.objectContaining({ status, param: field, message: expect.stringMatching(/Invalid value for/) }),
+        });
         expect(gateway.requests).toHaveLength(1);
         expect(gateway.requests[0]).toHaveProperty(field, 8);
         expect(hasAnyTokenField(gateway.requests[0])).toBe(true);
@@ -276,9 +277,10 @@ describe("max-output-tokens compatibility (real local endpoint)", () => {
     try {
       const client = makeClient(gateway.baseUrl, "gpt-5", 1);
 
-      await expect(client.chatCompletion("system", "user")).rejects.toThrow(
-        /Unsupported value for/,
-      );
+      await expect(client.chatCompletion("system", "user")).rejects.toMatchObject({
+        name: "LLMRequestError", message: expect.stringContaining("HTTP 400"),
+        cause: expect.objectContaining({ status: 400, message: expect.stringMatching(/Unsupported value for/) }),
+      });
       expect(gateway.requests).toHaveLength(1);
       expect(gateway.requests[0]).toHaveProperty("max_completion_tokens", 1);
       expect(gateway.requests[0]).not.toHaveProperty("max_tokens");
@@ -434,7 +436,10 @@ describe("OpenCode Go max effort (real OpenAI SDK and local endpoint)", () => {
     const restore = redirectSdkClientToGateway(client, gateway);
     try {
       for (const user of ["first", "second"]) {
-        await expect(client.chatCompletion("system", user)).rejects.toThrow(/reasoning_effort/);
+        await expect(client.chatCompletion("system", user)).rejects.toMatchObject({
+          name: "LLMRequestError", message: expect.stringContaining(`HTTP ${status}`),
+          cause: expect.objectContaining({ status, code, param: "reasoning_effort", message: expect.stringContaining(message) }),
+        });
       }
       expect(gateway.requests).toHaveLength(2);
       for (const body of gateway.requests) {
@@ -527,7 +532,9 @@ test.each([false, true])("UR09 actual SDK SSE terminal usage and interruption (i
   const ledger = new UsageLedger();
   try {
     const client = new LLMClient(gateway.baseUrl, "synthetic-key", "openrouter/free", 1234, undefined, 1, undefined, undefined, undefined, ledger);
-    if (interrupted) await expect(client.chatCompletion("s", "u")).rejects.toThrow("synthetic stream failure");
+    if (interrupted) await expect(client.chatCompletion("s", "u")).rejects.toMatchObject({
+      name: "LLMRequestError", cause: expect.objectContaining({ message: expect.stringContaining("synthetic stream failure") }),
+    });
     else expect((await client.chatCompletion("s", "u")).content).toBe("review");
     expect(gateway.requests).toHaveLength(1);
     expect(gateway.requests[0]).toMatchObject({ stream: true, max_tokens: 1234 });
@@ -634,7 +641,10 @@ test("RB02 rejection of both spellings preserves default budget cap and never se
   try {
     const client = new LLMClient(gateway.baseUrl, "test-key", "unknown-local", undefined, undefined, 1,
       undefined, undefined, undefined, undefined, 256000);
-    await expect(client.chatCompletion("s", "u", false)).rejects.toThrow("Unsupported parameter: 'max_completion_tokens'");
+    await expect(client.chatCompletion("s", "u", false)).rejects.toMatchObject({
+      name: "LLMRequestError", message: expect.stringContaining("HTTP 400"),
+      cause: expect.objectContaining({ status: 400, message: expect.stringContaining("Unsupported parameter: 'max_completion_tokens'") }),
+    });
     expect(gateway.requests).toHaveLength(2);
     expect(gateway.requests.map(body => body.max_tokens ?? body.max_completion_tokens)).toEqual([32000, 32000]);
     expect(gateway.requests.every(hasAnyTokenField)).toBe(true);

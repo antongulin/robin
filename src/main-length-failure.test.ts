@@ -137,12 +137,13 @@ test.each([
 ])("A2 context/input failure (%s) gives scope and capacity advice through the client wrapper", async (status, message) => {
   const create = jest.fn().mockRejectedValue(Object.assign(new Error(message), { status }));
   const { octokit, cleanup, executeTool } = await execute(create);
-  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(message));
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(`context or payload limit exceeded (HTTP ${status})`));
   expect(octokit.rest.pulls.createReview).not.toHaveBeenCalled();
   expect(executeTool).not.toHaveBeenCalled();
   expect(cleanup).toHaveBeenCalledTimes(1);
   const body = octokit.rest.issues.updateComment.mock.calls.at(-1)![0].body;
-  expect(body).toContain(message);
+  expect(body).toContain(`context or payload limit exceeded (HTTP ${status})`);
+  expect(body).not.toContain(message);
   expect(body).toContain("smaller logically complete PRs");
   expect(body).toContain("keep related implementation and tests together");
   expect(body).toContain("model/provider with larger effective context capacity");
@@ -172,12 +173,13 @@ test.each(["Unauthorized", "Unauthorized: context window access denied"])(
   "A3 ordinary provider failure retains generic guidance: %s", async message => {
     const create = jest.fn().mockRejectedValue(Object.assign(new Error(message), { status: 401 }));
     const { octokit, cleanup } = await execute(create);
-    expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining(message));
+    expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("authentication failed (HTTP 401)"));
     expect(octokit.rest.pulls.createReview).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledTimes(2);
     expect(cleanup).toHaveBeenCalledTimes(1);
     const body = octokit.rest.issues.updateComment.mock.calls.at(-1)![0].body;
-    expect(body).toContain(message);
+    expect(body).toContain("authentication failed (HTTP 401)");
+    expect(body).not.toContain(message);
     expect(body).toContain("Check the error above and resolve its cause, then comment `/robin` to try again.");
     expect(body).not.toContain("Free model routes drop");
     expect(body).not.toContain("smaller logically complete PRs");

@@ -1,7 +1,11 @@
 /** Heuristic for the installed SDK's complete, pretty-printed JSON request body. */
 export const REQUEST_ESTIMATOR = "utf8-json-div3-v1";
-export const DEFAULT_ESTIMATED_REQUEST_TOKEN_BUDGET = 256_000;
 export type EstimatedRequestTokenBudget = number | "off";
+/**
+ * Opt-in guard. Unset keeps the provider's own request shape: no estimate, no derived output
+ * cap. An explicit positive number restores the documented hard enforcement.
+ */
+export const DEFAULT_ESTIMATED_REQUEST_TOKEN_BUDGET: EstimatedRequestTokenBudget = "off";
 
 /** Fixed diagnostics deliberately omit invalid input/config text. */
 export function positiveSafeInteger(value: string | number, setting: string): number {
@@ -47,6 +51,14 @@ export class EstimatedRequestBudgetError extends Error {
   }
 }
 
+/**
+ * Exact UTF-8 byte size of the SDK's pretty-printed JSON serialization. Shared by the request
+ * estimator and the agent's working-history measurement so both use one definition.
+ */
+export function serializedJsonBytes(value: object): number {
+  return Buffer.byteLength(JSON.stringify(value, null, 2), "utf8");
+}
+
 /** No serialization is retained; estimates are separate from provider-reported usage. */
 export function assertRequestFits(
   body: object,
@@ -57,7 +69,7 @@ export function assertRequestFits(
   positiveSafeInteger(budget, "estimated-request-token-budget");
   const output = positiveSafeInteger(outputReserve ?? 0, "max-output-tokens");
   // OpenAI SDK 4.104.0 core serializes JSON with two-space indentation.
-  const bytes = Buffer.byteLength(JSON.stringify(body, null, 2), "utf8");
+  const bytes = serializedJsonBytes(body);
   const estimatedInput = Math.ceil(bytes / 3);
   const safetyHeadroom = Math.ceil(budget / 16);
   // Subtract reserves instead of summing potentially unsafe integers.

@@ -167,16 +167,34 @@ fails before that request, reporting the observed size, the cap that applied, an
 it (`src/input-limit.ts`). Do not reintroduce truncated diff input or claim that agent tools
 recover dropped hunks; commit the rebuilt `dist/index.js` with the change.
 
-**Estimated request budget.** Default decimal 256000 per request; `utf8-json-div3-v1`
-counts ceil(complete final SDK JSON UTF-8 bytes/3), plus actual output cap and
-ceil(budget/16) safety. Default output scales up to 32000; raw diff caps default 500000.
-Blank metadata inherits base config; explicit values, including old 50000, win.
-Guard every rebuilt body before ledger begin, including stream/private replay/tools/schema.
-Typed preflight errors bypass retries; bounded agent compaction may recover. No diff
-clipping, no silent output-cap dropping/clamping. Guard off plus agent-mode off and
-absent explicit output restores the previous request shape. Keep estimates separate
-from provider usage; no prompt/private/source text in budget diagnostics. See
+**Estimated request budget.** Default `off` (no estimate, provider/model output default);
+a numeric budget enables `utf8-json-div3-v1`, which counts ceil(complete final SDK JSON
+UTF-8 bytes/3), plus actual output cap and ceil(budget/16) safety. Derived output scales
+up to 32000; raw diff caps default 500000. Blank metadata inherits base config; explicit
+values, including old 50000, win. Guard every rebuilt body before ledger begin, including
+stream/private replay/tools/schema. Typed preflight errors bypass retries; bounded agent
+compaction may recover. No diff clipping, no silent output-cap dropping/clamping. Guard
+off plus absent explicit output keeps the provider/model request shape. Keep estimates
+separate from provider usage; no prompt/private/source text in budget diagnostics. See
 `docs/ADVANCED.md#estimated-request-budget`.
+
+**Agent context and deadline.** Measure working history as the positive difference in
+serialized pretty-JSON UTF-8 bytes between the current conversation and the immutable
+system prompt plus original review input; a large diff must never trigger cleanup by
+itself. The soft target (`DEFAULT_AGENT_CONTEXT_BYTES`, 450000) is independent of diff
+size. Cleanup elides only tool results a later assistant turn already consumed, then
+allows at most one semantic rebuild per evidence epoch. Send the full transcript to the
+summary unclipped, accept notes only up to 12000 UTF-8 bytes, and commit only when the
+candidate fits the target and is strictly smaller; otherwise keep the previous state.
+Bound each logical request to one initial dispatch plus at most two strictly smaller
+recovery dispatches, with the target halving mutable history and tightened by an explicit
+budget excess. There is no lifetime compaction ceiling, and `compactions` counts committed
+rebuilds only. A default/`off` run may still send an accepted request above the soft
+target; proactive cleanup never fails the review on its own. The total deadline includes a
+finalization reserve (`min(120000 ms, 10% of the budget)`), aborts each in-flight request
+at its own deadline, dispatches nothing after it, and gives unrun tool calls explicit
+not-executed results. See
+`docs/ADVANCED.md#agent-mode-multi-turn-review-with-repository-context`.
 
 **Usage reporting.** Keep accounting below both retry loops and observe before extraction or
 awaited stream progress. Pass phase context explicitly; never send it to the provider.
@@ -195,7 +213,12 @@ as private completion metadata, including empty strings and streamed string delt
 Replay it unchanged only on its original assistant tool message, including retained
 compaction tails and forced-final requests. Omit absent or invalid values. Keep it out
 of summary prompts, progress/status updates, Robin logs, and visible reviews; use
-`content` for review text. Low-level SDK debug logging can expose raw payloads.
+`content` for review text. Provider error bodies can echo credentials or replay data:
+retain native causes internally for classification, but use controlled failure categories
+and numeric HTTP status in LLM errors, logs and progress updates. Do not publish raw
+provider messages, including compatibility and tool-support errors. Empty-response logs
+and failure messages use known completion-reason labels or `unknown` for invalid values.
+Low-level SDK debug logging can expose raw payloads.
 
 Installers preserve complete custom identity workflows (explicit token mappings, App
 token steps, or inherited secrets), including their refs, rather than reconstructing

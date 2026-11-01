@@ -6,6 +6,7 @@ import { join } from "path";
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { createRepoSnapshot } from "./repo-snapshot";
+import { annotateDiffWithLineNumbers } from "./diff-annotate";
 
 jest.mock("@actions/core");
 jest.mock("@actions/github", () => ({
@@ -23,6 +24,7 @@ const HEAD_SHA = "b".repeat(40);
 const CONTEXT = "CONTEXT_OUTSIDE_THE_DIFF_7319";
 const FIRST = "FIRST_FILE_MARKER";
 const TAIL = "FINAL_DIFF_TAIL_MARKER";
+const PRIVATE_ERROR_ECHO = "PRIVATE_ERROR_ECHO_3217";
 const diff = [
   "diff --git a/src/first.ts b/src/first.ts",
   "--- a/src/first.ts", "+++ b/src/first.ts", "@@ -1 +1 @@",
@@ -50,6 +52,7 @@ interface Scenario {
   rejectTools?: boolean;
   singleShotCap?: number;
   agentFailure?: boolean;
+  usageFailure?: boolean;
   structuredRetry?: boolean;
   summary?: boolean;
   issueComment?: boolean;
@@ -58,6 +61,10 @@ interface Scenario {
   postingFailure?: boolean;
   noObservedHead?: boolean;
   reportedModel?: string;
+  snapshotFailure?: boolean;
+  expireDuringAgent?: boolean;
+  contextRecoveryCutoff?: boolean;
+  echoFailure?: boolean;
 }
 
 async function execute(scenario: Scenario = {}) {
@@ -70,9 +77,13 @@ async function execute(scenario: Scenario = {}) {
   await writeFile(join(root, "src/context.ts"), `// ${CONTEXT}\n`);
   const cleanup = jest.fn(() => rm(root, { recursive: true, force: true }));
   jest.mocked(createRepoSnapshot).mockResolvedValue({ root, cleanup });
+  if (scenario.snapshotFailure) jest.mocked(createRepoSnapshot).mockRejectedValueOnce(new Error("snapshot access denied"));
 
   const requests: WireRequest[] = [];
   const credentials: (string | undefined)[] = [];
+  const realNow = Date.now.bind(Date);
+  let agentClockTime: number | undefined;
+  let clockSpy: jest.SpyInstance | undefined;
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", chunk => chunks.push(Buffer.from(chunk)));
@@ -80,6 +91,12 @@ async function execute(scenario: Scenario = {}) {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as WireRequest;
       requests.push(body);
       credentials.push(req.headers.authorization);
+      if (scenario.expireDuringAgent && requests.length === 1) {
+        agentClockTime = realNow() + 31 * 60_000;
+      }
+      if (scenario.contextRecoveryCutoff && requests.length === 3) {
+        agentClockTime = realNow() + 28.5 * 60_000;
+      }
       res.setHeader("content-type", "application/json");
       if (body.tools && scenario.rejectTools) {
         res.writeHead(400);
@@ -90,8 +107,27 @@ async function execute(scenario: Scenario = {}) {
         return;
       }
       const toolResult = body.messages.find(message => message.role === "tool");
+      if (scenario.echoFailure && toolResult) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: { message:
+          `Rejected authorization ${req.headers.authorization}; request ${JSON.stringify(body)}`,
+        } }));
+        return;
+      }
+      if (scenario.contextRecoveryCutoff && body.tools && toolResult) {
+        res.writeHead(413);
+        res.end(JSON.stringify({ error: { message: "synthetic context rejection", type: "invalid_request_error" } }));
+        return;
+      }
       if ((scenario.agentFailure && body.tools && toolResult) || scenario.terminalFailure) {
         res.writeHead(401); res.end(JSON.stringify({ error: { message: "synthetic terminal failure", type: "authentication_error" } })); return;
+      }
+      // A7-2: one accepted agent turn, then a usage-free 413 that also rejects the single
+      // bounded recovery summary. Nothing about this failure is recoverable in fixture terms.
+      if (scenario.usageFailure && (!body.tools || toolResult)) {
+        res.writeHead(413);
+        res.end(JSON.stringify({ error: { message: "synthetic request rejected", type: "invalid_request_error" } }));
+        return;
       }
       const investigate = body.tools && !toolResult;
       const content = JSON.stringify({
@@ -104,7 +140,8 @@ async function execute(scenario: Scenario = {}) {
         id: "synthetic", object: "chat.completion", model: scenario.reportedModel ?? "reported-backend",
         usage: { prompt_tokens: requests.length * 100, completion_tokens: requests.length * 10, total_tokens: requests.length * 110 },
         choices: [{ index: 0, finish_reason: investigate ? "tool_calls" : "stop", message: investigate
-          ? { role: "assistant", content: null, tool_calls: [{ id: "context_call", type: "function",
+          ? { role: "assistant", content: null, reasoning_content: scenario.echoFailure ? PRIVATE_ERROR_ECHO : undefined,
+            tool_calls: [{ id: "context_call", type: "function",
             function: { name: "read_file", arguments: '{"path":"src/context.ts"}' } }] }
           : { role: "assistant", content: scenario.structuredRetry && requests.length === 1 ? "unparseable response" : content } }],
       }));
@@ -170,6 +207,9 @@ async function execute(scenario: Scenario = {}) {
       jest.mocked(core.summary.write).mockRejectedValueOnce(new Error("private reporting failure"));
       jest.mocked(core.setOutput).mockImplementation(() => { throw new Error("private output failure"); });
     }
+    if (scenario.expireDuringAgent || scenario.contextRecoveryCutoff) {
+      clockSpy = jest.spyOn(Date, "now").mockImplementation(() => agentClockTime ?? realNow());
+    }
     await Promise.race([jest.isolateModulesAsync(async () => {
       const { actionCompletion } = await import("./main");
       await actionCompletion;
@@ -183,6 +223,7 @@ async function execute(scenario: Scenario = {}) {
     const lastStatus = octokit.rest.issues.updateComment.mock.calls.at(-1)?.[0].body as string | undefined;
     return { requests, credentials, octokit, cleanup, lastStatus, usageReport, fullReport };
   } finally {
+    clockSpy?.mockRestore();
     if (previousTemp === undefined) delete process.env.RUNNER_TEMP; else process.env.RUNNER_TEMP = previousTemp;
     await rm(reportRoot, { recursive: true, force: true });
     jest.mocked(core.setOutput).mockReset();
@@ -206,6 +247,33 @@ function expectCompleteDiff(request: WireRequest) {
 }
 
 beforeEach(() => { jest.clearAllMocks(); });
+
+test("A6 total deadline failure posts the cause without starting a diff-only fallback", async () => {
+  const result = await execute({ expireDuringAgent: true });
+  expect(result.requests).toHaveLength(1);
+  expect(result.requests[0].tools).toBeDefined();
+  expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("deadline"));
+  expect(result.lastStatus).toContain("deadline");
+  expect(result.fullReport.ledger.map((attempt: { phase: string }) => attempt.phase)).toEqual(["agent"]);
+  expect(result.fullReport.metrics.prompt_tokens.observed_sum).toBe(100);
+  expect(result.cleanup).toHaveBeenCalledTimes(1);
+});
+
+test("A6 recovery cutoff before total expiry permits complete diff-only fallback and keeps prior usage", async () => {
+  const result = await execute({ contextRecoveryCutoff: true });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(result.requests).toHaveLength(4);
+  expect(result.requests[2].tools).toBeUndefined();
+  expect(result.requests[3].tools).toBeUndefined();
+  expectCompleteDiff(result.requests[3]);
+  expect(result.octokit.rest.pulls.createReview).toHaveBeenCalledTimes(1);
+  expect(result.lastStatus).toContain("diff-only review");
+  expect(result.fullReport.ledger.map((attempt: { phase: string }) => attempt.phase))
+    .toEqual(["agent", "agent", "compaction", "diff-only-fallback"]);
+  expect(result.fullReport.ledger[0].usage.prompt_tokens.value).toBe(100);
+  expect(result.cleanup).toHaveBeenCalledTimes(1);
+});
 
 test("ID1 omitted API key preserves local model identifiers and the Ollama wire placeholder", async () => {
   const metadata = await readFile(join(__dirname, "..", "action.yml"), "utf8");
@@ -343,6 +411,9 @@ test("UR05 prior tool work survives agent failure and complete diff fallback", a
   expectCompleteDiff(r.requests[2]);
   expect(r.octokit.rest.pulls.createReview).toHaveBeenCalledTimes(1);
   expect(r.cleanup).toHaveBeenCalledTimes(1);
+  expect(r.lastStatus).toContain("diff-only review (agent review failed)");
+  expect(r.lastStatus).not.toContain("agent review:");
+  expect(r.lastStatus).not.toMatch(/truncat|partial diff/i);
   expect(r.fullReport.ledger.map((a: any) => [a.phase, a.outcome])).toEqual([["agent", "accepted"], ["agent", "error"], ["diff-only-fallback", "accepted"]]);
   expect(r.usageReport.metrics.prompt_tokens).toMatchObject({ observed_sum: 400, unknown_attempts: 1, complete: false });
 });
@@ -382,7 +453,7 @@ test.each([false, true])("UR11 sink failures preserve action verdict and snapsho
   const r = await execute({ sinkFailure: true, terminalFailure });
   expect(r.cleanup).toHaveBeenCalledTimes(1);
   if (terminalFailure) {
-    expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("synthetic terminal failure"));
+    expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("Provider authentication failed (HTTP 401)"));
     expect(core.setFailed).not.toHaveBeenCalledWith(expect.stringContaining("private reporting failure"));
     expect(r.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
   } else {
@@ -424,10 +495,116 @@ test.each(["auto", "off"])("RB05 original 239722-character complete diff reaches
   expect(core.setFailed).not.toHaveBeenCalled();
   expect(result.requests).toHaveLength(input === "auto" ? 2 : 1);
   for (const body of result.requests) {
+    expect(JSON.stringify(body.messages)).toContain("diff --git a/src/first.ts");
+    expect(JSON.stringify(body.messages)).toContain(`FINAL_COMPLETE_HUNK_${TAIL}`);
+    // Default mode sends the provider's own request shape: no estimate, no derived output cap.
+    expect(body).not.toHaveProperty("max_tokens");
+    expect(body).not.toHaveProperty("max_completion_tokens");
+  }
+});
+
+test.each(["auto", "off"])("RB05 explicit 256000 keeps the derived output cap: %s", async input => {
+  const result = await execute({ input, diff: sizedDiff(239722), defaultProfile: true,
+    overrides: { "estimated-request-token-budget": "256000" } });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(result.requests).toHaveLength(input === "auto" ? 2 : 1);
+  for (const body of result.requests) {
     expect(JSON.stringify(body.messages)).toContain(`FINAL_COMPLETE_HUNK_${TAIL}`);
     expect(body.max_tokens ?? body.max_completion_tokens).toBe(32000);
     expect(Math.ceil(Buffer.byteLength(JSON.stringify(body, null, 2), "utf8") / 3) + 32000 + 16000).toBeLessThanOrEqual(256000);
   }
+});
+
+test.each(["auto", "off"])("RB05 a full diff above the old default estimate is sent when the estimate is unset: %s", async input => {
+  const original = sizedDiff(700_000);
+  const result = await execute({ input, diff: original, defaultProfile: true,
+    overrides: { "max-diff-size": "800000", "agent-max-diff-size": "800000" } });
+  expect(core.setFailed).not.toHaveBeenCalled();
+  expect(result.requests.length).toBeGreaterThanOrEqual(1);
+  expect(result.requests.length).toBeLessThanOrEqual(2);
+  for (const body of result.requests) {
+    const payload = JSON.stringify(body.messages);
+    expect(payload).toContain("diff --git a/src/first.ts");
+    expect(payload).toContain(`FINAL_COMPLETE_HUNK_${TAIL}`);
+    expect(body.messages.some(message => message.content?.includes(annotateDiffWithLineNumbers(original)))).toBe(true);
+    expect(body).not.toHaveProperty("max_tokens");
+    expect(body).not.toHaveProperty("max_completion_tokens");
+  }
+  expect(result.fullReport.ledger.map((attempt: any) => attempt.phase)).not.toContain("compaction");
+  expect(result.octokit.rest.pulls.createReview).toHaveBeenCalledTimes(1);
+});
+
+test("RB05 budget-rejected agent keeps the primary cause when the fallback also refuses", async () => {
+  const original = sizedDiff(239722);
+  const result = await execute({ input: "auto", diff: original, defaultProfile: true,
+    overrides: { "estimated-request-token-budget": "1000", "max-diff-size": "1000" } });
+  expect(result.requests).toHaveLength(0);
+  expect(result.usageReport).toMatchObject({ state: "failed", attempts: 0 });
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("Estimated request budget exceeded"));
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("max-diff-size"));
+  expect(result.lastStatus).toContain("Estimated request budget exceeded");
+  expect(result.lastStatus).toContain(`${original.length} characters`);
+  expect(result.lastStatus).toContain("`max-diff-size` allows 1000");
+  expect(result.lastStatus).toContain("Raise `max-diff-size`");
+  expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+  expect(result.cleanup).toHaveBeenCalledTimes(1);
+});
+
+test("A7-2 prior accepted usage survives a usage-free agent 413 and a refused fallback", async () => {
+  const result = await execute({ input: "auto", usageFailure: true, singleShotCap: 1 });
+  expect(result.requests[0].tools).toBeDefined();
+  expectCompleteDiff(result.requests[0]);
+  // Both causes stay visible: the primary provider rejection and the fallback's size refusal.
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("413"));
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("max-diff-size"));
+  expect(result.lastStatus).toContain("413");
+  expect(result.lastStatus).toContain("max-diff-size");
+  expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+  expect(result.cleanup).toHaveBeenCalledTimes(1);
+  // The two agent attempts are the accepted one and the failing one; the bounded recovery
+  // summary is the only extra physical call and it is rejected too.
+  expect(result.fullReport.ledger.map((attempt: any) => [attempt.phase, attempt.outcome])).toEqual([
+    ["agent", "accepted"],
+    ["agent", "error"],
+    ["compaction", "error"],
+  ]);
+  expect(result.usageReport).toMatchObject({ state: "failed" });
+  expect(result.usageReport.metrics.prompt_tokens).toMatchObject({ observed_sum: 100 });
+  expect(result.usageReport.metrics.prompt_tokens.unknown_attempts).toBeGreaterThanOrEqual(1);
+  expect(result.usageReport.metrics.prompt_tokens.complete).toBe(false);
+});
+
+test("A7 snapshot setup failure remains visible when the complete-diff fallback refuses", async () => {
+  const result = await execute({ snapshotFailure: true, singleShotCap: 1 });
+  expect(result.requests).toHaveLength(0);
+  expect(result.lastStatus).toContain("snapshot access denied");
+  expect(result.lastStatus).toContain("max-diff-size");
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("snapshot access denied"));
+  expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+});
+
+test("A4/A7 provider echoes stay out of diagnostics while both failure causes remain visible", async () => {
+  const result = await execute({ input: "auto", echoFailure: true, singleShotCap: 1 });
+  expect(result.requests).toHaveLength(2);
+  expect(result.requests[1].messages).toContainEqual(expect.objectContaining({
+    role: "assistant", reasoning_content: PRIVATE_ERROR_ECHO,
+  }));
+  expect(result.credentials[1]).toBe("Bearer synthetic-loopback-key");
+  expect(result.lastStatus).toContain("401");
+  expect(result.lastStatus).toContain("max-diff-size");
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("401"));
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("max-diff-size"));
+  const visible = JSON.stringify([
+    result.octokit.rest.issues.updateComment.mock.calls,
+    result.octokit.rest.pulls.createReview.mock.calls,
+    jest.mocked(core.info).mock.calls, jest.mocked(core.warning).mock.calls,
+    jest.mocked(core.error).mock.calls, jest.mocked(core.setFailed).mock.calls,
+  ]);
+  expect(visible).not.toContain(PRIVATE_ERROR_ECHO);
+  expect(visible).not.toContain("synthetic-loopback-key");
+  expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+  expect(result.cleanup).toHaveBeenCalledTimes(1);
+  expect(result.usageReport.metrics.prompt_tokens.observed_sum).toBe(100);
 });
 
 test.each(["max-diff-size", "agent-max-diff-size"])("RB05 explicit old 50000 caller %s rejects original full diff", async setting => {
@@ -437,9 +614,12 @@ test.each(["max-diff-size", "agent-max-diff-size"])("RB05 explicit old 50000 cal
   expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("50000"));
 });
 
-test.each([false, true])("RB05 raw-eligible full body can fail independently (Unicode=%s)", async unicode => {
+test.each([false, true])("RB05 explicit budget rejects a raw-eligible complete body without echoing input (Unicode=%s)", async unicode => {
   const result = await execute({ input: "off", diff: unicode ? sizedDiff(239722, true) : diff,
-    defaultProfile: true, overrides: unicode ? {} : { "review-instructions": "instructions".repeat(70000) } });
+    defaultProfile: true,
+    overrides: unicode
+      ? { "estimated-request-token-budget": "1000" }
+      : { "estimated-request-token-budget": "1000", "review-instructions": "instructions".repeat(70000) } });
   expect(result.requests).toHaveLength(0);
   expect(result.usageReport.attempts).toBe(0);
   expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("Estimated request budget exceeded"));

@@ -79,7 +79,7 @@ test.each([false, true])("UR02 empty outer retry retains both attempts (stream %
 test("UR07 blocking extraction failure preserves usage before malformed tool calls throw", async () => {
   const { client, create, ledger } = setup();
   create.mockResolvedValue({ ...response(), choices: [{ message: { tool_calls: { malformed: true } }, finish_reason: "stop" }] });
-  await expect(client.chatCompletion("s", "u")).rejects.toThrow("filter is not a function");
+  await expect(client.chatCompletion("s", "u")).rejects.toMatchObject({ name: "LLMRequestError", cause: expect.objectContaining({ message: expect.stringContaining("filter is not a function") }) });
   const r = ledger.report();
   expect(r.compact.attempts).toBe(1);
   expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 100, complete: true });
@@ -91,7 +91,7 @@ test("UR07 preceding work and SDK-preserved error usage survive without raw erro
   create.mockResolvedValueOnce(response()).mockRejectedValueOnce(Object.assign(new Error("secret raw error"), { status: 401,
     error: { usage: { prompt_tokens: 5, completion_tokens: "invalid" }, private: "private body" } }));
   await client.chatCompletion("s", "u");
-  await expect(client.chatCompletion("s", "u")).rejects.toThrow("secret raw error");
+  await expect(client.chatCompletion("s", "u")).rejects.toMatchObject({ name: "LLMRequestError", cause: expect.objectContaining({ message: expect.stringContaining("secret raw error") }) });
   const r = ledger.report();
   expect(r.compact.metrics.prompt_tokens).toMatchObject({ observed_sum: 105, nonfinal_attempts: 1, complete: false });
   expect(r.compact.metrics.completion_tokens).toMatchObject({ observed_sum: 10, unknown_attempts: 1 });
@@ -114,7 +114,7 @@ test.each(["cumulative", "missing", "partial", "decreasing", "interrupted", "len
   if (error) {
     const pending = client.chatCompletion("s", "u");
     if (kind === "length interrupted") await expect(pending).rejects.toBeInstanceOf(CompletionLengthError);
-    else await expect(pending).rejects.toThrow("synthetic interruption");
+    else await expect(pending).rejects.toMatchObject({ name: "LLMRequestError", cause: expect.objectContaining({ message: expect.stringContaining("synthetic interruption") }) });
   } else await client.chatCompletion("s", "u");
   const r = ledger.report();
   expect(r.compact.attempts).toBe(1);

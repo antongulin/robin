@@ -5,7 +5,7 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { CompletionLengthError, LLMClient, LLMRequestError, ToolsUnsupportedError } from "./llm-client";
 import { runAgentReview } from "./agent-review";
-import { isContextLengthError } from "./llm-retry";
+import { isCancellationError, isContextLengthError } from "./llm-retry";
 import { createRepoSnapshot } from "./repo-snapshot";
 import { ReviewToolbox } from "./review-tools";
 import { StatusReporter } from "./status-reporter";
@@ -604,21 +604,69 @@ function buildSkippedFilterStatusBody(removedFiles: string[]): string {
   ].join("\n");
 }
 
+/**
+ * The agent review failed and its diff-only fallback then failed too. The primary agent
+ * review error stays reachable through `cause`, so diagnostics keep the original reason
+ * instead of reporting only the fallback's refusal. `fallbackCause` carries the retry's
+ * own error so status advice can still explain how to unblock the fallback path.
+ */
+class AgentReviewFallbackError extends Error {
+  readonly fallbackCause: unknown;
+
+  constructor(primaryCause: unknown, fallbackCause: unknown) {
+    const primaryMessage = primaryCause instanceof Error ? primaryCause.message : String(primaryCause);
+    const fallbackMessage = fallbackCause instanceof Error ? fallbackCause.message : String(fallbackCause);
+    super(
+      `Agent review failed (${primaryMessage}) and the diff-only fallback failed too (${fallbackMessage})`,
+      { cause: primaryCause }
+    );
+    this.name = "AgentReviewFallbackError";
+    this.fallbackCause = fallbackCause;
+  }
+}
+
+/**
+ * Bounded, cycle-safe traversal of nested errors. Follows the standard `cause` chain plus
+ * the explicit `fallbackCause` link so a preserved primary error and the fallback that
+ * refused it are both considered, without unbounded walking of cyclic chains.
+ */
+function errorCauseChain(error: unknown, maxNodes = 8): unknown[] {
+  const chain: unknown[] = [];
+  const seen = new Set<unknown>();
+  const pending: unknown[] = [error];
+  while (pending.length > 0 && chain.length < maxNodes) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    chain.push(current);
+    const { cause, fallbackCause } = current as { cause?: unknown; fallbackCause?: unknown };
+    if (cause) pending.push(cause);
+    if (fallbackCause) pending.push(fallbackCause);
+  }
+  return chain;
+}
+
 function buildFailedStatusBody(error: unknown, command: "review" | "summary"): string {
   const errorMessage = error instanceof Error ? error.message : String(error);
+  const chain = errorCauseChain(error);
   let advice = "Check the error above and resolve its cause, then comment `/robin` to try again.";
-  if (error instanceof CompletionLengthError) {
+  const completionLength = chain.find((entry) => entry instanceof CompletionLengthError);
+  const diffLimit = chain.find((entry) => entry instanceof DiffInputLimitError);
+  const contextPressure = chain.some(
+    (entry) => entry instanceof LLMRequestError && isContextLengthError(entry.cause ?? entry)
+  );
+  if (completionLength instanceof CompletionLengthError) {
     advice = "Check the model/provider's output and reasoning generation limits and reduce the review scope. " +
       "If the input is too large, split the change into smaller logically complete PRs " +
       "(keep related implementation and tests together), or select a model/provider with larger effective context capacity. " +
       "After adjusting the cause, comment `/robin` to try again.";
-  } else if (error instanceof DiffInputLimitError) {
-    advice = `Raise \`${error.setting}\` (currently ${error.limit} characters) in the workflow/action input or ` +
+  } else if (diffLimit instanceof DiffInputLimitError) {
+    advice = `Raise \`${diffLimit.setting}\` (currently ${diffLimit.limit} characters) in the workflow/action input or ` +
       "applicable base-branch repo configuration so it includes the " +
-      `${error.observedChars} characters of changed files still under review, or split the change into smaller ` +
+      `${diffLimit.observedChars} characters of changed files still under review, or split the change into smaller ` +
       "logically complete PRs (keep related implementation and tests together). Robin stops before sending a partial diff, " +
       `so an unchanged retry cannot succeed. After adjusting the cause, comment \`/${command === "summary" ? "summary" : "robin"}\` to try again.`;
-  } else if (error instanceof LLMRequestError && isContextLengthError(error.cause)) {
+  } else if (contextPressure) {
     advice = "Split the change into smaller logically complete PRs (keep related implementation and tests together), " +
       "or select a model/provider with larger effective context capacity. " +
       "After adjusting the input or capacity, comment `/robin` to try again.";
@@ -630,7 +678,7 @@ function buildFailedStatusBody(error: unknown, command: "review" | "summary"): s
     "",
     `Reason: ${errorMessage}`,
     "",
-    `${advice} (No secrets are included in this message.)`,
+    advice,
     ...versionFooter(),
   ].join("\n");
 }
@@ -905,6 +953,15 @@ async function runAgentOrSingleShotReview(
     );
     return { content, stats: `diff-only review (${why})` };
   };
+  const fallback = async (primaryError: unknown, why: string) => {
+    if (isCancellationError(primaryError)) throw primaryError;
+    try {
+      return await singleShot(why);
+    } catch (fallbackError) {
+      if (isCancellationError(fallbackError)) throw fallbackError;
+      throw new AgentReviewFallbackError(primaryError, fallbackError);
+    }
+  };
 
   if (params.agentMode === "off") {
     core.info("Agent mode is off; running single-shot diff review.");
@@ -927,7 +984,7 @@ async function runAgentOrSingleShotReview(
   } catch (error) {
     core.warning(`Could not prepare repository snapshot (${error}); running single-shot diff review.`);
     reporter.setStep("Couldn't download the repository — running a diff-only review…");
-    return singleShot("repository snapshot unavailable");
+    return fallback(error, "repository snapshot unavailable");
   }
 
   try {
@@ -950,15 +1007,17 @@ async function runAgentOrSingleShotReview(
     };
   } catch (error) {
     if (error instanceof CompletionLengthError) throw error;
+    // Cancellation is terminal: a caller abort must not start another physical request.
+    if (isCancellationError(error)) throw error;
     // Handle fallback rejection before the asynchronous snapshot cleanup in finally.
     if (error instanceof ToolsUnsupportedError) {
       core.warning(`${error.message}. Running single-shot diff review instead.`);
       reporter.setStep("Model doesn't support tool calling — running a diff-only review…");
-      return await singleShot("model has no tool support");
+      return await fallback(error, "model has no tool support");
     }
     core.warning(`Agent review failed (${error}); running single-shot diff review instead.`);
     reporter.setStep("Agent review failed — retrying as a diff-only review…");
-    return await singleShot("agent review failed");
+    return await fallback(error, "agent review failed");
   } finally {
     await snapshot.cleanup();
   }

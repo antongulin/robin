@@ -25,17 +25,17 @@ const agentInput = { annotatedDiff: "diff", changedFiles: ["src/a.ts"], instruct
 type WireMessage = Record<string, unknown>;
 type WireRequest = Record<string, unknown> & { messages: WireMessage[] };
 
-function completion(message: WireMessage) {
+function completion(message: WireMessage, finishReason: unknown = message.tool_calls ? "tool_calls" : "stop") {
   return new Response(JSON.stringify({
     id: "offline", object: "chat.completion", created: 0, model: "resolved-model",
-    choices: [{ index: 0, finish_reason: message.tool_calls ? "tool_calls" : "stop", message: { role: "assistant", ...message } }],
+    choices: [{ index: 0, finish_reason: finishReason, message: { role: "assistant", ...message } }],
   }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
 function rejection(status: number) {
   return new Response(JSON.stringify({ error: {
     type: "invalid_request_error",
-    message: status === 400 ? "reasoning_content must be passed back with tools" : "Endpoint is unavailable",
+    message: `${status === 400 ? "reasoning_content must be passed back with tools" : "Endpoint is unavailable"}: ${PRIVATE}`,
   } }), { status, headers: { "content-type": "application/json" } });
 }
 
@@ -181,7 +181,7 @@ it.each([400, 429])("RC05 bounds HTTP %i failures without leaking replay metadat
     ? completion({ content: null, reasoning_content: PRIVATE, tool_calls: [tool("c0")] })
     : rejection(status), { maxAttempts: 3 });
   const pending = expect(runAgentReview({ ...agentInput, llm: client, toolbox: toolbox() }))
-    .rejects.toThrow(status === 400 ? "reasoning_content must be passed back" : "Endpoint is unavailable");
+    .rejects.toMatchObject({ name: "LLMRequestError", cause: expect.objectContaining({ status }) });
   await jest.runAllTimersAsync();
   await pending;
   expect(requests).toHaveLength(status === 400 ? 2 : 4);
@@ -194,16 +194,54 @@ it.each([400, 429])("RC05 bounds HTTP %i failures without leaking replay metadat
 });
 
 /** Split the SSE bytes too, so the installed SDK decoder handles frame/Unicode boundaries. */
-function sse(deltas: WireMessage[]) {
+function sse(deltas: WireMessage[], finishReason: unknown = "stop") {
   const frames = deltas.map((delta, index) => ({
     id: "offline-stream", object: "chat.completion.chunk", created: 0, model: "resolved-model",
-    choices: [{ index: 0, delta, finish_reason: index === deltas.length - 1 ? "stop" : null }],
+    choices: [{ index: 0, delta, finish_reason: index === deltas.length - 1 ? finishReason : null }],
   }));
   const bytes = Buffer.from(frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`).join("") + "data: [DONE]\n\n");
   const chunks: Buffer[] = [];
   for (let offset = 0; offset < bytes.length; offset += 7) chunks.push(bytes.subarray(offset, offset + 7));
   return new Response(Readable.from(chunks), { headers: { "content-type": "text/event-stream" } });
 }
+
+it.each([false, true])("P4 keeps invalid completion reasons out of deadline diagnostics (streaming: %s)", async streaming => {
+  let clock = 0;
+  const malformedReason = `${PRIVATE} offline-not-a-key`;
+  const { client, requests, headers, progress } = offlineClient((_body, index) => {
+    if (index === 0) {
+      return streaming
+        ? sse([{ reasoning_content: PRIVATE, tool_calls: [{ index: 0, ...tool("c0") }] }], "tool_calls")
+        : completion({ content: null, reasoning_content: PRIVATE, tool_calls: [tool("c0")] });
+    }
+    clock = 30_000;
+    return streaming
+      ? sse([{ reasoning_content: PRIVATE }], malformedReason)
+      : completion({ content: null, reasoning_content: PRIVATE }, malformedReason);
+  }, { model: streaming ? "openrouter/free" : "test-model" });
+  const tools = toolbox();
+  tools.execute.mockImplementation(async () => {
+    clock = 27_000;
+    return "file contents";
+  });
+  const status = jest.fn();
+  const error = await runAgentReview({ ...agentInput, llm: client, toolbox: tools, onProgress: status,
+    budgets: { deadlineMs: 30_000 }, now: () => clock }).catch(error => error);
+  expect({ name: error.name, message: error.message, cause: error.cause?.message }).toEqual({
+    name: "AgentDeadlineError",
+    message: expect.stringContaining("finalization deadline: Empty response from LLM"),
+    cause: expect.stringContaining("finish_reason=unknown"),
+  });
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toHaveProperty("tool_choice", "none");
+  expect(requests[1].messages).toContainEqual(expect.objectContaining({ role: "assistant", reasoning_content: PRIVATE }));
+  expect(headers[1].authorization).toBe("Bearer offline-not-a-key");
+  expect(tools.execute).toHaveBeenCalledTimes(1);
+  const visible = JSON.stringify([String(error), progress.mock.calls, status.mock.calls,
+    (core.info as jest.Mock).mock.calls, (core.warning as jest.Mock).mock.calls, (core.error as jest.Mock).mock.calls]);
+  expect(visible).not.toContain("PRIVATE_REPLAY_SENTINEL");
+  expect(visible).not.toContain("offline-not-a-key");
+});
 
 it.each([
   { label: "split strings", values: ["", "PRIVATE_REPLAY_", null, "SENTINEL \n", 42, " Ω 🐦  "], expected: PRIVATE },
