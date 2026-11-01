@@ -27,7 +27,7 @@ export type AgentMode = "auto" | "off";
 export const DEFAULT_AGENT_MODE: AgentMode = "auto";
 export const DEFAULT_AGENT_MAX_TURNS = 40;
 const MAX_AGENT_MAX_TURNS = 100;
-/** Independent raw character allowance; complete serialized requests also face the estimate. */
+/** Independent raw character allowance; an explicitly configured estimate also applies. */
 export const DEFAULT_AGENT_MAX_DIFF_SIZE = 500_000;
 
 /** Strips a trailing ` # comment` only outside quotes, so quoted values keep `#` intact. */
@@ -171,6 +171,11 @@ export function resolveMaxDiffSize(actionInput: string, repoConfig?: RepoConfig)
   return positiveSafeInteger(actionInput.trim() || (repoConfig?.maxDiffSize ?? DEFAULT_ACTION_MAX_DIFF_SIZE), "max-diff-size");
 }
 
+/**
+ * Estimated per-request hard budget: explicit input first, then base-branch `.github/robin.yml`,
+ * else `off`. `off` disables the estimate and its derived output cap; an explicit positive
+ * number keeps both the guard and the documented output reserve.
+ */
 export function resolveEstimatedRequestTokenBudget(actionInput: string, repoConfig?: RepoConfig): EstimatedRequestTokenBudget {
   return parseEstimatedRequestTokenBudget(actionInput.trim() || (repoConfig?.estimatedRequestTokenBudget ?? DEFAULT_ESTIMATED_REQUEST_TOKEN_BUDGET));
 }

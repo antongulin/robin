@@ -16,15 +16,18 @@ import {
   errorMessage,
   findUnsupportedRequestParam,
   getLlmCompletionAttemptCount,
+  isCancellationError,
   isInvalidReasoningEffortError,
   isOpenRouterRouterModel,
   isContextLengthError,
   isRetriableLlmError,
   isToolsUnsupportedError,
   isUnsupportedReasoningEffortError,
+  LlmRequestCancelledError,
   openRouterStallError,
   resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
+  throwIfAborted,
 } from "./llm-retry";
 import {
   detectLlmProvider,
@@ -124,6 +127,17 @@ export interface ToolChatOptions {
   usageContext?: UsageContext;
   /** "none" asks for a final text answer while keeping the tool definitions the history needs. */
   toolChoice?: "auto" | "none";
+  /**
+   * Per-call cancellation. Additive: when omitted nothing changes. Aborting is terminal for
+   * this call — no outer or compatibility retry — and the signal is never serialized.
+   */
+  signal?: AbortSignal;
+}
+
+/** Optional per-request controls; kept separate from `usageContext` so accounting stays intact. */
+export interface RequestControl {
+  /** Terminal per-call cancellation; never sent to the provider. */
+  signal?: AbortSignal;
 }
 
 /** The provider or model cannot take `tools`; callers should fall back to a plain completion. */
@@ -139,6 +153,7 @@ interface CompletionOptions {
   jsonResponseMode: boolean;
   tools?: ToolDefinition[];
   toolChoice?: "auto" | "none";
+  signal?: AbortSignal;
 }
 
 export type LlmProgressHandler = (detail: string) => void | Promise<void>;
@@ -336,14 +351,15 @@ export class LLMClient {
     systemPrompt: string,
     userContent: string,
     jsonResponseMode = false,
-    usageContext?: UsageContext
+    usageContext?: UsageContext,
+    control?: RequestControl
   ): Promise<ChatCompletionResult> {
     return this.complete(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
-      { jsonResponseMode, usageContext }
+      { jsonResponseMode, usageContext, signal: control?.signal }
     );
   }
 
@@ -361,6 +377,7 @@ export class LLMClient {
       tools,
       toolChoice: options.toolChoice,
       usageContext: options.usageContext,
+      signal: options.signal,
     });
   }
 
@@ -374,6 +391,7 @@ export class LLMClient {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      throwIfAborted(options.signal);
       const useJson = shouldUseJsonResponseMode(attempt, options.jsonResponseMode);
 
       try {
@@ -382,6 +400,8 @@ export class LLMClient {
           `Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`
         );
         const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson }, logicalCall, attempt, trigger);
+        // An aborted caller discards any late result: cancellation is terminal, never a success.
+        throwIfAborted(options.signal);
 
         if (result.finishReason === "length") {
           throw new CompletionLengthError(result.usage);
@@ -399,6 +419,8 @@ export class LLMClient {
           `LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`
         );
       } catch (error) {
+        // Cancellation is terminal: no retry, no compatibility step, no stall reclassification.
+        if (options.signal?.aborted || isCancellationError(error)) throw new LlmRequestCancelledError();
         if (error instanceof CompletionLengthError || error instanceof EstimatedRequestBudgetError) throw error;
         trigger = "outer-error-retry";
         lastError = error;
@@ -420,7 +442,7 @@ export class LLMClient {
         await this.progress(
           `Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`
         );
-        await delayMs(waitMs);
+        await delayMs(waitMs, options.signal);
       }
     }
 
@@ -454,6 +476,9 @@ export class LLMClient {
   ): Promise<ChatCompletionResult> {
     let compatibility = 0;
     for (;;) {
+      // Checked before the physical ledger row and dispatch, and again after any awaited
+      // progress or compatibility work above.
+      throwIfAborted(options.signal);
       const request = this.buildMessagesRequest(messages, options);
       assertRequestFits(request, this.estimatedRequestTokenBudget, request.max_tokens ?? request.max_completion_tokens ?? undefined);
       const record = this.usageLedger?.begin(options.usageContext, logicalCall, outerAttempt, ++compatibility,
@@ -468,11 +493,13 @@ export class LLMClient {
       let outcome: "accepted" | "empty" | "length" | "error" = "error";
       let adjustment: CompatibilityAdjustment | null = null;
       try {
-        const result = await this.dispatch(request, record);
+        const result = await this.dispatch(request, record, options.signal);
+        throwIfAborted(options.signal);
         outcome = result.finishReason === "length" ? "length" : result.content || result.toolCalls?.length ? "accepted" : "empty";
         return result;
       } catch (error) {
         this.usageLedger?.captureError(record, error);
+        if (options.signal?.aborted || isCancellationError(error)) throw new LlmRequestCancelledError();
         if (await this.applyReasoningFallback(error)) { adjustment = "reasoning"; continue; }
         if (this.applyParameterFallback(error, request)) {
           const param = findUnsupportedRequestParam(error, this.sentDroppableParams(request));
@@ -512,17 +539,17 @@ export class LLMClient {
     return true;
   }
 
-  private async dispatch(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
+  private async dispatch(request: ChatRequest, record?: UsageAttempt, signal?: AbortSignal): Promise<ChatCompletionResult> {
     return this.routerModel
-      ? await this.streamChatCompletion(request, record)
-      : await this.blockingChatCompletion(request, record);
+      ? await this.streamChatCompletion(request, record, signal)
+      : await this.blockingChatCompletion(request, record, signal);
   }
 
-  private async blockingChatCompletion(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
+  private async blockingChatCompletion(request: ChatRequest, record?: UsageAttempt, signal?: AbortSignal): Promise<ChatCompletionResult> {
     const response = await this.client.chat.completions.create({
       ...(request as OpenAI.Chat.Completions.ChatCompletionCreateParams),
       stream: false,
-    });
+    }, signal ? { signal } : undefined);
     this.usageLedger?.capture(record, response);
     this.usageLedger?.received(record);
     const toolCalls = this.extractToolCalls(response);
@@ -538,7 +565,11 @@ export class LLMClient {
   }
 
   /** Stream so the first SSE chunk (model id) proves OpenRouter routed; abort if none arrives. */
-  private async streamChatCompletion(request: ChatRequest, record?: UsageAttempt): Promise<ChatCompletionResult> {
+  private async streamChatCompletion(
+    request: ChatRequest,
+    record?: UsageAttempt,
+    signal?: AbortSignal
+  ): Promise<ChatCompletionResult> {
     const firstChunkMs = DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS;
     const controller = new AbortController();
     let gotFirstChunk = false;
@@ -556,7 +587,13 @@ export class LLMClient {
       }
     };
 
+    // The parent signal joins the first-chunk stall controller; the listener and timer are
+    // always removed, and the parent signal itself is never serialized.
+    const onParentAbort = () => controller.abort();
+    if (signal) signal.addEventListener("abort", onParentAbort, { once: true });
+
     try {
+      throwIfAborted(signal);
       const stream = await this.client.chat.completions.create(
         { ...(request as OpenAI.Chat.Completions.ChatCompletionCreateParams), stream: true },
         { signal: controller.signal }
@@ -604,6 +641,9 @@ export class LLMClient {
         }
       }
 
+      // The SDK can end iteration on abort without throwing. Preserve observed usage as
+      // nonfinal instead of marking a partial stream complete.
+      throwIfAborted(signal);
       this.usageLedger?.received(record);
       const toolCalls = [...toolCallParts.entries()]
         .sort(([a], [b]) => a - b)
@@ -620,6 +660,8 @@ export class LLMClient {
     } catch (error) {
       this.usageLedger?.captureError(record, error);
       clearStallTimer();
+      // A caller abort is terminal and must not be reclassified as a router stall.
+      if (signal?.aborted) throw new LlmRequestCancelledError();
       if (finishReason === "length") throw new CompletionLengthError(usage);
       if (!gotFirstChunk) {
         if ((request.tools && isToolsUnsupportedError(error)) || isContextLengthError(error)) {
@@ -648,6 +690,9 @@ export class LLMClient {
         throw openRouterStallError(firstChunkMs);
       }
       throw error;
+    } finally {
+      if (signal) signal.removeEventListener("abort", onParentAbort);
+      clearStallTimer();
     }
   }
 

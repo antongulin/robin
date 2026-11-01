@@ -806,4 +806,42 @@ describe("isContextLengthError", () => {
   ])("ignores %s", (error) => {
     expect(isContextLengthError(error)).toBe(false);
   });
+
+  it("recognizes a native context rejection through nested wrapper causes", () => {
+    const native = withStatus(413, "Request rejected");
+    const wrapped = new Error("Failed to get response from LLM: 413 Request rejected", { cause: native });
+    expect(isContextLengthError(wrapped)).toBe(true);
+    expect(isContextLengthError(new Error("outer failure", { cause: wrapped }))).toBe(true);
+    expect(isContextLengthError(new Error("outer", {
+      cause: withStatus(400, "prompt is too long: 210000 tokens > 200000 maximum"),
+    }))).toBe(true);
+  });
+
+  it("does not resurrect auth, rate-limit, or unrelated validation failures from a cause", () => {
+    expect(isContextLengthError(new Error("Recovery after context length error", {
+      cause: withStatus(422, "temperature must be 1"),
+    }))).toBe(false);
+    expect(isContextLengthError(new Error("wrapped", {
+      cause: withStatus(401, "Unauthorized: context window access denied"),
+    }))).toBe(false);
+    expect(isContextLengthError(new Error("wrapped", { cause: withStatus(429, "Too many requests") }))).toBe(false);
+    expect(isContextLengthError(new Error("wrapped", { cause: withStatus(422, "Request rejected") }))).toBe(false);
+    expect(isContextLengthError(new Error("wrapped", { cause: withStatus(500, "maximum context length exceeded") }))).toBe(false);
+  });
+
+  it("preserves context detection for message-only string errors", () => {
+    expect(isContextLengthError("maximum context length exceeded")).toBe(true);
+    expect(isContextLengthError("Request rejected")).toBe(false);
+  });
+
+  it("stops on cyclic and self-referencing cause chains", () => {
+    const first: Error & { cause?: unknown } = new Error("Request rejected");
+    const second = new Error("outer", { cause: first });
+    first.cause = second;
+    expect(isContextLengthError(second)).toBe(false);
+    const self: Error & { cause?: unknown } = new Error("self");
+    self.cause = self;
+    expect(isContextLengthError(self)).toBe(false);
+    expect(isContextLengthError(new Error("wrapped", { cause: withStatus(413, "Request rejected") }))).toBe(true);
+  });
 });

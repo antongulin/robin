@@ -31,7 +31,7 @@ skip-paths:
 | `agent-mode` | Used when the `agent-mode` input is empty. When both are unset, `auto` runs the [multi-turn agent review](#agent-mode-multi-turn-review-with-repository-context). Explicit `off` uses a single-shot diff review without a snapshot or tools |
 | `agent-max-turns` | Used when the `agent-max-turns` input is empty. Tool-calling turns before the final review is requested (default `40`, max `100`) |
 | `agent-max-diff-size` | Used when the `agent-max-diff-size` input is empty. Diff characters sent up front in agent mode (default `500000`); a larger filtered diff fails before the agent request. `max-diff-size` still applies to the single-shot fallback |
-| `estimated-request-token-budget` | Blank input inherits this setting, then `256000`; positive safe integer or `off`. See [request budgets](#estimated-request-budget) |
+| `estimated-request-token-budget` | Blank input inherits this setting, then `off`; positive safe integer enables the guard, `off` disables it. See [request budgets](#estimated-request-budget) |
 | `skip-paths` | Extra paths removed from the diff before the LLM call |
 | `bot-review-policy` | `all` (default), `none`, or `allowlist`; blank action/workflow input defers here. Applies to automatic PR reviews only |
 | `bot-allowlist` | YAML sequence of string logins (default empty); blank action/workflow input defers here. Used by `allowlist` policy; `[]` clears the list |
@@ -59,14 +59,17 @@ are sample overrides, not defaults.
 
 ## Estimated request budget
 
-Robin defaults to a decimal **256000 estimated tokens per request**. This working
-budget applies to arbitrary provider/model IDs, including custom local endpoints;
-Robin does not discover capacity or load a tokenizer/model registry. Set it below
-your endpoint's effective context when needed. Published context sizes and supported
-output caps can differ from the capacity your deployment makes available.
+Robin sends the complete filtered request by default: the estimated request guard is
+**off** unless you set a numeric budget, and an unset `max-output-tokens` leaves the
+output cap to the provider/model. The guard applies to arbitrary provider/model IDs,
+including custom local endpoints; Robin does not discover capacity or load a
+tokenizer/model registry. Set a numeric budget below your endpoint's effective context
+when needed. Published context sizes and supported output caps can differ from the
+capacity your deployment makes available.
 
-The `utf8-json-div3-v1` heuristic uses the complete final Chat Completions JSON body
-serialized by the installed SDK (two-space indentation):
+When you set a positive safe integer, the `utf8-json-div3-v1` heuristic uses the
+complete final Chat Completions JSON body serialized by the installed SDK (two-space
+indentation):
 
 - Estimated input = `ceil(UTF-8 bytes / 3)`, including stream mode, annotated diff,
   instructions, history, private assistant replay, tool schemas/calls/results and
@@ -79,9 +82,14 @@ serialized by the installed SDK (two-space indentation):
   attempt to the usage ledger; earlier observed usage stays in that report.
 
 At 256000, the 32000 output cap and 16000 safety leave **208000 estimated input**.
-The output cap is a behavior change, not passive usage reporting. Robin tries the
-endpoint's alternate cap spelling on parameter rejection but never drops or clamps
-the cap. Unsupported caps can fail; choose a supported explicit value.
+The derived output cap applies only while the guard is enabled. Robin tries the
+endpoint's alternate cap spelling on parameter rejection but never drops or clamps an
+explicit cap. Unsupported caps can fail; choose a supported explicit value.
+
+Agent review measures its working history with the same serialized bytes. When a
+preflight rejection reports the excess, Robin tightens the recovery target by exactly
+that many bytes, so a retry removes enough conversation instead of resending the same
+overfull body.
 
 This heuristic can accept a request the provider cannot fit or reject one it could
 fit. JSON bytes differ from actual tokenization and chat framing; the safety reserve
@@ -91,7 +99,7 @@ tokens, establish a hard token ceiling, or prove that a request fits your model.
 
 Both independent raw limits default to **500000 JavaScript string characters**.
 This allowance leaves working room; it is not an exact conversion from 256k.
-Passing a raw cap does not establish whole-request fit. Tune all three controls for
+Passing a raw cap does not establish whole-request fit. Tune the controls for
 your endpoint, for example on the **PR base branch**:
 
 ```yaml
@@ -110,23 +118,15 @@ An empty value in `.github/robin.yml`, such as `max-diff-size:`, is invalid.
 Remove or comment out the key to inherit the default. Blank action/workflow
 inputs still defer to repository config.
 
-For the previous single-shot/provider-default output request shape:
-
-```yaml
-# .github/robin.yml on the PR base branch
-agent-mode: off
-estimated-request-token-budget: off
-# Leave the workflow's max-output-tokens unset for provider-default output.
-```
-
-The estimate and default output cap turn off together. Explicit output/character caps
-still apply. Override any existing nonblank workflow inputs too. There is no automatic
-disable on provider rejection. `/summary`, structured retries, outer retries,
-compatibility rebuilds, compaction and forced-final requests all face the same guard.
-A complete diff-only fallback must fit its actual request; Robin never clips the diff.
+`estimated-request-token-budget: off` stays valid and matches the default: the estimate
+and its derived output cap are not applied, while explicit output/character caps still
+apply. There is no automatic disable on provider rejection. Once you set a numeric
+budget, `/summary`, structured retries, outer retries, compatibility rebuilds, compaction
+and forced-final requests all face the same guard. A complete diff-only fallback must fit
+its actual request; Robin never clips the diff.
 
 Each agent turn resends its accumulated investigation after bounded compaction.
-**Total invocation usage can exceed 256000 tokens** across these requests. A new
+**Total invocation usage can exceed any per-request budget** across these requests. A new
 `/robin` starts a fresh conversation with the current PR diff/head; it does not resume
 the previous investigation. The [usage report](#llm-usage-reports) records actual
 provider observations separately from this per-request estimate.
@@ -289,8 +289,8 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `fail-on-high` | `false` | Fail the check if high-severity issues are found |
 | `request-changes` | omit → `true` (defer to repo config) | `true` submits a blocking REQUEST_CHANGES review on high findings; `false` posts a non-blocking COMMENT (advisor mode). Reusable workflow input is a boolean with no default — omit it to let `.github/robin.yml` win |
 | `max-diff-size` | empty (base config, then `500000`) | Max diff characters for a single-shot review or `/summary`, after path filters. A larger filtered diff fails before the model request with its observed size and this limit |
-| `estimated-request-token-budget` | empty (base config, then `256000`) | Estimated input + sent output cap + safety per request; `off` disables this guard/default output cap. See [request budgets](#estimated-request-budget) |
-| `max-output-tokens` | empty | Positive safe integer; unset with enabled budget sends a scaled cap (default `32000`); unset with guard off uses provider/model default |
+| `estimated-request-token-budget` | empty (base config, then `off`) | Estimated input + sent output cap + safety per request when numeric; `off` (default) disables this guard and its derived output cap. See [request budgets](#estimated-request-budget) |
+| `max-output-tokens` | empty | Positive safe integer; unset with enabled budget sends a scaled cap up to `32000`; unset with guard off uses provider/model default |
 | `reasoning-effort` | empty (defer to repo config; unset anywhere sends nothing) | Provider reasoning effort, provider-dependent (for example `low`, `medium`, `high`). Empty defers to `.github/robin.yml`; if that is also unset, no reasoning control is sent and the provider/model default applies. `off` also sends no reasoning configuration |
 | `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
 | `llm-temperature` | `0.1` | Sampling temperature (0–2). Raise only if your model rejects the default — some models accept a single fixed value (Kimi requires `1`) |
@@ -401,33 +401,52 @@ The investigation uses these limits. Match them to your model and workload:
 | Tool-calling turns | 40 (`agent-max-turns`, max 100) |
 | Diff sent up front | 500k characters (`agent-max-diff-size`); a larger filtered diff fails before the agent request. The single-shot fallback keeps `max-diff-size` (500k) and fails before that request if the filtered diff exceeds it. Neither cap guarantees a fit in the model's context |
 | Tool calls per turn | 16 |
-| Investigation time | 30 minutes |
+| Investigation time | 30 minutes, including the final-review reserve |
 | Output per tool call | about 50k characters (`read_file` returns up to 2000 lines and says where to continue) |
 | `grep` | 300 matches, optional `context_lines` (0-5), files up to 2 MB, up to 100k files scanned |
 | `list_files` | 2000 entries |
 | Repository snapshot | 500 MB compressed |
 
-When the turn or time limit runs out, Robin asks the model for its final review without
-tools.
+When the turn limit or investigation cutoff is reached, Robin asks the model for its
+final review without tools, provided time remains before the overall deadline.
 
-**Context compaction.** An early pressure valve targets about 450k characters across
-the diff and tool output, with at least 150k for tool output. This is independent of
-request fit and makes no token-capacity guarantee. Robin also compacts when the
-estimated request guard or provider context limit rejects a request. The model writes
-notes about the investigation so far: suspected bugs with evidence, facts it established,
-what it already checked, and what's left. Robin then continues from those notes plus the
-latest tool turn. If the summary request itself fails, Robin falls back to dropping the
-oldest tool results. Summary requests use the same estimate, with up to three
-shrinking transcripts. A review can compact up to six times; local budget recovery
-stops when it cannot shrink the conversation. Base input and oversized notes or
-assistant history can still fail without a provider call.
+**Context compaction.** A soft pressure valve targets about 450k UTF-8 bytes of the
+*working history*: everything the investigation added after the system prompt and the
+original diff/instructions. The full diff therefore never forces cleanup by itself, and
+the valve makes no token-capacity guarantee. Crossing the target triggers at most one
+cleanup step per new evidence epoch:
+
+1. Robin first elides only tool results the model has already consumed (a later
+   assistant turn exists), oldest first. This is mechanical, needs no model call, and
+   never expands a short result.
+2. If that is not enough, Robin asks the model once for concise notes (at most 12000
+   UTF-8 bytes) about the investigation so far: suspected bugs with evidence, facts it
+   established, what it already checked, and what is left. The full transcript is sent
+   unclipped, and the rebuild is committed only when it fits the target and is strictly
+   smaller; otherwise Robin keeps the previous state.
+
+Provider context errors and an enabled estimated request budget drive the same cleanup
+reactively, and an explicit numeric guard can tighten the target by the measured excess.
+A logical model request gets one initial dispatch plus at most two strictly smaller
+recovery dispatches; each must meet the target and shrink the body, otherwise Robin stops
+with the original error. There is no lifetime compaction ceiling. A default/`off` run may
+still send an accepted request above the soft target: proactive cleanup never fails the
+review on its own, and the provider's own limit remains the hard boundary. Base input,
+oversized notes or assistant history can still fail without a provider call.
+
+**Deadline.** The 30-minute investigation budget includes a finalization reserve
+(`min(120000 ms, 10% of the budget)`), so Robin stops starting investigation work early
+enough to ask for the final review without tools. Each request is aborted at its own
+deadline, and nothing is dispatched after it. If time runs out mid-turn, remaining tool
+calls receive explicit "not executed" results so the transcript stays valid.
+Deadline expiry or cancellation is terminal and does not start a diff-only fallback.
 
 **Fallback.** If the model or provider rejects tool calling (for example OpenRouter's
 "No endpoints found that support tool use", or Ollama's "does not support tools"), the
 snapshot download fails, or the agent loop errors, Robin logs a warning and attempts a
 single-shot diff review. The final status identifies a completed fallback and its reason;
 a failed status reports the failure. The fallback sends the complete filtered diff only
-if it fits `max-diff-size` and the estimated request budget; a larger diff or
+if it fits `max-diff-size` and, when enabled, the estimated request budget; a larger diff or
 request fails before dispatch. Provider or output
 failures can still prevent a review. Robin downloads the snapshot before it can learn
 that the endpoint rejects tools. Explicit `off` avoids that work. `/summary` stays
@@ -442,8 +461,10 @@ reasoning generation limits and reduce the review scope. If the input is too lar
 split the change into smaller logically complete PRs, keeping related implementation
 and tests together, or select a model/provider with larger effective context capacity.
 After adjusting the cause, comment `/robin` to try again. Missing finish metadata remains compatible.
-If a compaction summary fails, the mechanical recovery described above still drops old
-tool results and continues with changed context.
+If a compaction summary fails or does not shrink the history enough, Robin keeps the
+previous notes and unsummarized messages, apart from already-consumed tool results safely
+elided in step 1. Proactive cleanup can continue the review; reactive recovery stops if it
+cannot meet the smaller target.
 
 Agent mode can make more requests and consume more tokens than a single-shot review.
 The reusable workflow's job timeout is 45 minutes. Lower `agent-max-turns` to limit
@@ -576,11 +597,12 @@ A successful job can skip a review or handle `/help`. Confirm `Posted review #�
 and the linked PR review before counting it as a completed review. Track failed,
 cancelled, skipped and still-running jobs separately.
 
-Agent mode can make many model requests before producing a review. At its turn or
-investigation time limit, Robin asks for a final answer without tools. If that fails,
-Robin can start a single-shot fallback, whose requests have their own timeout and
-retries. The investigation budget therefore does not cap total job duration; the
-workflow job timeout still applies. Look for `Agent turn`, fallback warnings,
+Agent mode can make many model requests before producing a review. At its turn limit or
+investigation cutoff, Robin asks for a final answer without tools while time remains.
+Deadline expiry and cancellation stop the run without fallback. Other eligible failures
+can start a single-shot fallback, whose requests have their own timeout and retries.
+Snapshot preparation, fallback and posting also take time, so the agent deadline does
+not cap total job duration; the workflow job timeout still applies. Look for `Agent turn`, fallback warnings,
 `LLM attempt` and `Retrying LLM request` in the log.
 
 To compare providers, match repository, review mode, diff size, Robin revision and

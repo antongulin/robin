@@ -20,9 +20,9 @@ Free AI code reviews for every pull request. You bring an API key; Robin reviews
 > agent-mode: off
 > ```
 >
-> **Request defaults also change:** Robin checks an estimated **256,000-token working budget per request**, with a **32,000-token output cap** when unset and **16,000** safety headroom. Both raw diff allowances now default to **500,000 characters**. These are configurable estimates, not model context guarantees. Total usage across turns/retries can exceed 256,000 tokens. See [request budgets](docs/ADVANCED.md#estimated-request-budget).
+> **Request defaults:** the estimated request guard is **off** by default, so an unset `max-output-tokens` leaves the output cap to the provider/model. Set a positive `estimated-request-token-budget` to enable the estimate, its derived output cap (up to **32,000 tokens** when `max-output-tokens` is unset) and safety headroom of `ceil(budget / 16)`. Both raw diff allowances default to **500,000 characters**. These are configurable estimates, not model context guarantees. Total usage across turns/retries can exceed any per-request budget. See [request budgets](docs/ADVANCED.md#estimated-request-budget).
 >
-> For the previous single-shot/provider-default output shape, set both `agent-mode: off` and `estimated-request-token-budget: off`, and leave `max-output-tokens` unset. Explicit output and character caps still apply. Older reusable workflows may explicitly forward `50000`; Robin preserves that value.
+> `estimated-request-token-budget: off` remains valid and matches the default; explicit output and character caps still apply. Older reusable workflows may explicitly forward `50000`; Robin preserves that value.
 >
 > A nonblank workflow/action input overrides this file; change an existing `agent-mode: auto` input to `agent-mode: "off"` too. Some tagged reusable workflows call the action at `@main` and can receive this change before the release. See the [migration and model compatibility guide](docs/ADVANCED.md#default-change-and-migration) for input snippets, fallback limits and pin behavior. `/summary` stays single-shot.
 
@@ -295,7 +295,8 @@ and check types and tests at the PR's head commit before reporting a bug. Findin
 - Robin downloads a read-only snapshot through the GitHub API; no checkout is needed and Robin never executes PR code.
 - Tool rejection or snapshot failure triggers an attempted complete diff-only fallback, subject to `max-diff-size`. Warnings and the final status show the fallback reason; size or provider failures can still stop the review.
 - Set `agent-mode: off` to skip the snapshot and tools. Use this for weak/local models until you have checked tool behavior, review quality and context capacity. `agent-max-turns` defaults to 40; extra requests can add time and usage.
-- Context compaction summarizes investigation history within existing limits. It cannot guarantee that a small-context model fits or that a review completes. Explicit truncated output fails the review.
+- Context compaction works on the investigation history only: a 450k-byte soft target on everything after the system prompt and original diff, mechanical pruning of already-consumed tool results, then at most one model-written summary per new evidence step. A default run can still send a larger accepted request, and the provider's own context limit remains the hard boundary; it cannot guarantee that a small-context model fits or that a review completes. Explicit truncated output fails the review.
+- Investigation time is capped at 30 minutes, with part of it reserved for the final no-tools answer; an in-flight request is aborted at its deadline.
 
 Details: [Agent mode](docs/ADVANCED.md#agent-mode-multi-turn-review-with-repository-context) and [migration guidance](docs/ADVANCED.md#default-change-and-migration).
 
@@ -383,7 +384,7 @@ Model requests and repository context:
 | Setting | Default / behavior | Where |
 | --- | --- | --- |
 | `llm-api-key` / `LLM_API_KEY` | Blank direct action input uses the public `ollama` placeholder; reusable workflow requires the secret | Direct action input / reusable workflow secret |
-| `estimated-request-token-budget` | `256000` estimated tokens per request, including input, output and safety; `off` disables the estimate/default output cap | Nonblank workflow input overrides base config; blank inherits |
+| `estimated-request-token-budget` | `off`: no estimate or derived output cap. A positive integer enables the estimate, including input, output and safety | Nonblank workflow input overrides base config; blank inherits |
 | `max-output-tokens` | Unset: scales with enabled budget up to `32000`; guard off: provider/model default | Positive safe integer workflow input; explicit cap is preserved |
 | `reasoning-effort` | Unset; provider/model decides. `off` sends no reasoning configuration | Workflow input or repo config |
 | `llm-timeout-ms` | `600000` milliseconds (10 minutes) | Workflow input |

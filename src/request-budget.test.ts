@@ -7,7 +7,8 @@ import { parseRepoConfigYaml, resolveEstimatedRequestTokenBudget, resolveMaxDiff
 describe("RB01 configuration and safe arithmetic", () => {
   test("defaults and explicit old caller values have unambiguous precedence", () => {
     const config = parseRepoConfigYaml('estimated-request-token-budget: "1000" # small endpoint\nmax-diff-size: 25000\nagent-max-diff-size: 30000');
-    expect(resolveEstimatedRequestTokenBudget("", {})).toBe(256000);
+    expect(resolveEstimatedRequestTokenBudget("", {})).toBe("off");
+    expect(resolveEstimatedRequestTokenBudget("", parseRepoConfigYaml("estimated-request-token-budget: 256000"))).toBe(256000);
     expect(resolveMaxDiffSize("", {})).toBe(500000);
     expect(resolveAgentMaxDiffSize("", {})).toBe(500000);
     expect(resolveEstimatedRequestTokenBudget("", config)).toBe(1000);

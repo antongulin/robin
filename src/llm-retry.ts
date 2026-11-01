@@ -313,15 +313,76 @@ export function isToolsUnsupportedError(error: unknown): boolean {
 const CONTEXT_LENGTH_PHRASES =
   /\b(?:context[_\s-]?length(?:[_\s-]?exceeded)?|context[_\s-]window|maximum\s+context|prompt\s+is\s+too\s+long|input\s+is\s+too\s+long|too\s+many\s+(?:input\s+)?tokens|reduce\s+the\s+length\s+of\s+the\s+(?:messages|prompt|input)|exceeds?\s+(?:the\s+)?(?:model'?s?\s+)?(?:maximum|max)\s+(?:context|input|prompt|token)|request\s+entity\s+too\s+large|payload\s+too\s+large)/i;
 
-/** The conversation no longer fits the model's context window (OpenAI, Anthropic, OpenRouter, vLLM phrasings). */
+/** Bounded cause-chain walk: wrappers keep the native provider error in `cause`. */
+const MAX_CAUSE_DEPTH = 8;
+
+/**
+ * The conversation no longer fits the model's context window (OpenAI, Anthropic, OpenRouter,
+ * vLLM phrasings). Examines the error and its bounded, cycle-safe cause chain, because the
+ * client wraps provider errors in LLMRequestError without copying their native status.
+ *
+ * A native 413 is context/payload pressure. A 400/422 must name a known context signal.
+ * Auth, rate-limit, output-length and unrelated validation failures never become context
+ * pressure, even when an outer wrapper message echoes part of the native text.
+ */
 export function isContextLengthError(error: unknown): boolean {
   if (!error) return false;
-  if (typeof error === "object" && error !== null && "status" in error) {
-    const status = Number((error as { status?: unknown }).status);
-    if (status === 413) return true;
-    if (Number.isFinite(status) && status !== 400 && status !== 422) return false;
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  let sawContextSignal = false;
+  let sawNativeStatus = false;
+  let sawNativeContext = false;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+    if (typeof current === "string") {
+      sawContextSignal ||= CONTEXT_LENGTH_PHRASES.test(current);
+      break;
+    }
+    if (!current || typeof current !== "object" || seen.has(current)) break;
+    seen.add(current);
+    if ("status" in current) {
+      const status = Number((current as { status?: unknown }).status);
+      if (Number.isFinite(status) && status !== 400 && status !== 413 && status !== 422) return false;
+      if (Number.isFinite(status)) {
+        sawNativeStatus = true;
+        sawNativeContext ||= status === 413 || CONTEXT_LENGTH_PHRASES.test(errorMessage(current));
+      }
+    }
+    if (CONTEXT_LENGTH_PHRASES.test(errorMessage(current))) sawContextSignal = true;
+    current = (current as { cause?: unknown }).cause;
   }
-  return CONTEXT_LENGTH_PHRASES.test(errorMessage(error));
+  return sawNativeStatus ? sawNativeContext : sawContextSignal;
+}
+
+/** The caller aborted this logical request. Cancellation is terminal, never a provider failure. */
+export class LlmRequestCancelledError extends Error {
+  constructor() {
+    super("LLM request cancelled before completion.");
+    this.name = "LlmRequestCancelledError";
+  }
+}
+
+/**
+ * The agent's own deadline expired. Terminal like cancellation so callers do not start an
+ * unrelated fallback after total time is gone, but the message keeps the real cause visible.
+ */
+export class AgentDeadlineError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AgentDeadlineError";
+  }
+}
+
+/** SDK user aborts and transport abort errors are cancellations, not retryable provider errors. */
+export function isCancellationError(error: unknown): boolean {
+  if (error instanceof LlmRequestCancelledError || error instanceof AgentDeadlineError) return true;
+  if (!error || typeof error !== "object") return false;
+  const name = (error as { name?: unknown }).name;
+  return name === "APIUserAbortError" || name === "AbortError" || name === "AgentDeadlineError";
+}
+
+/** Throws the typed local cancellation before any further physical work when already aborted. */
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new LlmRequestCancelledError();
 }
 
 export function isRetriableLlmError(error: unknown, context: LlmRetryContext = {}): boolean {
@@ -389,8 +450,29 @@ export function getLlmCompletionAttemptCount(
   return Math.max(1, Math.floor(resolved));
 }
 
-export async function delayMs(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+export async function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return;
+  }
+  const abortSignal = signal;
+  throwIfAborted(abortSignal);
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(finish, ms);
+    function cleanup() {
+      clearTimeout(timer);
+      abortSignal.removeEventListener("abort", onAbort);
+    }
+    function finish() {
+      cleanup();
+      resolve();
+    }
+    function onAbort() {
+      cleanup();
+      reject(new LlmRequestCancelledError());
+    }
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export function openRouterStallError(firstChunkMs: number): Error {

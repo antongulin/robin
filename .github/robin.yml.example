@@ -5,7 +5,7 @@
 # The 25000/10 values below are sample overrides, not defaults.
 
 # Estimated per-request working budget; includes output cap and safety, not total usage.
-# estimated-request-token-budget: 256000  # default; off restores absent-cap provider output when max-output-tokens is unset
+# estimated-request-token-budget: 256000  # default is off; a positive integer enables the guard and derived output cap
 # Both raw character caps default to 500000; tune with the budget for your endpoint.
 max-diff-size: 25000
 agent-max-diff-size: 25000
