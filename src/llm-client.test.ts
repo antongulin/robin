@@ -209,7 +209,7 @@ describe.each([false, true])("completion metadata (streaming: %s)", streaming =>
     expect(create).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["stop", undefined])("L4 retains the real empty-response reason (%s)", async finishReason => {
+  it.each(["stop", "content_filter", undefined])("L4 retains the real empty-response reason (%s)", async finishReason => {
     jest.useFakeTimers();
     const { client, create } = setup();
     create.mockImplementation(async () => response("", finishReason));

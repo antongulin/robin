@@ -849,7 +849,9 @@ streamed string deltas, retained compaction tails, and the final request with to
 reviews; only `content` supplies review text. Provider errors can echo the request, so
 Robin reports a failure category and HTTP status instead of the provider's raw error text.
 The native error remains available internally for retry, compatibility and context-limit
-decisions. Explicit low-level SDK debug logging can still expose raw payloads.
+decisions. Empty-response diagnostics show known completion-reason labels, or `unknown`
+if the provider sends an invalid value. Explicit low-level SDK debug logging can still
+expose raw payloads.
 
 For providers other than OpenCode Go, if a provider rejects the parameter itself as unknown
 or unsupported, or clearly rejects the configured effort value (a 400/422 response such as `Unsupported parameter: reasoning`

@@ -216,8 +216,9 @@ of summary prompts, progress/status updates, Robin logs, and visible reviews; us
 `content` for review text. Provider error bodies can echo credentials or replay data:
 retain native causes internally for classification, but use controlled failure categories
 and numeric HTTP status in LLM errors, logs and progress updates. Do not publish raw
-provider messages, including compatibility and tool-support errors. Low-level SDK debug
-logging can expose raw payloads.
+provider messages, including compatibility and tool-support errors. Empty-response logs
+and failure messages use known completion-reason labels or `unknown` for invalid values.
+Low-level SDK debug logging can expose raw payloads.
 
 Installers preserve complete custom identity workflows (explicit token mappings, App
 token steps, or inherited secrets), including their refs, rather than reconstructing

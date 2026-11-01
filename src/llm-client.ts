@@ -85,6 +85,12 @@ export class CompletionLengthError extends Error {
   }
 }
 
+/** Unknown completion metadata must not become diagnostic text. */
+function finishReasonLabel(reason: unknown): string {
+  return typeof reason === "string" && ["stop", "length", "tool_calls", "content_filter", "function_call"].includes(reason)
+    ? reason : "unknown";
+}
+
 /** Provider bodies can echo credentials and private replay. Only local labels leave this boundary. */
 function providerFailureSummary(error: unknown): string {
   const value = error && typeof error === "object" ? (error as { status?: unknown }).status : undefined;
@@ -434,7 +440,7 @@ export class LLMClient {
         }
 
         trigger = "outer-empty-retry";
-        lastFinishReason = result.finishReason || "unknown";
+        lastFinishReason = finishReasonLabel(result.finishReason);
         core.warning(
           `LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`
         );
@@ -823,7 +829,7 @@ export class LLMClient {
     }
 
     core.warning(
-      `LLM choice has no text content (finish_reason=${choice.finish_reason || "unknown"}).`
+      `LLM choice has no text content (finish_reason=${finishReasonLabel(choice.finish_reason)}).`
     );
     return "";
   }
