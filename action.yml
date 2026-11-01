@@ -29,7 +29,7 @@ inputs:
     required: false
     default: ""
   max-diff-size:
-    description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, that path fails before its model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff. Empty defers to base-branch config, then 500000. The full request also faces the estimated token budget."
+    description: "Maximum diff characters for a single-shot review or /summary, counted after path filters. When the filtered diff is larger, that path fails before its model request and the failed status reports the observed size, this limit, and how to fix it; Robin never sends a truncated diff. Empty defers to base-branch config, then 500000. The full request also faces an estimated token budget when estimated-request-token-budget is a positive number."
     required: false
     default: ""
   estimated-request-token-budget:

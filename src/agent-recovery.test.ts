@@ -194,46 +194,46 @@ test("A4-2 explicit 64000 output cap survives summary, forced final and compatib
   expect(requests.at(-1)?.tool_choice).toBe("none");
 });
 
-test("A6-4 aborts a blocking transport at the agent deadline instead of waiting forever", async () => {
-  let aborted = false;
-  const { client } = offlineAgent((_body, _index, init) => new Promise<Response>((_resolve, reject) => {
-    const signal = init?.signal;
-    expect(signal).toBeDefined();
-    signal?.addEventListener("abort", () => {
-      aborted = true;
-      reject(new Error("synthetic abort"));
-    }, { once: true });
-  }));
+test.each([
+  { transport: "blocking", model: "test-model" },
+  { transport: "streaming", model: "openrouter/free" },
+])("A6-4 aborts a $transport transport at the agent deadline instead of waiting forever", async ({ model }) => {
+  jest.useFakeTimers({ now: 0 });
+  try {
+    let aborts = 0;
+    let markStarted!: () => void;
+    const transportStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const { client, requests } = offlineAgent((_body, _index, init) => new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      expect(signal).toBeDefined();
+      expect(signal?.aborted).toBe(false);
+      signal?.addEventListener("abort", () => {
+        aborts++;
+        reject(new Error("synthetic abort"));
+      }, { once: true });
+      markStarted();
+    }), { model });
 
-  await expect(runAgentReview({
-    llm: client,
-    toolbox: toolbox(),
-    annotatedDiff: "diff",
-    changedFiles: [],
-    instructions: "",
-    budgets: { deadlineMs: 300 },
-  })).rejects.toBeInstanceOf(AgentDeadlineError);
-  expect(aborted).toBe(true);
-});
+    const pending = expect(runAgentReview({
+      llm: client,
+      toolbox: toolbox(),
+      annotatedDiff: "diff",
+      changedFiles: [],
+      instructions: "",
+      budgets: { deadlineMs: 300 },
+    })).rejects.toBeInstanceOf(AgentDeadlineError);
 
-test("A6-4 aborts a streaming transport at the agent deadline instead of waiting forever", async () => {
-  let aborted = false;
-  const { client } = offlineAgent((_body, _index, init) => new Promise<Response>((_resolve, reject) => {
-    const signal = init?.signal;
-    expect(signal).toBeDefined();
-    signal?.addEventListener("abort", () => {
-      aborted = true;
-      reject(new Error("synthetic abort"));
-    }, { once: true });
-  }), { model: "openrouter/free" });
-
-  await expect(runAgentReview({
-    llm: client,
-    toolbox: toolbox(),
-    annotatedDiff: "diff",
-    changedFiles: [],
-    instructions: "",
-    budgets: { deadlineMs: 300 },
-  })).rejects.toBeInstanceOf(AgentDeadlineError);
-  expect(aborted).toBe(true);
+    // Start the real SDK transport before advancing time, regardless of host scheduling.
+    await transportStarted;
+    expect(requests).toHaveLength(1);
+    expect(aborts).toBe(0);
+    await jest.advanceTimersByTimeAsync(300);
+    await pending;
+    // Both investigation and forced-final requests receive an actual abort signal.
+    expect(aborts).toBe(2);
+    expect(requests).toHaveLength(2);
+    expect(requests[1].tool_choice).toBe("none");
+  } finally {
+    jest.useRealTimers();
+  }
 });
