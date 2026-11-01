@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.13.2](https://github.com/antongulin/robin/compare/v2.13.1...v2.13.2) (2026-11-01)
+
+> [!IMPORTANT]
+> The estimated request-budget guard now defaults to **`off`**, superseding the request-budget default in v2.13.0 and v2.13.1. When `max-output-tokens` is unset, the provider/model chooses the output cap.
+>
+> Set a positive `estimated-request-token-budget` to enable the guard and its safety headroom. With the guard enabled and `max-output-tokens` unset, Robin derives an output cap from that budget. Explicit output and diff caps, agent turn limits and deadlines still apply. See [request budgets](https://github.com/antongulin/robin/blob/main/docs/ADVANCED.md#estimated-request-budget).
+
+### Bug Fixes
+
+* make request budgets opt-in and bound agent recovery ([#129](https://github.com/antongulin/robin/issues/129)) ([a926f48](https://github.com/antongulin/robin/commit/a926f4871ed80d5e1d4ab26c61d7d4c8812025d0))
+
+
+### Documentation
+
+* clarify limits with request estimation disabled ([556b3b8](https://github.com/antongulin/robin/commit/556b3b825b15bcf2fc35fc43a16fb96d33618ae9))
+
 ## [2.13.1](https://github.com/antongulin/robin/compare/v2.13.0...v2.13.1) (2026-10-31)
 
 
