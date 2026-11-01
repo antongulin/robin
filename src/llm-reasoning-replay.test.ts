@@ -35,7 +35,7 @@ function completion(message: WireMessage) {
 function rejection(status: number) {
   return new Response(JSON.stringify({ error: {
     type: "invalid_request_error",
-    message: status === 400 ? "reasoning_content must be passed back with tools" : "Endpoint is unavailable",
+    message: `${status === 400 ? "reasoning_content must be passed back with tools" : "Endpoint is unavailable"}: ${PRIVATE}`,
   } }), { status, headers: { "content-type": "application/json" } });
 }
 
@@ -181,7 +181,7 @@ it.each([400, 429])("RC05 bounds HTTP %i failures without leaking replay metadat
     ? completion({ content: null, reasoning_content: PRIVATE, tool_calls: [tool("c0")] })
     : rejection(status), { maxAttempts: 3 });
   const pending = expect(runAgentReview({ ...agentInput, llm: client, toolbox: toolbox() }))
-    .rejects.toThrow(status === 400 ? "reasoning_content must be passed back" : "Endpoint is unavailable");
+    .rejects.toMatchObject({ name: "LLMRequestError", cause: expect.objectContaining({ status }) });
   await jest.runAllTimersAsync();
   await pending;
   expect(requests).toHaveLength(status === 400 ? 2 : 4);

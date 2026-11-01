@@ -213,7 +213,11 @@ as private completion metadata, including empty strings and streamed string delt
 Replay it unchanged only on its original assistant tool message, including retained
 compaction tails and forced-final requests. Omit absent or invalid values. Keep it out
 of summary prompts, progress/status updates, Robin logs, and visible reviews; use
-`content` for review text. Low-level SDK debug logging can expose raw payloads.
+`content` for review text. Provider error bodies can echo credentials or replay data:
+retain native causes internally for classification, but use controlled failure categories
+and numeric HTTP status in LLM errors, logs and progress updates. Do not publish raw
+provider messages, including compatibility and tool-support errors. Low-level SDK debug
+logging can expose raw payloads.
 
 Installers preserve complete custom identity workflows (explicit token mappings, App
 token steps, or inherited secrets), including their refs, rather than reconstructing

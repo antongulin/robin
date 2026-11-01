@@ -678,7 +678,7 @@ function buildFailedStatusBody(error: unknown, command: "review" | "summary"): s
     "",
     `Reason: ${errorMessage}`,
     "",
-    `${advice} (No secrets are included in this message.)`,
+    advice,
     ...versionFooter(),
   ].join("\n");
 }

@@ -1378,7 +1378,27 @@ class CompletionLengthError extends Error {
     }
 }
 exports.CompletionLengthError = CompletionLengthError;
-/** Identifies an LLM request failure while retaining its native provider cause. */
+/** Provider bodies can echo credentials and private replay. Only local labels leave this boundary. */
+function providerFailureSummary(error) {
+    const value = error && typeof error === "object" ? error.status : undefined;
+    const status = typeof value === "number" && Number.isInteger(value) && value >= 400 && value <= 599
+        ? value : undefined;
+    const suffix = status === undefined ? "" : ` (HTTP ${status})`;
+    if ((0, llm_retry_1.isContextLengthError)(error))
+        return `Provider context or payload limit exceeded${suffix}`;
+    if (/^OpenRouter stall: no first response within \d+ ms$/.test((0, llm_retry_1.errorMessage)(error))) {
+        return "OpenRouter stall: no first response";
+    }
+    const category = status === 401 ? "Provider authentication failed"
+        : status === 403 ? "Provider access denied"
+            : status === 404 ? "Provider endpoint unavailable"
+                : status === 429 ? "Provider rate limit exceeded"
+                    : status !== undefined && status >= 500 ? "Provider server error"
+                        : status === 400 || status === 422 ? "Provider rejected request parameters"
+                            : "Provider request failed";
+    return category + suffix;
+}
+/** Identifies an LLM request failure while retaining its native provider cause internally. */
 class LLMRequestError extends Error {
     constructor(message, options) {
         super(message, options);
@@ -1419,7 +1439,7 @@ function extractReasoningContent(value) {
 /** The provider or model cannot take `tools`; callers should fall back to a plain completion. */
 class ToolsUnsupportedError extends Error {
     constructor(cause) {
-        super(`Model does not support tool calling: ${(0, llm_retry_1.errorMessage)(cause)}`);
+        super(`Model does not support tool calling: ${providerFailureSummary(cause)}`, { cause });
         this.name = "ToolsUnsupportedError";
     }
 }
@@ -1518,7 +1538,7 @@ class LLMClient {
         // mode to step down to; rely on the prompt and the markdown fallback parser instead.
         if (param === "response_format" && this.responseFormat === "json_schema" && this.provider !== "anthropic") {
             this.responseFormat = "json_object";
-            core.warning(`Provider rejected the JSON schema response_format (${(0, llm_retry_1.errorMessage)(error)}). Retrying once with plain JSON-object mode and keeping that shape for the rest of this run.`);
+            core.warning(`Provider rejected the JSON schema response_format (${providerFailureSummary(error)}). Retrying once with plain JSON-object mode and keeping that shape for the rest of this run.`);
             return true;
         }
         if (this.droppedParams.includes(param))
@@ -1538,7 +1558,7 @@ class LLMClient {
                 if (this.droppedParams.includes(other)) {
                     // Both spellings have now been rejected. Never fall back to an uncapped request for a
                     // configured cap — surface the provider's error instead.
-                    core.error(`Provider rejected both max_tokens and max_completion_tokens (${(0, llm_retry_1.errorMessage)(error)}). ` +
+                    core.error(`Provider rejected both max_tokens and max_completion_tokens (${providerFailureSummary(error)}). ` +
                         "The configured max-output-tokens cap cannot be enforced on this endpoint, so the request is not sent uncapped.");
                     return false;
                 }
@@ -1552,7 +1572,7 @@ class LLMClient {
                 action = "omitting response_format (the review parser falls back to markdown)";
                 break;
         }
-        core.warning(`Provider rejected the ${param} parameter (${(0, llm_retry_1.errorMessage)(error)}). Retrying once ${action} and keeping that shape for the rest of this run.`);
+        core.warning(`Provider rejected the ${param} parameter (${providerFailureSummary(error)}). Retrying once ${action} and keeping that shape for the rest of this run.`);
         return true;
     }
     retryContext() {
@@ -1628,23 +1648,23 @@ class LLMClient {
                 if (options.tools && (0, llm_retry_1.isToolsUnsupportedError)(error)) {
                     throw new ToolsUnsupportedError(error);
                 }
-                core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${error}`);
+                core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${providerFailureSummary(error)}`);
                 if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt === this.maxAttempts) {
-                    core.error(`LLM API error: ${error}`);
-                    throw new LLMRequestError(`Failed to get response from LLM: ${error}`, { cause: error });
+                    core.error(`LLM API error: ${providerFailureSummary(error)}`);
+                    throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
                 }
             }
             if (attempt < this.maxAttempts) {
                 const waitMs = (0, llm_retry_1.computeRetryDelayMs)(attempt, this.retryContext());
-                const reason = lastError instanceof Error ? lastError.message : "empty response";
+                const reason = lastError === undefined ? "empty response" : providerFailureSummary(lastError);
                 core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
                 await this.progress(`Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`);
                 await (0, llm_retry_1.delayMs)(waitMs, options.signal);
             }
         }
         if (lastError && (0, llm_retry_1.isRetriableLlmError)(lastError, this.retryContext())) {
-            core.error(`LLM API error after ${this.maxAttempts} attempts: ${lastError}`);
-            throw new LLMRequestError(`Failed to get response from LLM after ${this.maxAttempts} attempts: ${lastError}`, { cause: lastError });
+            core.error(`LLM API error after ${this.maxAttempts} attempts: ${providerFailureSummary(lastError)}`);
+            throw new LLMRequestError(`Failed to get response from LLM after ${this.maxAttempts} attempts: ${providerFailureSummary(lastError)}`, { cause: lastError });
         }
         throw new Error(`Empty response from LLM after ${this.maxAttempts} attempts (finish_reason=${lastFinishReason})`);
     }
@@ -1713,7 +1733,7 @@ class LLMClient {
             return false;
         this.reasoningFallbackActive = true;
         this.reasoningFallbackReason = fallbackReason;
-        core.warning(`Provider rejected the configured reasoning effort as ${fallbackReason === "invalid-value" ? "invalid" : "unsupported"} (${(0, llm_retry_1.errorMessage)(error)}). ` +
+        core.warning(`Provider rejected the configured reasoning effort as ${fallbackReason === "invalid-value" ? "invalid" : "unsupported"} (${providerFailureSummary(error)}). ` +
             "Retrying once without the reasoning parameter and continuing this run without reasoning controls.");
         await this.progress(fallbackReason === "invalid-value"
             ? "Provider rejected the configured reasoning effort — retrying without it…"
@@ -3033,7 +3053,7 @@ function buildFailedStatusBody(error, command) {
         "",
         `Reason: ${errorMessage}`,
         "",
-        `${advice} (No secrets are included in this message.)`,
+        advice,
         ...versionFooter(),
     ].join("\n");
 }

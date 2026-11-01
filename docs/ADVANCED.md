@@ -846,8 +846,10 @@ If a provider supplies a string `reasoning_content`, Robin preserves it as priva
 and replays it unchanged on that assistant's tool turn in later requests. This includes
 streamed string deltas, retained compaction tails, and the final request with tool choice
 `none`. Robin keeps this metadata out of summaries, progress updates, logs, and visible
-reviews; only `content` supplies review text. Explicit low-level SDK debug logging can
-still expose raw payloads.
+reviews; only `content` supplies review text. Provider errors can echo the request, so
+Robin reports a failure category and HTTP status instead of the provider's raw error text.
+The native error remains available internally for retry, compatibility and context-limit
+decisions. Explicit low-level SDK debug logging can still expose raw payloads.
 
 For providers other than OpenCode Go, if a provider rejects the parameter itself as unknown
 or unsupported, or clearly rejects the configured effort value (a 400/422 response such as `Unsupported parameter: reasoning`

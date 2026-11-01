@@ -24,6 +24,7 @@ const HEAD_SHA = "b".repeat(40);
 const CONTEXT = "CONTEXT_OUTSIDE_THE_DIFF_7319";
 const FIRST = "FIRST_FILE_MARKER";
 const TAIL = "FINAL_DIFF_TAIL_MARKER";
+const PRIVATE_ERROR_ECHO = "PRIVATE_ERROR_ECHO_3217";
 const diff = [
   "diff --git a/src/first.ts b/src/first.ts",
   "--- a/src/first.ts", "+++ b/src/first.ts", "@@ -1 +1 @@",
@@ -63,6 +64,7 @@ interface Scenario {
   snapshotFailure?: boolean;
   expireDuringAgent?: boolean;
   contextRecoveryCutoff?: boolean;
+  echoFailure?: boolean;
 }
 
 async function execute(scenario: Scenario = {}) {
@@ -105,6 +107,13 @@ async function execute(scenario: Scenario = {}) {
         return;
       }
       const toolResult = body.messages.find(message => message.role === "tool");
+      if (scenario.echoFailure && toolResult) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: { message:
+          `Rejected authorization ${req.headers.authorization}; request ${JSON.stringify(body)}`,
+        } }));
+        return;
+      }
       if (scenario.contextRecoveryCutoff && body.tools && toolResult) {
         res.writeHead(413);
         res.end(JSON.stringify({ error: { message: "synthetic context rejection", type: "invalid_request_error" } }));
@@ -131,7 +140,8 @@ async function execute(scenario: Scenario = {}) {
         id: "synthetic", object: "chat.completion", model: scenario.reportedModel ?? "reported-backend",
         usage: { prompt_tokens: requests.length * 100, completion_tokens: requests.length * 10, total_tokens: requests.length * 110 },
         choices: [{ index: 0, finish_reason: investigate ? "tool_calls" : "stop", message: investigate
-          ? { role: "assistant", content: null, tool_calls: [{ id: "context_call", type: "function",
+          ? { role: "assistant", content: null, reasoning_content: scenario.echoFailure ? PRIVATE_ERROR_ECHO : undefined,
+            tool_calls: [{ id: "context_call", type: "function",
             function: { name: "read_file", arguments: '{"path":"src/context.ts"}' } }] }
           : { role: "assistant", content: scenario.structuredRetry && requests.length === 1 ? "unparseable response" : content } }],
       }));
@@ -443,7 +453,7 @@ test.each([false, true])("UR11 sink failures preserve action verdict and snapsho
   const r = await execute({ sinkFailure: true, terminalFailure });
   expect(r.cleanup).toHaveBeenCalledTimes(1);
   if (terminalFailure) {
-    expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("synthetic terminal failure"));
+    expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("Provider authentication failed (HTTP 401)"));
     expect(core.setFailed).not.toHaveBeenCalledWith(expect.stringContaining("private reporting failure"));
     expect(r.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
   } else {
@@ -571,6 +581,30 @@ test("A7 snapshot setup failure remains visible when the complete-diff fallback 
   expect(result.lastStatus).toContain("max-diff-size");
   expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("snapshot access denied"));
   expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+});
+
+test("A4/A7 provider echoes stay out of diagnostics while both failure causes remain visible", async () => {
+  const result = await execute({ input: "auto", echoFailure: true, singleShotCap: 1 });
+  expect(result.requests).toHaveLength(2);
+  expect(result.requests[1].messages).toContainEqual(expect.objectContaining({
+    role: "assistant", reasoning_content: PRIVATE_ERROR_ECHO,
+  }));
+  expect(result.credentials[1]).toBe("Bearer synthetic-loopback-key");
+  expect(result.lastStatus).toContain("401");
+  expect(result.lastStatus).toContain("max-diff-size");
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("401"));
+  expect(core.setFailed).toHaveBeenCalledWith(expect.stringContaining("max-diff-size"));
+  const visible = JSON.stringify([
+    result.octokit.rest.issues.updateComment.mock.calls,
+    result.octokit.rest.pulls.createReview.mock.calls,
+    jest.mocked(core.info).mock.calls, jest.mocked(core.warning).mock.calls,
+    jest.mocked(core.error).mock.calls, jest.mocked(core.setFailed).mock.calls,
+  ]);
+  expect(visible).not.toContain(PRIVATE_ERROR_ECHO);
+  expect(visible).not.toContain("synthetic-loopback-key");
+  expect(result.octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+  expect(result.cleanup).toHaveBeenCalledTimes(1);
+  expect(result.usageReport.metrics.prompt_tokens.observed_sum).toBe(100);
 });
 
 test.each(["max-diff-size", "agent-max-diff-size"])("RB05 explicit old 50000 caller %s rejects original full diff", async setting => {

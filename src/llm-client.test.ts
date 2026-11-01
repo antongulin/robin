@@ -87,6 +87,32 @@ function makeClient(baseUrl: string, model: string, options: { maxOutputTokens?:
   );
 }
 
+it.each(["temperature", "reasoning", "tools"])("keeps echoed provider text private during %s fallback", async parameter => {
+  jest.clearAllMocks();
+  const client = makeClient("https://example.test/v1", "model", { effort: "high" });
+  const create = stubOpenAI(client);
+  const secret = "SYNTHETIC_PROVIDER_ECHO_PRIVATE_3217";
+  const providerError = Object.assign(new Error(`Unsupported parameter: ${parameter}. ${secret}`), {
+    status: 400, param: parameter,
+  });
+  create.mockRejectedValueOnce(providerError).mockResolvedValueOnce(completionResponse("review text"));
+  if (parameter === "tools") {
+    const pending = client.chatWithTools([{ role: "user", content: "review" }], [{
+      type: "function", function: { name: "read_file", parameters: { type: "object" } },
+    }]);
+    await expect(pending).rejects.toMatchObject({ name: "ToolsUnsupportedError", cause: providerError });
+    await expect(pending).rejects.not.toThrow(secret);
+    expect(create).toHaveBeenCalledTimes(1);
+  } else {
+    await expect(client.chatCompletion("system", "user")).resolves.toMatchObject({ content: "review text" });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1][0]).not.toHaveProperty(parameter);
+  }
+  expect(JSON.stringify([
+    jest.mocked(core.info).mock.calls, jest.mocked(core.warning).mock.calls, jest.mocked(core.error).mock.calls,
+  ])).not.toContain(secret);
+});
+
 describe.each([false, true])("completion metadata (streaming: %s)", streaming => {
   const tools = [{ type: "function" as const, function: { name: "read_file", parameters: { type: "object" } } }];
   const messages = [{ role: "user" as const, content: "review" }];
@@ -953,7 +979,7 @@ describe("LLMClient reasoning fallback", () => {
     expect(fallbackWarnings()).toHaveLength(1);
   });
 
-  it("logs the provider message for plain-object rejections", async () => {
+  it("logs classified diagnostics for plain-object rejections", async () => {
     const client = new LLMClient(
       "https://example.test/v1",
       "test-key",
@@ -969,7 +995,7 @@ describe("LLMClient reasoning fallback", () => {
     create
       .mockRejectedValueOnce({
         status: 400,
-        message: "Unsupported parameter: reasoning is not supported",
+        message: "Unsupported parameter: reasoning is not supported; PRIVATE_PROVIDER_ECHO",
       })
       .mockResolvedValueOnce(completionResponse("review text"));
 
@@ -978,7 +1004,9 @@ describe("LLMClient reasoning fallback", () => {
     expect(result.content).toBe("review text");
     const warnings = fallbackWarnings();
     expect(warnings).toHaveLength(1);
-    expect(String(warnings[0][0])).toContain("Unsupported parameter: reasoning is not supported");
+    expect(String(warnings[0][0])).toContain("reasoning effort as unsupported");
+    expect(String(warnings[0][0])).toContain("HTTP 400");
+    expect(String(warnings[0][0])).not.toContain("PRIVATE_PROVIDER_ECHO");
     expect(String(warnings[0][0])).not.toContain("[object Object]");
   });
 
@@ -1034,9 +1062,10 @@ describe("LLMClient reasoning fallback", () => {
 
     // Temperature is dropped once; when the provider still rejects, the real error surfaces
     // instead of being mistaken for a router stall.
-    await expect(client.chatCompletion("system", "user")).rejects.toThrow(
-      "temperature must be 1 for reasoning models",
-    );
+    await expect(client.chatCompletion("system", "user")).rejects.toMatchObject({
+      name: "LLMRequestError",
+      cause: expect.objectContaining({ message: "temperature must be 1 for reasoning models", status: 400 }),
+    });
     expect(create).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[1][0]).not.toHaveProperty("temperature");
     expect(fallbackWarnings()).toHaveLength(0);
@@ -1188,7 +1217,11 @@ describe("LLMClient context-length errors on router streams", () => {
       Object.assign(new Error("400 This endpoint's maximum context length is 131072 tokens."), { status: 400 }),
     );
 
-    await expect(client.chatCompletion("system", "user")).rejects.toThrow(/maximum context length/);
+    await expect(client.chatCompletion("system", "user")).rejects.toMatchObject({
+      name: "LLMRequestError",
+      message: expect.stringContaining("context or payload limit"),
+      cause: expect.objectContaining({ status: 400, message: expect.stringContaining("maximum context length") }),
+    });
   });
 });
 
