@@ -63,6 +63,34 @@ function rateLimited(message = "429 inference_failed", headers?: Record<string, 
   return providerError(429, message, headers);
 }
 
+function streamOf(chunks: unknown[]) {
+  return {
+    [Symbol.asyncIterator]: async function* () {
+      for (const chunk of chunks) {
+        yield chunk;
+      }
+    },
+  };
+}
+
+/** A streamed success: the first chunk proves the router routed, then the final text. */
+function streamedResponse(content: string) {
+  return streamOf([
+    { model: "resolved-router-model", choices: [{ delta: { content }, finish_reason: "stop" }] },
+  ]);
+}
+
+function makeRouterClient(maxAttempts?: number) {
+  return new LLMClient(
+    "https://provider.invalid/v1",
+    "test-key",
+    "openrouter/free",
+    undefined,
+    undefined,
+    maxAttempts
+  );
+}
+
 describe("LLMClient rate-limit retries", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -179,5 +207,96 @@ describe("LLMClient rate-limit retries", () => {
 
     expect(create).toHaveBeenCalledTimes(2);
     expect(retryWaits()).toEqual([{ waitMs: 5000, attempt: 2, limit: 2 }]);
+  });
+
+  it("R7 never shortens a scheduled wait for a smaller Retry-After hint", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create
+      .mockRejectedValueOnce(rateLimited("429 inference_failed", { "retry-after": "1" }))
+      .mockRejectedValueOnce(rateLimited("429 inference_failed", { "retry-after": "0" }))
+      .mockResolvedValueOnce(completionResponse("review text"));
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).resolves.toMatchObject({ content: "review text" }),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(retryWaits().map((retry) => retry.waitMs)).toEqual([5000, 10000]);
+  });
+
+  it("R8 applies the rate-limit schedule and hint to a router streaming 429", async () => {
+    jest.useFakeTimers();
+    const client = makeRouterClient(3);
+    const create = stubOpenAI(client);
+    create
+      .mockRejectedValueOnce(rateLimited("429 inference_failed", { "retry-after": "7" }))
+      .mockRejectedValueOnce(rateLimited())
+      .mockResolvedValueOnce(streamedResponse("review text"));
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).resolves.toMatchObject({ content: "review text" }),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(retryWaits()).toEqual([
+      { waitMs: 7000, attempt: 2, limit: 6 },
+      { waitMs: 10000, attempt: 3, limit: 6 },
+    ]);
+    expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
+      expect.stringContaining("OpenRouter stall: no first response")
+    );
+  });
+
+  it("R9 stops a 429-then-500 sequence at the ordinary attempt cap", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create
+      .mockRejectedValueOnce(rateLimited())
+      .mockRejectedValueOnce(providerError(500, "server error"))
+      .mockRejectedValueOnce(providerError(500, "server error"));
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toThrow(
+        "Failed to get response from LLM: Provider server error (HTTP 500)"
+      ),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(retryWaits()).toEqual([
+      { waitMs: 5000, attempt: 2, limit: 6 },
+      { waitMs: 4000, attempt: 3, limit: 3 },
+    ]);
+  });
+
+  it("R10 stops a 429-then-empty sequence at the ordinary attempt cap", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create
+      .mockRejectedValueOnce(rateLimited())
+      .mockResolvedValueOnce(completionResponse(""))
+      .mockResolvedValueOnce(completionResponse(""));
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toThrow(
+        "Empty response from LLM after 3 attempts (finish_reason=stop)"
+      ),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(retryWaits()).toEqual([
+      { waitMs: 5000, attempt: 2, limit: 6 },
+      { waitMs: 4000, attempt: 3, limit: 3 },
+    ]);
   });
 });

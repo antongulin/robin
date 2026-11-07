@@ -424,9 +424,10 @@ export class LLMClient {
     let lastError: unknown;
     // The cap applied to the current attempt. A native 429 raises it to the longer rate-limit
     // schedule; any other failure falls back to the ordinary count, so non-429 behavior is
-    // unchanged and a mixed sequence stays bounded.
+    // unchanged and a mixed sequence stays bounded. `rateLimitAttempts` is always the widest
+    // count, so it is also the loop ceiling; each iteration still stops at `attemptLimit`.
     let attemptLimit = this.maxAttempts;
-    const attemptCeiling = Math.max(this.maxAttempts, this.rateLimitAttempts);
+    const attemptCeiling = this.rateLimitAttempts;
 
     for (let attempt = 1; attempt <= attemptCeiling; attempt++) {
       throwIfAborted(options.signal);
@@ -454,6 +455,10 @@ export class LLMClient {
 
         trigger = "outer-empty-retry";
         lastFinishReason = finishReasonLabel(result.finishReason);
+        // Empty content is not a rate-limit path, so an earlier 429 must not keep the longer cap
+        // or own the final failure: the newest attempt produced no error and no content.
+        attemptLimit = this.maxAttempts;
+        lastError = undefined;
         core.warning(
           `LLM attempt ${attempt}/${attemptLimit}: empty content${useJson ? " (json mode)" : ""}`
         );
@@ -731,7 +736,7 @@ export class LLMClient {
         if (findUnsupportedRequestParam(error, this.sentDroppableParams(request))) {
           throw error;
         }
-        throw openRouterStallError(firstChunkMs);
+        throw openRouterStallError(firstChunkMs, error);
       }
       throw error;
     } finally {

@@ -34,6 +34,32 @@ describe("openRouterStallError", () => {
     expect(error.message).toContain("OpenRouter stall");
     expect(isRetriableLlmError(error, { model: "openrouter/free" })).toBe(true);
   });
+
+  it("keeps a native 429 cause visible to the rate-limit classifiers", () => {
+    const native = Object.assign(new Error("429 inference_failed"), {
+      status: 429,
+      headers: new Headers({ "retry-after": "7" }),
+    });
+    const error = openRouterStallError(45000, native);
+
+    expect(error.message).toBe("OpenRouter stall: no first response within 45000 ms");
+    expect(isRateLimitError(error)).toBe(true);
+    expect(parseRetryAfterMs(error)).toBe(7000);
+    expect(isRetriableLlmError(error, { model: "openrouter/free" })).toBe(true);
+    expect(isContextLengthError(error)).toBe(false);
+    expect(isToolsUnsupportedError(error)).toBe(false);
+  });
+
+  it("leaves a non-429 stall on the ordinary retry path", () => {
+    const native = Object.assign(new Error("503 service unavailable"), { status: 503 });
+    const error = openRouterStallError(45000, native);
+
+    expect(isRateLimitError(error)).toBe(false);
+    expect(parseRetryAfterMs(error)).toBeUndefined();
+    expect(isRetriableLlmError(error, { model: "openrouter/free" })).toBe(true);
+    expect(isContextLengthError(error)).toBe(false);
+    expect(isToolsUnsupportedError(error)).toBe(false);
+  });
 });
 
 describe("resolveLlmTimeoutMs", () => {
@@ -816,10 +842,12 @@ describe("computeRateLimitRetryDelayMs", () => {
     ]);
   });
 
-  it("honors a provider Retry-After inside [1 s, 60 s]", () => {
-    expect(computeRateLimitRetryDelayMs(2, 7000)).toBe(7000);
-    expect(computeRateLimitRetryDelayMs(2, 0)).toBe(MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS);
+  it("honors a longer provider Retry-After inside [1 s, 60 s] but never shortens the schedule", () => {
+    expect(computeRateLimitRetryDelayMs(1, 7000)).toBe(7000);
+    expect(computeRateLimitRetryDelayMs(2, 7000)).toBe(10000);
+    expect(computeRateLimitRetryDelayMs(2, 0)).toBe(10000);
     expect(computeRateLimitRetryDelayMs(2, 600000)).toBe(MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS);
+    expect(computeRateLimitRetryDelayMs(4, 5000)).toBe(40000);
     expect(computeRateLimitRetryDelayMs(2, Number.NaN)).toBe(10000);
   });
 });

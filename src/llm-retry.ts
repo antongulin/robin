@@ -538,24 +538,25 @@ export function getLlmRateLimitAttemptCount(
 }
 
 /**
- * The wait before the next attempt after a failed `attempt` (1-based). A usable provider
- * `Retry-After` wins inside [1 s, 60 s]; otherwise the schedule is 5/10/20/40 s and then 60 s.
- * No jitter: the announced waits match the documented schedule and tests, and each job's
- * retry burst stays independent and bounded.
+ * The wait before the next attempt after a failed `attempt` (1-based). The schedule is
+ * 5/10/20/40 s and then 60 s. A usable provider `Retry-After` inside [1 s, 60 s] can only
+ * lengthen that wait: the result is the larger of the scheduled delay and the clamped hint,
+ * still capped at 60 s. No jitter: the announced waits match the documented schedule and
+ * tests, and each job's retry burst stays independent and bounded.
  */
 export function computeRateLimitRetryDelayMs(
   attempt: number,
   retryAfterDelayMs?: number
 ): number {
-  if (retryAfterDelayMs !== undefined && Number.isFinite(retryAfterDelayMs)) {
-    return Math.min(
-      MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS,
-      Math.max(MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.round(retryAfterDelayMs))
-    );
-  }
   const schedule = DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS;
   const index = Math.min(Math.max(Math.floor(attempt), 1), schedule.length) - 1;
-  return schedule[index];
+  const scheduled = schedule[index];
+  if (retryAfterDelayMs === undefined || !Number.isFinite(retryAfterDelayMs)) return scheduled;
+  const hint = Math.min(
+    MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS,
+    Math.max(MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.round(retryAfterDelayMs))
+  );
+  return Math.min(MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.max(scheduled, hint));
 }
 
 export async function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
@@ -583,6 +584,12 @@ export async function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export function openRouterStallError(firstChunkMs: number): Error {
-  return new Error(`OpenRouter stall: no first response within ${firstChunkMs} ms`);
+/**
+ * A router stall keeps its own message, and an optional `cause` carries the native provider
+ * error so the bounded cause-walking classifiers can still see a 429 status or a
+ * `Retry-After` header. The wrapping does not change how non-429 failures are classified.
+ */
+export function openRouterStallError(firstChunkMs: number, cause?: unknown): Error {
+  const message = `OpenRouter stall: no first response within ${firstChunkMs} ms`;
+  return cause === undefined ? new Error(message) : new Error(message, { cause });
 }
