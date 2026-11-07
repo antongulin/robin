@@ -299,4 +299,63 @@ describe("LLMClient rate-limit retries", () => {
       { waitMs: 4000, attempt: 3, limit: 3 },
     ]);
   });
+
+  it("R11 keeps the ordinary schedule for a permanent quota 429", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create.mockRejectedValue(
+      Object.assign(rateLimited("429 insufficient_quota"), { code: "insufficient_quota" })
+    );
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toThrow(
+        "Failed to get response from LLM: Provider rate limit exceeded (HTTP 429)"
+      ),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(retryWaits()).toEqual([
+      { waitMs: 2000, attempt: 2, limit: 3 },
+      { waitMs: 4000, attempt: 3, limit: 3 },
+    ]);
+  });
+
+  it("R12 labels each attempt with the limit that applied and reports the real attempt count", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create
+      .mockRejectedValueOnce(rateLimited())
+      .mockRejectedValueOnce(rateLimited())
+      .mockRejectedValueOnce(rateLimited())
+      .mockResolvedValueOnce(completionResponse(""));
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toThrow(
+        "Empty response from LLM after 4 attempts (finish_reason=stop)"
+      ),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(4);
+    const attemptWarnings = jest
+      .mocked(core.warning)
+      .mock.calls.map(([message]) => String(message))
+      .filter((message) => message.startsWith("LLM attempt "));
+    expect(attemptWarnings).toEqual([
+      "LLM attempt 1/3 failed: Provider rate limit exceeded (HTTP 429)",
+      "LLM attempt 2/6 failed: Provider rate limit exceeded (HTTP 429)",
+      "LLM attempt 3/6 failed: Provider rate limit exceeded (HTTP 429)",
+      "LLM attempt 4/6: empty content",
+    ]);
+    expect(retryWaits()).toEqual([
+      { waitMs: 5000, attempt: 2, limit: 6 },
+      { waitMs: 10000, attempt: 3, limit: 6 },
+      { waitMs: 20000, attempt: 4, limit: 6 },
+    ]);
+  });
 });

@@ -1636,11 +1636,15 @@ class LLMClient {
         let lastError;
         // The cap applied to the current attempt. A native 429 raises it to the longer rate-limit
         // schedule; any other failure falls back to the ordinary count, so non-429 behavior is
-        // unchanged and a mixed sequence stays bounded. `rateLimitAttempts` is always the widest
-        // count, so it is also the loop ceiling; each iteration still stops at `attemptLimit`.
+        // unchanged and a mixed sequence stays bounded. Each warning is logged against the limit that
+        // governed that attempt, before the next limit is chosen.
         let attemptLimit = this.maxAttempts;
-        const attemptCeiling = this.rateLimitAttempts;
+        // Never truncate ordinary retries: the ceiling covers both caps and each iteration still
+        // stops at `attemptLimit`.
+        const attemptCeiling = Math.max(this.maxAttempts, this.rateLimitAttempts);
+        let attemptsMade = 0;
         for (let attempt = 1; attempt <= attemptCeiling; attempt++) {
+            attemptsMade = attempt;
             (0, llm_retry_1.throwIfAborted)(options.signal);
             const useJson = (0, llm_retry_1.shouldUseJsonResponseMode)(attempt, options.jsonResponseMode);
             let rateLimited = false;
@@ -1661,11 +1665,11 @@ class LLMClient {
                 }
                 trigger = "outer-empty-retry";
                 lastFinishReason = finishReasonLabel(result.finishReason);
+                core.warning(`LLM attempt ${attempt}/${attemptLimit}: empty content${useJson ? " (json mode)" : ""}`);
                 // Empty content is not a rate-limit path, so an earlier 429 must not keep the longer cap
                 // or own the final failure: the newest attempt produced no error and no content.
                 attemptLimit = this.maxAttempts;
                 lastError = undefined;
-                core.warning(`LLM attempt ${attempt}/${attemptLimit}: empty content${useJson ? " (json mode)" : ""}`);
             }
             catch (error) {
                 // Cancellation is terminal: no retry, no compatibility step, no stall reclassification.
@@ -1679,8 +1683,8 @@ class LLMClient {
                     throw new ToolsUnsupportedError(error);
                 }
                 rateLimited = (0, llm_retry_1.isRateLimitError)(error);
-                attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
                 core.warning(`LLM attempt ${attempt}/${attemptLimit} failed: ${providerFailureSummary(error)}`);
+                attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
                 if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt >= attemptLimit) {
                     core.error(`LLM API error: ${providerFailureSummary(error)}`);
                     throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
@@ -1698,10 +1702,10 @@ class LLMClient {
             await (0, llm_retry_1.delayMs)(waitMs, options.signal);
         }
         if (lastError && (0, llm_retry_1.isRetriableLlmError)(lastError, this.retryContext())) {
-            core.error(`LLM API error after ${attemptLimit} attempts: ${providerFailureSummary(lastError)}`);
-            throw new LLMRequestError(`Failed to get response from LLM after ${attemptLimit} attempts: ${providerFailureSummary(lastError)}`, { cause: lastError });
+            core.error(`LLM API error after ${attemptsMade} attempts: ${providerFailureSummary(lastError)}`);
+            throw new LLMRequestError(`Failed to get response from LLM after ${attemptsMade} attempts: ${providerFailureSummary(lastError)}`, { cause: lastError });
         }
-        throw new Error(`Empty response from LLM after ${attemptLimit} attempts (finish_reason=${lastFinishReason})`);
+        throw new Error(`Empty response from LLM after ${attemptsMade} attempts (finish_reason=${lastFinishReason})`);
     }
     /**
      * One completion request. If the provider rejects an optional part of the request —
@@ -2506,7 +2510,9 @@ function isRetriableLlmError(error, context = {}) {
  * it a longer bounded schedule. The client wraps provider failures in `LLMRequestError` and keeps
  * the native error in `cause`, so a bounded, cycle-safe cause walk recognizes both shapes; the
  * outer status alone is not enough. Message-only wording such as "rate limit" stays on the
- * ordinary retry path so non-429 failures keep today's attempt count and delays.
+ * ordinary retry path so non-429 failures keep today's attempt count and delays. A 429 that names
+ * a permanent quota/billing condition is not capacity pressure either: it keeps the ordinary
+ * schedule instead of spending the six-attempt backoff.
  */
 function isRateLimitError(error) {
     if (!error || typeof error === "string")
@@ -2517,11 +2523,27 @@ function isRateLimitError(error) {
         if (!current || typeof current !== "object" || seen.has(current))
             return false;
         seen.add(current);
-        if (Number(current.status) === 429)
-            return true;
-        current = current.cause;
+        const candidate = current;
+        if (Number(candidate.status) === 429)
+            return !hasPermanentRateLimitCondition(candidate);
+        current = candidate.cause;
     }
     return false;
+}
+/** Provider codes/types that make a 429 permanent rather than a short capacity burst. */
+const PERMANENT_RATE_LIMIT_CONDITIONS = new Set([
+    "insufficient_quota",
+    "billing_hard_limit_reached",
+    "billing_not_active",
+]);
+/**
+ * True when the 429 body names a permanent quota/billing condition. Some SDKs expose the parsed
+ * body's `code`/`type` on the error itself and some nest them under `error`, so both are read.
+ */
+function hasPermanentRateLimitCondition(error) {
+    const nested = error.error;
+    const nestedBody = nested && typeof nested === "object" ? nested : undefined;
+    return [error.code, error.type, nestedBody?.code, nestedBody?.type].some((value) => typeof value === "string" && PERMANENT_RATE_LIMIT_CONDITIONS.has(value.trim().toLowerCase()));
 }
 /** Reads a `Retry-After` header (SDK `Headers` or a plain object) from the error or its causes. */
 function retryAfterHeaderValue(error) {

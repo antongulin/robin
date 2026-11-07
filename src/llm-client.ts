@@ -424,12 +424,16 @@ export class LLMClient {
     let lastError: unknown;
     // The cap applied to the current attempt. A native 429 raises it to the longer rate-limit
     // schedule; any other failure falls back to the ordinary count, so non-429 behavior is
-    // unchanged and a mixed sequence stays bounded. `rateLimitAttempts` is always the widest
-    // count, so it is also the loop ceiling; each iteration still stops at `attemptLimit`.
+    // unchanged and a mixed sequence stays bounded. Each warning is logged against the limit that
+    // governed that attempt, before the next limit is chosen.
     let attemptLimit = this.maxAttempts;
-    const attemptCeiling = this.rateLimitAttempts;
+    // Never truncate ordinary retries: the ceiling covers both caps and each iteration still
+    // stops at `attemptLimit`.
+    const attemptCeiling = Math.max(this.maxAttempts, this.rateLimitAttempts);
+    let attemptsMade = 0;
 
     for (let attempt = 1; attempt <= attemptCeiling; attempt++) {
+      attemptsMade = attempt;
       throwIfAborted(options.signal);
       const useJson = shouldUseJsonResponseMode(attempt, options.jsonResponseMode);
       let rateLimited = false;
@@ -455,13 +459,13 @@ export class LLMClient {
 
         trigger = "outer-empty-retry";
         lastFinishReason = finishReasonLabel(result.finishReason);
+        core.warning(
+          `LLM attempt ${attempt}/${attemptLimit}: empty content${useJson ? " (json mode)" : ""}`
+        );
         // Empty content is not a rate-limit path, so an earlier 429 must not keep the longer cap
         // or own the final failure: the newest attempt produced no error and no content.
         attemptLimit = this.maxAttempts;
         lastError = undefined;
-        core.warning(
-          `LLM attempt ${attempt}/${attemptLimit}: empty content${useJson ? " (json mode)" : ""}`
-        );
       } catch (error) {
         // Cancellation is terminal: no retry, no compatibility step, no stall reclassification.
         if (options.signal?.aborted || isCancellationError(error)) throw new LlmRequestCancelledError();
@@ -472,8 +476,8 @@ export class LLMClient {
           throw new ToolsUnsupportedError(error);
         }
         rateLimited = isRateLimitError(error);
-        attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
         core.warning(`LLM attempt ${attempt}/${attemptLimit} failed: ${providerFailureSummary(error)}`);
+        attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
 
         if (!isRetriableLlmError(error, this.retryContext()) || attempt >= attemptLimit) {
           core.error(`LLM API error: ${providerFailureSummary(error)}`);
@@ -496,15 +500,15 @@ export class LLMClient {
     }
 
     if (lastError && isRetriableLlmError(lastError, this.retryContext())) {
-      core.error(`LLM API error after ${attemptLimit} attempts: ${providerFailureSummary(lastError)}`);
+      core.error(`LLM API error after ${attemptsMade} attempts: ${providerFailureSummary(lastError)}`);
       throw new LLMRequestError(
-        `Failed to get response from LLM after ${attemptLimit} attempts: ${providerFailureSummary(lastError)}`,
+        `Failed to get response from LLM after ${attemptsMade} attempts: ${providerFailureSummary(lastError)}`,
         { cause: lastError }
       );
     }
 
     throw new Error(
-      `Empty response from LLM after ${attemptLimit} attempts (finish_reason=${lastFinishReason})`
+      `Empty response from LLM after ${attemptsMade} attempts (finish_reason=${lastFinishReason})`
     );
   }
 

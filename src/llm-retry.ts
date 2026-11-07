@@ -431,7 +431,9 @@ export function isRetriableLlmError(error: unknown, context: LlmRetryContext = {
  * it a longer bounded schedule. The client wraps provider failures in `LLMRequestError` and keeps
  * the native error in `cause`, so a bounded, cycle-safe cause walk recognizes both shapes; the
  * outer status alone is not enough. Message-only wording such as "rate limit" stays on the
- * ordinary retry path so non-429 failures keep today's attempt count and delays.
+ * ordinary retry path so non-429 failures keep today's attempt count and delays. A 429 that names
+ * a permanent quota/billing condition is not capacity pressure either: it keeps the ordinary
+ * schedule instead of spending the six-attempt backoff.
  */
 export function isRateLimitError(error: unknown): boolean {
   if (!error || typeof error === "string") return false;
@@ -440,10 +442,32 @@ export function isRateLimitError(error: unknown): boolean {
   for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
     if (!current || typeof current !== "object" || seen.has(current)) return false;
     seen.add(current);
-    if (Number((current as { status?: unknown }).status) === 429) return true;
-    current = (current as { cause?: unknown }).cause;
+    const candidate = current as Record<string, unknown>;
+    if (Number(candidate.status) === 429) return !hasPermanentRateLimitCondition(candidate);
+    current = candidate.cause;
   }
   return false;
+}
+
+/** Provider codes/types that make a 429 permanent rather than a short capacity burst. */
+const PERMANENT_RATE_LIMIT_CONDITIONS = new Set([
+  "insufficient_quota",
+  "billing_hard_limit_reached",
+  "billing_not_active",
+]);
+
+/**
+ * True when the 429 body names a permanent quota/billing condition. Some SDKs expose the parsed
+ * body's `code`/`type` on the error itself and some nest them under `error`, so both are read.
+ */
+function hasPermanentRateLimitCondition(error: Record<string, unknown>): boolean {
+  const nested = error.error;
+  const nestedBody =
+    nested && typeof nested === "object" ? (nested as Record<string, unknown>) : undefined;
+  return [error.code, error.type, nestedBody?.code, nestedBody?.type].some(
+    (value) =>
+      typeof value === "string" && PERMANENT_RATE_LIMIT_CONDITIONS.has(value.trim().toLowerCase())
+  );
 }
 
 /** Reads a `Retry-After` header (SDK `Headers` or a plain object) from the error or its causes. */

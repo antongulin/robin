@@ -832,6 +832,36 @@ describe("isRateLimitError", () => {
     first.cause = second;
     expect(isRateLimitError(second)).toBe(false);
   });
+
+  it("keeps a transient 429 on the rate-limit schedule", () => {
+    expect(isRateLimitError(withStatus(429, "429 inference_failed"))).toBe(true);
+    expect(
+      isRateLimitError(Object.assign(withStatus(429, "rate limit"), { code: "rate_limit_exceeded" }))
+    ).toBe(true);
+    expect(
+      isRateLimitError(Object.assign(withStatus(429, "rate limit"), { type: "requests" }))
+    ).toBe(true);
+  });
+
+  it("treats a permanent quota/billing 429 as an ordinary failure", () => {
+    const quota = Object.assign(withStatus(429, "429 insufficient_quota"), {
+      code: "insufficient_quota",
+    });
+    expect(isRateLimitError(quota)).toBe(false);
+    expect(
+      isRateLimitError(
+        Object.assign(withStatus(429, "billing"), { type: "billing_hard_limit_reached" })
+      )
+    ).toBe(false);
+    expect(
+      isRateLimitError(
+        Object.assign(withStatus(429, "billing"), {
+          error: { code: "billing_not_active", type: "insufficient_quota" },
+        })
+      )
+    ).toBe(false);
+    expect(isRateLimitError(new Error("wrapper", { cause: quota }))).toBe(false);
+  });
 });
 
 describe("computeRateLimitRetryDelayMs", () => {
