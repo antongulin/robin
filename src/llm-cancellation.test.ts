@@ -133,6 +133,28 @@ test("A6-4 stops an outer retry wait when the signal aborts", async () => {
   expect(retryAnnounced).toBe(true);
 });
 
+test("A6-4 stops a rate-limit retry wait when the signal aborts", async () => {
+  const controller = new AbortController();
+  let retryAnnounced = false;
+  const { client, requests } = offlineClient(() => failure(429, "429 inference_failed"), {
+    maxAttempts: 3,
+    onProgress: detail => {
+      if (detail.includes("Retrying in")) {
+        retryAnnounced = true;
+        // Let the longer rate-limit wait start, then abort it mid-wait.
+        setImmediate(() => controller.abort());
+      }
+    },
+  });
+
+  const startedAt = Date.now();
+  await expect(client.chatCompletion("s", "u", false, undefined, { signal: controller.signal }))
+    .rejects.toBeInstanceOf(LlmRequestCancelledError);
+  expect(requests).toHaveLength(1);
+  expect(retryAnnounced).toBe(true);
+  expect(Date.now() - startedAt).toBeLessThan(2000);
+});
+
 test("A6-4 does not dispatch a compatibility rebuild after the signal aborts", async () => {
   const controller = new AbortController();
   const { client, requests } = offlineClient(() => {

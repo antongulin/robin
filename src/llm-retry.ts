@@ -1,10 +1,14 @@
 import {
   DEFAULT_LLM_COMPLETION_ATTEMPTS,
+  DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS,
+  DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS,
   DEFAULT_LLM_RETRY_DELAY_MS,
   DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS,
   DEFAULT_LLM_ROUTER_RETRY_DELAY_MS,
   DEFAULT_LLM_ROUTER_TIMEOUT_MS,
   DEFAULT_LLM_TIMEOUT_MS,
+  MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS,
+  MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS,
 } from "./config";
 
 export interface LlmRetryContext {
@@ -422,6 +426,97 @@ export function isRetriableLlmError(error: unknown, context: LlmRetryContext = {
   );
 }
 
+/**
+ * A native provider 429 means capacity pressure, not a malformed request, so the client gives
+ * it a longer bounded schedule. The client wraps provider failures in `LLMRequestError` and keeps
+ * the native error in `cause`, so a bounded, cycle-safe cause walk recognizes both shapes; the
+ * outer status alone is not enough. Message-only wording such as "rate limit" stays on the
+ * ordinary retry path so non-429 failures keep today's attempt count and delays. A 429 that names
+ * a permanent quota/billing condition is not capacity pressure either: it keeps the ordinary
+ * schedule instead of spending the six-attempt backoff.
+ */
+export function isRateLimitError(error: unknown): boolean {
+  if (!error || typeof error === "string") return false;
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+    if (!current || typeof current !== "object" || seen.has(current)) return false;
+    seen.add(current);
+    const candidate = current as Record<string, unknown>;
+    if (Number(candidate.status) === 429) return !hasPermanentRateLimitCondition(candidate);
+    current = candidate.cause;
+  }
+  return false;
+}
+
+/** Provider codes/types that make a 429 permanent rather than a short capacity burst. */
+const PERMANENT_RATE_LIMIT_CONDITIONS = new Set([
+  "insufficient_quota",
+  "billing_hard_limit_reached",
+  "billing_not_active",
+]);
+
+/**
+ * True when the 429 body names a permanent quota/billing condition. Some SDKs expose the parsed
+ * body's `code`/`type` on the error itself and some nest them under `error`, so both are read.
+ */
+function hasPermanentRateLimitCondition(error: Record<string, unknown>): boolean {
+  const nested = error.error;
+  const nestedBody =
+    nested && typeof nested === "object" ? (nested as Record<string, unknown>) : undefined;
+  return [error.code, error.type, nestedBody?.code, nestedBody?.type].some(
+    (value) =>
+      typeof value === "string" && PERMANENT_RATE_LIMIT_CONDITIONS.has(value.trim().toLowerCase())
+  );
+}
+
+/** Reads a `Retry-After` header (SDK `Headers` or a plain object) from the error or its causes. */
+function retryAfterHeaderValue(error: object): string | undefined {
+  const headers = (error as { headers?: unknown }).headers;
+  if (!headers || typeof headers !== "object") return undefined;
+  const get = (headers as { get?: unknown }).get;
+  if (typeof get === "function") {
+    const value = (get as (name: string) => unknown).call(headers, "retry-after");
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (key.toLowerCase() !== "retry-after") continue;
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
+}
+
+/** Seconds or an HTTP-date, clamped to the supported window; invalid hints are ignored. */
+function parseRetryAfterValue(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
+  if (!Number.isFinite(ms)) return undefined;
+  return Math.min(
+    MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS,
+    Math.max(MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.round(ms))
+  );
+}
+
+/**
+ * The provider's `Retry-After` delay in milliseconds, clamped to [1 s, 60 s], or undefined when
+ * the response carries no usable hint. A bounded cause walk covers wrapped provider errors.
+ */
+export function parseRetryAfterMs(error: unknown): number | undefined {
+  if (!error || typeof error === "string") return undefined;
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+    if (!current || typeof current !== "object" || seen.has(current)) return undefined;
+    seen.add(current);
+    const parsed = parseRetryAfterValue(retryAfterHeaderValue(current));
+    if (parsed !== undefined) return parsed;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 export function shouldUseJsonResponseMode(
   attempt: number,
   jsonResponseMode: boolean
@@ -450,6 +545,44 @@ export function getLlmCompletionAttemptCount(
   return Math.max(1, Math.floor(resolved));
 }
 
+/**
+ * Attempts available for native 429s. The default attempt count is a cap Robin owns, so a 429
+ * gets the longer rate-limit schedule (six total attempts). A non-default caller value is an
+ * explicit configuration and is kept exactly; no action input or repo-config key exposes it
+ * today, so this only constrains programmatic callers and tests.
+ */
+export function getLlmRateLimitAttemptCount(
+  maxAttempts = DEFAULT_LLM_COMPLETION_ATTEMPTS,
+  model?: string
+): number {
+  const resolved = getLlmCompletionAttemptCount(maxAttempts, model);
+  return maxAttempts === DEFAULT_LLM_COMPLETION_ATTEMPTS
+    ? Math.max(resolved, DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS)
+    : resolved;
+}
+
+/**
+ * The wait before the next attempt after a failed `attempt` (1-based). The schedule is
+ * 5/10/20/40 s and then 60 s. A usable provider `Retry-After` inside [1 s, 60 s] can only
+ * lengthen that wait: the result is the larger of the scheduled delay and the clamped hint,
+ * still capped at 60 s. No jitter: the announced waits match the documented schedule and
+ * tests, and each job's retry burst stays independent and bounded.
+ */
+export function computeRateLimitRetryDelayMs(
+  attempt: number,
+  retryAfterDelayMs?: number
+): number {
+  const schedule = DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS;
+  const index = Math.min(Math.max(Math.floor(attempt), 1), schedule.length) - 1;
+  const scheduled = schedule[index];
+  if (retryAfterDelayMs === undefined || !Number.isFinite(retryAfterDelayMs)) return scheduled;
+  const hint = Math.min(
+    MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS,
+    Math.max(MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.round(retryAfterDelayMs))
+  );
+  return Math.min(MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.max(scheduled, hint));
+}
+
 export async function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
   if (!signal) {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -475,6 +608,12 @@ export async function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export function openRouterStallError(firstChunkMs: number): Error {
-  return new Error(`OpenRouter stall: no first response within ${firstChunkMs} ms`);
+/**
+ * A router stall keeps its own message, and an optional `cause` carries the native provider
+ * error so the bounded cause-walking classifiers can still see a 429 status or a
+ * `Retry-After` header. The wrapping does not change how non-429 failures are classified.
+ */
+export function openRouterStallError(firstChunkMs: number, cause?: unknown): Error {
+  const message = `OpenRouter stall: no first response within ${firstChunkMs} ms`;
+  return cause === undefined ? new Error(message) : new Error(message, { cause });
 }

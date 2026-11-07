@@ -1,23 +1,31 @@
 import {
+  computeRateLimitRetryDelayMs,
   computeRetryDelayMs,
   findUnsupportedRequestParam,
   getLlmCompletionAttemptCount,
+  getLlmRateLimitAttemptCount,
   isInvalidReasoningEffortError,
   isOpenRouterRouterModel,
   isContextLengthError,
+  isRateLimitError,
   isRetriableLlmError,
   isToolsUnsupportedError,
   isUnsupportedReasoningEffortError,
   openRouterStallError,
+  parseRetryAfterMs,
   resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
 } from "./llm-retry";
 import {
   DEFAULT_LLM_COMPLETION_ATTEMPTS,
+  DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS,
+  DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS,
   DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS,
   DEFAULT_LLM_ROUTER_RETRY_DELAY_MS,
   DEFAULT_LLM_ROUTER_TIMEOUT_MS,
   DEFAULT_LLM_TIMEOUT_MS,
+  MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS,
+  MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS,
 } from "./config";
 
 describe("openRouterStallError", () => {
@@ -25,6 +33,32 @@ describe("openRouterStallError", () => {
     const error = openRouterStallError(45000);
     expect(error.message).toContain("OpenRouter stall");
     expect(isRetriableLlmError(error, { model: "openrouter/free" })).toBe(true);
+  });
+
+  it("keeps a native 429 cause visible to the rate-limit classifiers", () => {
+    const native = Object.assign(new Error("429 inference_failed"), {
+      status: 429,
+      headers: new Headers({ "retry-after": "7" }),
+    });
+    const error = openRouterStallError(45000, native);
+
+    expect(error.message).toBe("OpenRouter stall: no first response within 45000 ms");
+    expect(isRateLimitError(error)).toBe(true);
+    expect(parseRetryAfterMs(error)).toBe(7000);
+    expect(isRetriableLlmError(error, { model: "openrouter/free" })).toBe(true);
+    expect(isContextLengthError(error)).toBe(false);
+    expect(isToolsUnsupportedError(error)).toBe(false);
+  });
+
+  it("leaves a non-429 stall on the ordinary retry path", () => {
+    const native = Object.assign(new Error("503 service unavailable"), { status: 503 });
+    const error = openRouterStallError(45000, native);
+
+    expect(isRateLimitError(error)).toBe(false);
+    expect(parseRetryAfterMs(error)).toBeUndefined();
+    expect(isRetriableLlmError(error, { model: "openrouter/free" })).toBe(true);
+    expect(isContextLengthError(error)).toBe(false);
+    expect(isToolsUnsupportedError(error)).toBe(false);
   });
 });
 
@@ -757,6 +791,131 @@ describe("getLlmCompletionAttemptCount", () => {
     expect(getLlmCompletionAttemptCount(DEFAULT_LLM_COMPLETION_ATTEMPTS, "gpt-4o")).toBe(
       DEFAULT_LLM_COMPLETION_ATTEMPTS
     );
+  });
+});
+
+describe("getLlmRateLimitAttemptCount", () => {
+  it("gives the default attempt count the longer rate-limit schedule", () => {
+    expect(getLlmRateLimitAttemptCount(DEFAULT_LLM_COMPLETION_ATTEMPTS, "gpt-4o")).toBe(
+      DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS
+    );
+    expect(getLlmRateLimitAttemptCount(DEFAULT_LLM_COMPLETION_ATTEMPTS, "openrouter/free")).toBe(
+      DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS
+    );
+  });
+
+  it("keeps an explicitly configured attempt count", () => {
+    expect(getLlmRateLimitAttemptCount(2)).toBe(2);
+    expect(getLlmRateLimitAttemptCount(7)).toBe(7);
+  });
+});
+
+describe("isRateLimitError", () => {
+  const withStatus = (status: number, message: string) => Object.assign(new Error(message), { status });
+
+  it("recognizes a native 429, including through wrapper causes", () => {
+    expect(isRateLimitError(withStatus(429, "429 inference_failed"))).toBe(true);
+    const native = withStatus(429, "429 inference_failed");
+    expect(isRateLimitError(new Error("wrapper", { cause: native }))).toBe(true);
+    expect(isRateLimitError(new Error("outer", { cause: new Error("inner", { cause: native }) }))).toBe(true);
+  });
+
+  it("keeps non-429 failures on the ordinary retry path", () => {
+    expect(isRateLimitError(withStatus(500, "rate limit exceeded"))).toBe(false);
+    expect(isRateLimitError(new Error("rate limit exceeded"))).toBe(false);
+    expect(isRateLimitError(undefined)).toBe(false);
+  });
+
+  it("stops on cyclic cause chains", () => {
+    const first: Error & { cause?: unknown } = new Error("first");
+    const second = new Error("second", { cause: first });
+    first.cause = second;
+    expect(isRateLimitError(second)).toBe(false);
+  });
+
+  it("keeps a transient 429 on the rate-limit schedule", () => {
+    expect(isRateLimitError(withStatus(429, "429 inference_failed"))).toBe(true);
+    expect(
+      isRateLimitError(Object.assign(withStatus(429, "rate limit"), { code: "rate_limit_exceeded" }))
+    ).toBe(true);
+    expect(
+      isRateLimitError(Object.assign(withStatus(429, "rate limit"), { type: "requests" }))
+    ).toBe(true);
+  });
+
+  it("treats a permanent quota/billing 429 as an ordinary failure", () => {
+    const quota = Object.assign(withStatus(429, "429 insufficient_quota"), {
+      code: "insufficient_quota",
+    });
+    expect(isRateLimitError(quota)).toBe(false);
+    expect(
+      isRateLimitError(
+        Object.assign(withStatus(429, "billing"), { type: "billing_hard_limit_reached" })
+      )
+    ).toBe(false);
+    expect(
+      isRateLimitError(
+        Object.assign(withStatus(429, "billing"), {
+          error: { code: "billing_not_active", type: "insufficient_quota" },
+        })
+      )
+    ).toBe(false);
+    expect(isRateLimitError(new Error("wrapper", { cause: quota }))).toBe(false);
+  });
+});
+
+describe("computeRateLimitRetryDelayMs", () => {
+  it("backs off 5/10/20/40/60 s and stays capped at 60 s", () => {
+    expect(DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS).toEqual([5000, 10000, 20000, 40000, 60000]);
+    expect([1, 2, 3, 4, 5, 6, 100].map((attempt) => computeRateLimitRetryDelayMs(attempt))).toEqual([
+      5000, 10000, 20000, 40000, 60000, 60000, 60000,
+    ]);
+  });
+
+  it("honors a longer provider Retry-After inside [1 s, 60 s] but never shortens the schedule", () => {
+    expect(computeRateLimitRetryDelayMs(1, 7000)).toBe(7000);
+    expect(computeRateLimitRetryDelayMs(2, 7000)).toBe(10000);
+    expect(computeRateLimitRetryDelayMs(2, 0)).toBe(10000);
+    expect(computeRateLimitRetryDelayMs(2, 600000)).toBe(MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS);
+    expect(computeRateLimitRetryDelayMs(4, 5000)).toBe(40000);
+    expect(computeRateLimitRetryDelayMs(2, Number.NaN)).toBe(10000);
+  });
+});
+
+describe("parseRetryAfterMs", () => {
+  it("reads seconds from SDK Headers and plain header objects", () => {
+    expect(parseRetryAfterMs({ status: 429, headers: new Headers({ "retry-after": "7" }) })).toBe(7000);
+    expect(parseRetryAfterMs({ status: 429, headers: { "Retry-After": "12" } })).toBe(12000);
+  });
+
+  it("reads an HTTP-date", () => {
+    jest.useFakeTimers();
+    try {
+      const now = 1_700_000_000_000;
+      jest.setSystemTime(now);
+      const date = new Date(now + 30_000).toUTCString();
+      expect(parseRetryAfterMs({ status: 429, headers: { "retry-after": date } })).toBe(30_000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("clamps out-of-range and past hints", () => {
+    expect(parseRetryAfterMs({ status: 429, headers: { "retry-after": "0" } })).toBe(
+      MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS
+    );
+    expect(parseRetryAfterMs({ status: 429, headers: { "retry-after": "600" } })).toBe(
+      MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS
+    );
+    expect(parseRetryAfterMs({ status: 429, headers: { "retry-after": "Wed, 21 Oct 2015 07:28:00 GMT" } })).toBe(
+      MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS
+    );
+    expect(parseRetryAfterMs({ status: 429, headers: { "retry-after": "not-a-date" } })).toBeUndefined();
+  });
+
+  it("finds the hint on a wrapped provider error", () => {
+    const native = { status: 429, headers: new Headers({ "retry-after": "9" }) };
+    expect(parseRetryAfterMs(new Error("LLMRequestError", { cause: native }))).toBe(9000);
   });
 });
 

@@ -626,6 +626,19 @@ Snapshot preparation, fallback and posting also take time, so the agent deadline
 not cap total job duration; the workflow job timeout still applies. Look for `Agent turn`, fallback warnings,
 `LLM attempt` and `Retrying LLM request` in the log.
 
+A native provider rate limit (HTTP 429) usually means a short capacity burst, so it gets its
+own bounded schedule: up to six total attempts, waiting 5, 10, 20, 40 and then 60 seconds.
+A provider `Retry-After` header (seconds or an HTTP-date) can only lengthen a wait: the
+client waits for whichever is longer, the scheduled delay or the clamped hint, and never
+more than 60 seconds. A 429 whose provider `code` or `type` names a permanent condition
+(`insufficient_quota`, `billing_hard_limit_reached`, `billing_not_active`) is not a capacity
+burst and keeps the ordinary schedule below, so a quota problem surfaces in seconds instead
+of after the full backoff. Other retriable failures keep the existing attempt count and
+linear waits (three attempts for a fixed model, five for OpenRouter routers). In agent mode
+every wait is cancellable through the agent deadline; single-shot and `/summary` requests
+have no request deadline, so only the workflow job timeout bounds their waits. SDK-internal
+retries stay disabled so the two retry loops are never multiplied.
+
 To compare providers, match repository, review mode, diff size, Robin revision and
 retry behavior, and check that requests started after the provider change. Masked
 base URLs and model IDs cannot prove which endpoint or model served a request.
@@ -1073,10 +1086,11 @@ No daily quota from this action. Real limits:
 | `Empty response from LLM` | Provider returned no usable text or tool calls without an explicit length stop | Action retries with bounded backoff and retains the finish reason (`unknown` if absent) |
 | `Incomplete LLM output (finish_reason=length...)` | Provider explicitly reported truncated generation; the reason alone does not identify the responsible limit | Robin discards partial text/tools and stops without unchanged retries or a diff-only fallback. Check output/reasoning generation limits and reduce scope. If input is too large, use smaller logically complete PRs (keep implementation/tests together) or larger effective context capacity; retry `/robin` after adjusting the cause |
 | Provider context/input-limit error | Review input exceeds the model/provider’s effective capacity | Use smaller logically complete PRs (keep related implementation/tests together) or a model/provider with larger effective context capacity; retry `/robin` after adjusting input or capacity |
-| `OpenRouter stall: no first response` | Auto-router hung before picking a provider | Action retries every 45s (up to 5×); PR status comment updates each attempt |
+| `OpenRouter stall: no first response` | Auto-router hung, or failed before its first chunk, before picking a provider | Action retries every 45s (up to 5×) and the PR status comment updates each attempt. When the underlying failure was a provider 429, the stall text is only the wrapper: the native error is retained and the rate-limit row below applies (6 attempts, 5–60 s waits) |
 | Job cancelled / 45 min with no review | Hung LLM or concurrency cancel while waiting | Status comment should say interrupted — comment `/robin` again; pin `@v2.0.4`+ for stall detect |
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |
 | `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
+| `Provider rate limit exceeded (HTTP 429)` | Provider capacity burst, often 10–30 s | Robin retries up to 6 attempts with 5/10/20/40/60 s waits and honors a longer `Retry-After` (capped at 60 s; a shorter hint never shortens the schedule). Router models (`openrouter/free`, `openrouter/auto`) surface a 429 as `OpenRouter stall: no first response ...` and still get this schedule. A permanent 429 such as `insufficient_quota` or `billing_hard_limit_reached` keeps the ordinary attempt count instead (3 for a fixed model, 5 for OpenRouter router models). If it still fails, run `/robin` again after the burst |
 | `temperature` / `max_tokens` / `response_format` rejected | Newer model refuses an optional parameter (OpenAI reasoning models, Kimi) | Action warns, retries once with the parameter renamed or omitted (`max_tokens` ↔ `max_completion_tokens`, `temperature` dropped), and keeps that shape for the run. If the endpoint rejects both token-cap spellings, the provider error surfaces instead of running uncapped. Set `llm-temperature` only to pin a specific value (Kimi: `1`) |
 | `404` on `https://api.anthropic.com` | Base URL missing `/v1` on an older Robin | Use `https://api.anthropic.com/v1`; `@v2`/`@main` normalize it automatically |
 | `reasoning-effort` rejected as unsupported or invalid | Provider/model does not accept the reasoning control or configured value | On official OpenCode Go, the error surfaces without dropping the configured effort. For other providers, the action warns and retries once with no reasoning override. If that succeeds, the review completes; a user-set value also gets a status-comment notice to update `.github/robin.yml` or the workflow `with:` block. Set `reasoning-effort: off` to stop sending it |

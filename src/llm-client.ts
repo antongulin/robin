@@ -10,21 +10,25 @@ import {
   DEFAULT_LLM_TIMEOUT_MS,
 } from "./config";
 import {
+  computeRateLimitRetryDelayMs,
   computeRetryDelayMs,
   delayMs,
   DroppableRequestParam,
   errorMessage,
   findUnsupportedRequestParam,
   getLlmCompletionAttemptCount,
+  getLlmRateLimitAttemptCount,
   isCancellationError,
   isInvalidReasoningEffortError,
   isOpenRouterRouterModel,
   isContextLengthError,
+  isRateLimitError,
   isRetriableLlmError,
   isToolsUnsupportedError,
   isUnsupportedReasoningEffortError,
   LlmRequestCancelledError,
   openRouterStallError,
+  parseRetryAfterMs,
   resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
   throwIfAborted,
@@ -203,6 +207,8 @@ export class LLMClient {
   private openCodeGo: boolean;
   private maxOutputTokens?: number;
   private maxAttempts: number;
+  /** Attempts allowed for native 429s; equals `maxAttempts` when the caller configured one. */
+  private rateLimitAttempts: number;
   private routerModel: boolean;
   private temperature: number;
   private onProgress?: LlmProgressHandler;
@@ -237,6 +243,7 @@ export class LLMClient {
     this.estimatedRequestTokenBudget = parseEstimatedRequestTokenBudget(estimatedRequestTokenBudget);
     this.maxOutputTokens = resolveOutputTokenCap(maxOutputTokens, this.estimatedRequestTokenBudget);
     this.maxAttempts = getLlmCompletionAttemptCount(maxAttempts, model);
+    this.rateLimitAttempts = getLlmRateLimitAttemptCount(maxAttempts, model);
     const effectiveTimeoutMs = resolveLlmTimeoutMs(model, timeoutMs);
 
     const normalizedBaseUrl = normalizeLlmBaseUrl(baseUrl);
@@ -247,7 +254,7 @@ export class LLMClient {
     }
 
     core.info(
-      `Initializing LLM client: baseUrl=${normalizedBaseUrl}, provider=${this.provider}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}, temperature=${this.temperature}`
+      `Initializing LLM client: baseUrl=${normalizedBaseUrl}, provider=${this.provider}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}, rateLimitAttempts=${this.rateLimitAttempts}, temperature=${this.temperature}`
     );
 
     // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
@@ -415,15 +422,26 @@ export class LLMClient {
     let trigger: AttemptTrigger = "initial";
     let lastFinishReason = "unknown";
     let lastError: unknown;
+    // The cap applied to the current attempt. A native 429 raises it to the longer rate-limit
+    // schedule; any other failure falls back to the ordinary count, so non-429 behavior is
+    // unchanged and a mixed sequence stays bounded. Each warning is logged against the limit that
+    // governed that attempt, before the next limit is chosen.
+    let attemptLimit = this.maxAttempts;
+    // Never truncate ordinary retries: the ceiling covers both caps and each iteration still
+    // stops at `attemptLimit`.
+    const attemptCeiling = Math.max(this.maxAttempts, this.rateLimitAttempts);
+    let attemptsMade = 0;
 
-    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= attemptCeiling; attempt++) {
+      attemptsMade = attempt;
       throwIfAborted(options.signal);
       const useJson = shouldUseJsonResponseMode(attempt, options.jsonResponseMode);
+      let rateLimited = false;
 
       try {
-        core.info(`LLM attempt ${attempt}/${this.maxAttempts}: waiting for provider...`);
+        core.info(`LLM attempt ${attempt}/${attemptLimit}: waiting for provider...`);
         await this.progress(
-          `Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`
+          `Waiting for provider (attempt ${attempt}/${attemptLimit})…`
         );
         const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson }, logicalCall, attempt, trigger);
         // An aborted caller discards any late result: cancellation is terminal, never a success.
@@ -442,8 +460,12 @@ export class LLMClient {
         trigger = "outer-empty-retry";
         lastFinishReason = finishReasonLabel(result.finishReason);
         core.warning(
-          `LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`
+          `LLM attempt ${attempt}/${attemptLimit}: empty content${useJson ? " (json mode)" : ""}`
         );
+        // Empty content is not a rate-limit path, so an earlier 429 must not keep the longer cap.
+        // The last error is deliberately kept: a retriable failure followed by empty replies still
+        // reports that provider failure, exactly as before the rate-limit schedule existed.
+        attemptLimit = this.maxAttempts;
       } catch (error) {
         // Cancellation is terminal: no retry, no compatibility step, no stall reclassification.
         if (options.signal?.aborted || isCancellationError(error)) throw new LlmRequestCancelledError();
@@ -453,35 +475,40 @@ export class LLMClient {
         if (options.tools && isToolsUnsupportedError(error)) {
           throw new ToolsUnsupportedError(error);
         }
-        core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${providerFailureSummary(error)}`);
+        rateLimited = isRateLimitError(error);
+        core.warning(`LLM attempt ${attempt}/${attemptLimit} failed: ${providerFailureSummary(error)}`);
+        attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
 
-        if (!isRetriableLlmError(error, this.retryContext()) || attempt === this.maxAttempts) {
+        if (!isRetriableLlmError(error, this.retryContext()) || attempt >= attemptLimit) {
           core.error(`LLM API error: ${providerFailureSummary(error)}`);
           throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
         }
       }
 
-      if (attempt < this.maxAttempts) {
-        const waitMs = computeRetryDelayMs(attempt, this.retryContext());
-        const reason = lastError === undefined ? "empty response" : providerFailureSummary(lastError);
-        core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
-        await this.progress(
-          `Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`
-        );
-        await delayMs(waitMs, options.signal);
-      }
+      // The loop ceiling covers the longer rate-limit schedule; stop at this attempt's cap.
+      if (attempt >= attemptLimit) break;
+
+      const waitMs = rateLimited
+        ? computeRateLimitRetryDelayMs(attempt, parseRetryAfterMs(lastError))
+        : computeRetryDelayMs(attempt, this.retryContext());
+      const reason = lastError === undefined ? "empty response" : providerFailureSummary(lastError);
+      core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${attemptLimit})...`);
+      await this.progress(
+        `Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`
+      );
+      await delayMs(waitMs, options.signal);
     }
 
     if (lastError && isRetriableLlmError(lastError, this.retryContext())) {
-      core.error(`LLM API error after ${this.maxAttempts} attempts: ${providerFailureSummary(lastError)}`);
+      core.error(`LLM API error after ${attemptsMade} attempts: ${providerFailureSummary(lastError)}`);
       throw new LLMRequestError(
-        `Failed to get response from LLM after ${this.maxAttempts} attempts: ${providerFailureSummary(lastError)}`,
+        `Failed to get response from LLM after ${attemptsMade} attempts: ${providerFailureSummary(lastError)}`,
         { cause: lastError }
       );
     }
 
     throw new Error(
-      `Empty response from LLM after ${this.maxAttempts} attempts (finish_reason=${lastFinishReason})`
+      `Empty response from LLM after ${attemptsMade} attempts (finish_reason=${lastFinishReason})`
     );
   }
 
@@ -713,7 +740,7 @@ export class LLMClient {
         if (findUnsupportedRequestParam(error, this.sentDroppableParams(request))) {
           throw error;
         }
-        throw openRouterStallError(firstChunkMs);
+        throw openRouterStallError(firstChunkMs, error);
       }
       throw error;
     } finally {

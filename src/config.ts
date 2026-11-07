@@ -5,6 +5,17 @@ export const DEFAULT_LLM_COMPLETION_ATTEMPTS = 3;
 export const DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = 5;
 export const DEFAULT_LLM_RETRY_DELAY_MS = 2000;
 export const DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = 3000;
+/**
+ * A provider 429 is usually a short upstream capacity burst, so it gets its own bounded,
+ * longer schedule instead of the ordinary three-attempt backoff. A non-default caller attempt
+ * count still wins; see `getLlmRateLimitAttemptCount`.
+ */
+export const DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS = 6;
+/** Waits after rate-limited attempts 1..5; the last value is the cap for any later wait. */
+export const DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS = [5000, 10000, 20000, 40000, 60000] as const;
+/** A provider `Retry-After` hint is honored only inside this bounded window. */
+export const MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS = 1000;
+export const MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS = 60000;
 export const DEFAULT_LLM_TEMPERATURE = 0.1; // near-deterministic reviews
 /** OpenAI-compatible upper bound; some models (e.g. Kimi) only accept 1. */
 export const MAX_LLM_TEMPERATURE = 2;
