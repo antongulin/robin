@@ -436,7 +436,7 @@ For a **direct action step** (`uses: antongulin/robin@…`):
 | --- | --- |
 | `@main` | Latest changes on the default branch |
 | `@v2` | Latest `2.x` release (updated on each release) |
-| `@v2.13.2` | Exact release pin with the default of `auto` |
+| `@v2.13.3` | Exact release pin with the default of `auto` |
 | `@v2.12.4` | Exact release pin with the default of `off` |
 | Full commit SHA | The action implementation at that commit |
 
