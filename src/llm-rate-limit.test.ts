@@ -276,7 +276,7 @@ describe("LLMClient rate-limit retries", () => {
     ]);
   });
 
-  it("R10 stops a 429-then-empty sequence at the ordinary attempt cap", async () => {
+  it("R10 stops a 429-then-empty sequence at the ordinary attempt cap and keeps the provider failure", async () => {
     jest.useFakeTimers();
     const client = makeClient(3);
     const create = stubOpenAI(client);
@@ -285,14 +285,17 @@ describe("LLMClient rate-limit retries", () => {
       .mockResolvedValueOnce(completionResponse(""))
       .mockResolvedValueOnce(completionResponse(""));
 
-    const completion = client.chatCompletion("system", "user");
-    await Promise.all([
-      expect(completion).rejects.toThrow(
-        "Empty response from LLM after 3 attempts (finish_reason=stop)"
-      ),
+    const error = (await Promise.all([
+      client.chatCompletion("system", "user").catch((failure: unknown) => failure),
       jest.runAllTimersAsync(),
-    ]);
+    ]).then(([failure]) => failure)) as Error;
 
+    // Pre-PR behavior: a retriable error followed by empty replies keeps the provider failure
+    // (an LLMRequestError), not the newer "Empty response" plain Error.
+    expect(error).toMatchObject({
+      name: "LLMRequestError",
+      message: "Failed to get response from LLM after 3 attempts: Provider rate limit exceeded (HTTP 429)",
+    });
     expect(create).toHaveBeenCalledTimes(3);
     expect(retryWaits()).toEqual([
       { waitMs: 5000, attempt: 2, limit: 6 },
@@ -336,7 +339,7 @@ describe("LLMClient rate-limit retries", () => {
     const completion = client.chatCompletion("system", "user");
     await Promise.all([
       expect(completion).rejects.toThrow(
-        "Empty response from LLM after 4 attempts (finish_reason=stop)"
+        "Failed to get response from LLM after 4 attempts: Provider rate limit exceeded (HTTP 429)"
       ),
       jest.runAllTimersAsync(),
     ]);
@@ -356,6 +359,31 @@ describe("LLMClient rate-limit retries", () => {
       { waitMs: 5000, attempt: 2, limit: 6 },
       { waitMs: 10000, attempt: 3, limit: 6 },
       { waitMs: 20000, attempt: 4, limit: 6 },
+    ]);
+  });
+
+  it("R13 keeps the provider failure for a 500 followed by empty replies", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create
+      .mockRejectedValueOnce(providerError(500, "server error"))
+      .mockResolvedValueOnce(completionResponse(""))
+      .mockResolvedValueOnce(completionResponse(""));
+
+    const error = (await Promise.all([
+      client.chatCompletion("system", "user").catch((failure: unknown) => failure),
+      jest.runAllTimersAsync(),
+    ]).then(([failure]) => failure)) as Error;
+
+    expect(error).toMatchObject({
+      name: "LLMRequestError",
+      message: "Failed to get response from LLM after 3 attempts: Provider server error (HTTP 500)",
+    });
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(retryWaits()).toEqual([
+      { waitMs: 2000, attempt: 2, limit: 3 },
+      { waitMs: 4000, attempt: 3, limit: 3 },
     ]);
   });
 });

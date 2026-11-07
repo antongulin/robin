@@ -462,10 +462,10 @@ export class LLMClient {
         core.warning(
           `LLM attempt ${attempt}/${attemptLimit}: empty content${useJson ? " (json mode)" : ""}`
         );
-        // Empty content is not a rate-limit path, so an earlier 429 must not keep the longer cap
-        // or own the final failure: the newest attempt produced no error and no content.
+        // Empty content is not a rate-limit path, so an earlier 429 must not keep the longer cap.
+        // The last error is deliberately kept: a retriable failure followed by empty replies still
+        // reports that provider failure, exactly as before the rate-limit schedule existed.
         attemptLimit = this.maxAttempts;
-        lastError = undefined;
       } catch (error) {
         // Cancellation is terminal: no retry, no compatibility step, no stall reclassification.
         if (options.signal?.aborted || isCancellationError(error)) throw new LlmRequestCancelledError();
