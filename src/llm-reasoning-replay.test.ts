@@ -184,7 +184,8 @@ it.each([400, 429])("RC05 bounds HTTP %i failures without leaking replay metadat
     .rejects.toMatchObject({ name: "LLMRequestError", cause: expect.objectContaining({ status }) });
   await jest.runAllTimersAsync();
   await pending;
-  expect(requests).toHaveLength(status === 400 ? 2 : 4);
+  // A native 429 gets the longer rate-limit schedule (six attempts after the initial turn).
+  expect(requests).toHaveLength(status === 400 ? 2 : 7);
   for (const body of requests.slice(1)) {
     expect(body.messages.find(message => message.role === "assistant")).toHaveProperty("reasoning_content", PRIVATE);
     expect(body).toMatchObject({ max_tokens: 1234, reasoning_effort: "max" });

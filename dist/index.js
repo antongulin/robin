@@ -627,7 +627,7 @@ function hasRequiredPermission(permission, minimumPermission) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.MAX_LLM_TEMPERATURE = exports.DEFAULT_LLM_TEMPERATURE = exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
+exports.MAX_LLM_TEMPERATURE = exports.DEFAULT_LLM_TEMPERATURE = exports.MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS = exports.MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS = exports.DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS = exports.DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
 exports.parseLLMTimeout = parseLLMTimeout;
 exports.parseLLMTemperature = parseLLMTemperature;
 exports.DEFAULT_LLM_TIMEOUT_MS = 600000; // 10 minutes
@@ -637,6 +637,17 @@ exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = 3;
 exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = 5;
 exports.DEFAULT_LLM_RETRY_DELAY_MS = 2000;
 exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = 3000;
+/**
+ * A provider 429 is usually a short upstream capacity burst, so it gets its own bounded,
+ * longer schedule instead of the ordinary three-attempt backoff. A non-default caller attempt
+ * count still wins; see `getLlmRateLimitAttemptCount`.
+ */
+exports.DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS = 6;
+/** Waits after rate-limited attempts 1..5; the last value is the cap for any later wait. */
+exports.DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS = [5000, 10000, 20000, 40000, 60000];
+/** A provider `Retry-After` hint is honored only inside this bounded window. */
+exports.MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS = 1000;
+exports.MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS = 60000;
 exports.DEFAULT_LLM_TEMPERATURE = 0.1; // near-deterministic reviews
 /** OpenAI-compatible upper bound; some models (e.g. Kimi) only accept 1. */
 exports.MAX_LLM_TEMPERATURE = 2;
@@ -1458,6 +1469,8 @@ class LLMClient {
     openCodeGo;
     maxOutputTokens;
     maxAttempts;
+    /** Attempts allowed for native 429s; equals `maxAttempts` when the caller configured one. */
+    rateLimitAttempts;
     routerModel;
     temperature;
     onProgress;
@@ -1481,6 +1494,7 @@ class LLMClient {
         this.estimatedRequestTokenBudget = (0, request_budget_1.parseEstimatedRequestTokenBudget)(estimatedRequestTokenBudget);
         this.maxOutputTokens = (0, request_budget_1.resolveOutputTokenCap)(maxOutputTokens, this.estimatedRequestTokenBudget);
         this.maxAttempts = (0, llm_retry_1.getLlmCompletionAttemptCount)(maxAttempts, model);
+        this.rateLimitAttempts = (0, llm_retry_1.getLlmRateLimitAttemptCount)(maxAttempts, model);
         const effectiveTimeoutMs = (0, llm_retry_1.resolveLlmTimeoutMs)(model, timeoutMs);
         const normalizedBaseUrl = (0, llm_provider_1.normalizeLlmBaseUrl)(baseUrl);
         this.provider = (0, llm_provider_1.detectLlmProvider)(normalizedBaseUrl);
@@ -1488,7 +1502,7 @@ class LLMClient {
         if (normalizedBaseUrl !== baseUrl.trim()) {
             core.info(`Normalized LLM base URL: ${baseUrl} -> ${normalizedBaseUrl}`);
         }
-        core.info(`Initializing LLM client: baseUrl=${normalizedBaseUrl}, provider=${this.provider}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}, temperature=${this.temperature}`);
+        core.info(`Initializing LLM client: baseUrl=${normalizedBaseUrl}, provider=${this.provider}, model=${model}, timeout=${effectiveTimeoutMs} ms, maxAttempts=${this.maxAttempts}, rateLimitAttempts=${this.rateLimitAttempts}, temperature=${this.temperature}`);
         // ponytail: chatCompletion owns retries; SDK maxRetries × 10-min timeout burned whole job budgets
         const defaultHeaders = this.openCodeGo
             ? { "x-opencode-session": (0, node_crypto_1.randomUUID)(), "user-agent": "robin-review/2" }
@@ -1620,12 +1634,18 @@ class LLMClient {
         let trigger = "initial";
         let lastFinishReason = "unknown";
         let lastError;
-        for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+        // The cap applied to the current attempt. A native 429 raises it to the longer rate-limit
+        // schedule; any other failure falls back to the ordinary count, so non-429 behavior is
+        // unchanged and a mixed sequence stays bounded.
+        let attemptLimit = this.maxAttempts;
+        const attemptCeiling = Math.max(this.maxAttempts, this.rateLimitAttempts);
+        for (let attempt = 1; attempt <= attemptCeiling; attempt++) {
             (0, llm_retry_1.throwIfAborted)(options.signal);
             const useJson = (0, llm_retry_1.shouldUseJsonResponseMode)(attempt, options.jsonResponseMode);
+            let rateLimited = false;
             try {
-                core.info(`LLM attempt ${attempt}/${this.maxAttempts}: waiting for provider...`);
-                await this.progress(`Waiting for provider (attempt ${attempt}/${this.maxAttempts})…`);
+                core.info(`LLM attempt ${attempt}/${attemptLimit}: waiting for provider...`);
+                await this.progress(`Waiting for provider (attempt ${attempt}/${attemptLimit})…`);
                 const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson }, logicalCall, attempt, trigger);
                 // An aborted caller discards any late result: cancellation is terminal, never a success.
                 (0, llm_retry_1.throwIfAborted)(options.signal);
@@ -1640,7 +1660,7 @@ class LLMClient {
                 }
                 trigger = "outer-empty-retry";
                 lastFinishReason = finishReasonLabel(result.finishReason);
-                core.warning(`LLM attempt ${attempt}/${this.maxAttempts}: empty content${useJson ? " (json mode)" : ""}`);
+                core.warning(`LLM attempt ${attempt}/${attemptLimit}: empty content${useJson ? " (json mode)" : ""}`);
             }
             catch (error) {
                 // Cancellation is terminal: no retry, no compatibility step, no stall reclassification.
@@ -1653,25 +1673,30 @@ class LLMClient {
                 if (options.tools && (0, llm_retry_1.isToolsUnsupportedError)(error)) {
                     throw new ToolsUnsupportedError(error);
                 }
-                core.warning(`LLM attempt ${attempt}/${this.maxAttempts} failed: ${providerFailureSummary(error)}`);
-                if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt === this.maxAttempts) {
+                rateLimited = (0, llm_retry_1.isRateLimitError)(error);
+                attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
+                core.warning(`LLM attempt ${attempt}/${attemptLimit} failed: ${providerFailureSummary(error)}`);
+                if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt >= attemptLimit) {
                     core.error(`LLM API error: ${providerFailureSummary(error)}`);
                     throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
                 }
             }
-            if (attempt < this.maxAttempts) {
-                const waitMs = (0, llm_retry_1.computeRetryDelayMs)(attempt, this.retryContext());
-                const reason = lastError === undefined ? "empty response" : providerFailureSummary(lastError);
-                core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${this.maxAttempts})...`);
-                await this.progress(`Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`);
-                await (0, llm_retry_1.delayMs)(waitMs, options.signal);
-            }
+            // The loop ceiling covers the longer rate-limit schedule; stop at this attempt's cap.
+            if (attempt >= attemptLimit)
+                break;
+            const waitMs = rateLimited
+                ? (0, llm_retry_1.computeRateLimitRetryDelayMs)(attempt, (0, llm_retry_1.parseRetryAfterMs)(lastError))
+                : (0, llm_retry_1.computeRetryDelayMs)(attempt, this.retryContext());
+            const reason = lastError === undefined ? "empty response" : providerFailureSummary(lastError);
+            core.info(`Retrying LLM request in ${waitMs} ms (attempt ${attempt + 1}/${attemptLimit})...`);
+            await this.progress(`Attempt ${attempt} did not succeed (${reason}). Retrying in ${Math.round(waitMs / 1000)}s…`);
+            await (0, llm_retry_1.delayMs)(waitMs, options.signal);
         }
         if (lastError && (0, llm_retry_1.isRetriableLlmError)(lastError, this.retryContext())) {
-            core.error(`LLM API error after ${this.maxAttempts} attempts: ${providerFailureSummary(lastError)}`);
-            throw new LLMRequestError(`Failed to get response from LLM after ${this.maxAttempts} attempts: ${providerFailureSummary(lastError)}`, { cause: lastError });
+            core.error(`LLM API error after ${attemptLimit} attempts: ${providerFailureSummary(lastError)}`);
+            throw new LLMRequestError(`Failed to get response from LLM after ${attemptLimit} attempts: ${providerFailureSummary(lastError)}`, { cause: lastError });
         }
-        throw new Error(`Empty response from LLM after ${this.maxAttempts} attempts (finish_reason=${lastFinishReason})`);
+        throw new Error(`Empty response from LLM after ${attemptLimit} attempts (finish_reason=${lastFinishReason})`);
     }
     /**
      * One completion request. If the provider rejects an optional part of the request —
@@ -2096,9 +2121,13 @@ exports.isContextLengthError = isContextLengthError;
 exports.isCancellationError = isCancellationError;
 exports.throwIfAborted = throwIfAborted;
 exports.isRetriableLlmError = isRetriableLlmError;
+exports.isRateLimitError = isRateLimitError;
+exports.parseRetryAfterMs = parseRetryAfterMs;
 exports.shouldUseJsonResponseMode = shouldUseJsonResponseMode;
 exports.computeRetryDelayMs = computeRetryDelayMs;
 exports.getLlmCompletionAttemptCount = getLlmCompletionAttemptCount;
+exports.getLlmRateLimitAttemptCount = getLlmRateLimitAttemptCount;
+exports.computeRateLimitRetryDelayMs = computeRateLimitRetryDelayMs;
 exports.delayMs = delayMs;
 exports.openRouterStallError = openRouterStallError;
 const config_1 = __nccwpck_require__(4008);
@@ -2467,6 +2496,79 @@ function isRetriableLlmError(error, context = {}) {
         message.includes("empty response from llm") ||
         message.includes("openrouter stall"));
 }
+/**
+ * A native provider 429 means capacity pressure, not a malformed request, so the client gives
+ * it a longer bounded schedule. The client wraps provider failures in `LLMRequestError` and keeps
+ * the native error in `cause`, so a bounded, cycle-safe cause walk recognizes both shapes; the
+ * outer status alone is not enough. Message-only wording such as "rate limit" stays on the
+ * ordinary retry path so non-429 failures keep today's attempt count and delays.
+ */
+function isRateLimitError(error) {
+    if (!error || typeof error === "string")
+        return false;
+    const seen = new Set();
+    let current = error;
+    for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+        if (!current || typeof current !== "object" || seen.has(current))
+            return false;
+        seen.add(current);
+        if (Number(current.status) === 429)
+            return true;
+        current = current.cause;
+    }
+    return false;
+}
+/** Reads a `Retry-After` header (SDK `Headers` or a plain object) from the error or its causes. */
+function retryAfterHeaderValue(error) {
+    const headers = error.headers;
+    if (!headers || typeof headers !== "object")
+        return undefined;
+    const get = headers.get;
+    if (typeof get === "function") {
+        const value = get.call(headers, "retry-after");
+        if (typeof value === "string" && value.trim())
+            return value.trim();
+    }
+    for (const [key, value] of Object.entries(headers)) {
+        if (key.toLowerCase() !== "retry-after")
+            continue;
+        if (typeof value === "string" && value.trim())
+            return value.trim();
+        if (typeof value === "number" && Number.isFinite(value))
+            return String(value);
+    }
+    return undefined;
+}
+/** Seconds or an HTTP-date, clamped to the supported window; invalid hints are ignored. */
+function parseRetryAfterValue(value) {
+    if (!value)
+        return undefined;
+    const seconds = Number(value);
+    const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
+    if (!Number.isFinite(ms))
+        return undefined;
+    return Math.min(config_1.MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.max(config_1.MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.round(ms)));
+}
+/**
+ * The provider's `Retry-After` delay in milliseconds, clamped to [1 s, 60 s], or undefined when
+ * the response carries no usable hint. A bounded cause walk covers wrapped provider errors.
+ */
+function parseRetryAfterMs(error) {
+    if (!error || typeof error === "string")
+        return undefined;
+    const seen = new Set();
+    let current = error;
+    for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+        if (!current || typeof current !== "object" || seen.has(current))
+            return undefined;
+        seen.add(current);
+        const parsed = parseRetryAfterValue(retryAfterHeaderValue(current));
+        if (parsed !== undefined)
+            return parsed;
+        current = current.cause;
+    }
+    return undefined;
+}
 function shouldUseJsonResponseMode(attempt, jsonResponseMode) {
     return jsonResponseMode && attempt === 1;
 }
@@ -2480,6 +2582,32 @@ function getLlmCompletionAttemptCount(maxAttempts = config_1.DEFAULT_LLM_COMPLET
         ? config_1.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS
         : maxAttempts;
     return Math.max(1, Math.floor(resolved));
+}
+/**
+ * Attempts available for native 429s. The default attempt count is a cap Robin owns, so a 429
+ * gets the longer rate-limit schedule (six total attempts). A non-default caller value is an
+ * explicit configuration and is kept exactly; no action input or repo-config key exposes it
+ * today, so this only constrains programmatic callers and tests.
+ */
+function getLlmRateLimitAttemptCount(maxAttempts = config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS, model) {
+    const resolved = getLlmCompletionAttemptCount(maxAttempts, model);
+    return maxAttempts === config_1.DEFAULT_LLM_COMPLETION_ATTEMPTS
+        ? Math.max(resolved, config_1.DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS)
+        : resolved;
+}
+/**
+ * The wait before the next attempt after a failed `attempt` (1-based). A usable provider
+ * `Retry-After` wins inside [1 s, 60 s]; otherwise the schedule is 5/10/20/40 s and then 60 s.
+ * No jitter: the announced waits match the documented schedule and tests, and each job's
+ * retry burst stays independent and bounded.
+ */
+function computeRateLimitRetryDelayMs(attempt, retryAfterDelayMs) {
+    if (retryAfterDelayMs !== undefined && Number.isFinite(retryAfterDelayMs)) {
+        return Math.min(config_1.MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.max(config_1.MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS, Math.round(retryAfterDelayMs)));
+    }
+    const schedule = config_1.DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS;
+    const index = Math.min(Math.max(Math.floor(attempt), 1), schedule.length) - 1;
+    return schedule[index];
 }
 async function delayMs(ms, signal) {
     if (!signal) {
