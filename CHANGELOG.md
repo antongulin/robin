@@ -5,7 +5,7 @@
 
 ### Bug Fixes
 
-* **llm:** back off longer on provider rate limits ([#131](https://github.com/antongulin/robin/issues/131)) ([5a6bd77](https://github.com/antongulin/robin/commit/5a6bd77e3aee79fca5b5bdbb935fd1386108e226))
+* **llm:** back off longer on provider rate limits ([#131](https://github.com/antongulin/robin/issues/131)) ([5a6bd77](https://github.com/antongulin/robin/commit/5a6bd77e3aee79fca5b5bdbb935fd1386108e226)). A provider HTTP 429 is usually a short capacity burst, so Robin now retries it up to six times with 5/10/20/40/60 s waits instead of giving up after about 6 s; a `Retry-After` header can lengthen a wait (capped at 60 s) but never shorten it. Quota and billing 429s such as `insufficient_quota`, and every other failure, keep the previous retry behavior.
 
 ## [2.13.2](https://github.com/antongulin/robin/compare/v2.13.1...v2.13.2) (2026-11-01)
 
