@@ -54,6 +54,12 @@ Free OpenRouter example:
 
 ## Minimal consumer workflow
 
+This example omits `runner` and uses the `"ubicloud-standard-2"` default. Callers need
+Ubicloud runners available on their repository or organization. Without Ubicloud,
+add an explicit JSON runner input in the job's `with:` block, such as
+`runner: '"ubuntu-latest"'`; see [runner selection](README.md#running-on-a-self-hosted-runner).
+Installers following `@main` also omit `runner`, so check that prerequisite before use.
+
 Create `.github/workflows/robin.yml`:
 
 ```yaml

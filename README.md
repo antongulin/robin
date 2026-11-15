@@ -59,6 +59,11 @@ Read AGENTS.md in the robin repo for full rules.
 > from your home directory. The workflow and secrets are configured once per repository;
 > the companion agent skill is installed globally once per machine.
 
+> [!IMPORTANT]
+> Generated workflows following `@main` omit `runner` and require Ubicloud runners.
+> If your repository has no Ubicloud runners, add an explicit runner override before
+> opening a PR; see [runner selection](#running-on-a-self-hosted-runner).
+
 From the target repository, run either:
 
 ```bash
@@ -129,11 +134,17 @@ Other providers (OpenAI, Groq, Ollama, etc.) work too. See [Supported providers]
 
 > [!NOTE]
 > **Ran the Quick install one-liner above?** Skip this step — the script already created
-> this file. Just finish Steps 1 and 2 (the secrets), then commit and push.
+> this file. Finish Steps 1 and 2 (the secrets), check the runner requirement below,
+> then commit and push.
 
 Create a new file in your repo:
 
 **Path:** `.github/workflows/robin.yml`
+
+This example omits `runner`, so it requires Ubicloud runners on your repository or
+organization. Without Ubicloud, add `with: runner: '"ubuntu-latest"'` as a properly
+indented job-level mapping; [runner selection](#running-on-a-self-hosted-runner) shows
+the exact YAML override. The reusable workflow does not fall back to a hosted runner.
 
 **Contents:** copy this exactly:
 

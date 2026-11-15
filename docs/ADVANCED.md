@@ -729,6 +729,10 @@ jobs:
 
 ### Direct action (full control in one file)
 
+This example requires Ubicloud runners. If your repository uses another runner,
+change the job's `runs-on` label (for example to `ubuntu-latest`) before copying it.
+The reusable workflow's `runner` input does not apply to a direct action step.
+
 ```yaml
 jobs:
   review:
@@ -929,6 +933,10 @@ write**, and **Actions: read**. Store its **Client ID** (shown in the App settin
 as the `ROBIN_APP_CLIENT_ID` repository variable and its private key as the `ROBIN_APP_PRIVATE_KEY` repository secret. Keep your three
 existing LLM secrets. Use the direct action so token creation and the review share
 one job.
+
+The example below requires Ubicloud runners. Without Ubicloud, change its job-level
+`runs-on` to an available runner such as `ubuntu-latest`; the reusable workflow's
+`runner` input cannot select the runner for this direct-action job.
 
 [GitHub recommends Client ID](https://github.blog/changelog/2024-05-01-github-apps-can-now-use-the-client-id-to-fetch-installation-tokens/) for new setups. The token action at `@v2` still names
 its input `app-id`; pass the Client ID as that input's value. Existing numeric App ID
