@@ -275,10 +275,10 @@ jobs:
 
 - Leave `synchronize` out of the trigger (the shipped default) so Robin reviews once when the PR opens and you comment `/review` after fixes (see [Review every push (opt-in)](#review-every-push-opt-in)).
 - Lower `max-diff-size` and `agent-max-diff-size` to reject larger diffs before review.
-- **Free tier:** GitHub Free includes about **2,000 Actions minutes/month** for public and private repos; GitHub Pro about **3,000 minutes/month** (limits can change — see [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) for your account).
-- **Heavy usage:** use a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) so LLM wait time does not consume hosted minutes.
+- **Default runner:** [Ubicloud compute](https://www.ubicloud.com/use-cases/github-actions) is billed separately and does not draw from GitHub-hosted compute allowances.
+- **GitHub-hosted overrides:** standard hosted runners are free for public repositories; private-repository allowances depend on the plan. Check current [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) rather than assuming a fixed minute quota. Artifact and cache storage have separate allowances and may incur charges regardless of runner choice.
 
-To use a self-hosted runner with the reusable workflow, pass `runner` as valid JSON. A single label is a JSON string; multiple labels are a JSON array.
+To select a different self-hosted runner with the reusable workflow, pass `runner` as valid JSON. A single label is a JSON string; multiple labels are a JSON array.
 
 Coolify example:
 

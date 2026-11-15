@@ -110,9 +110,9 @@ The easiest free setup uses [OpenRouter](https://openrouter.ai/):
 | `LLM_MODEL` | `openrouter/free` |
 
 > [!TIP]
-> `openrouter/free` picks a free model for each review — **$0 from OpenRouter**. OpenRouter rotates which model runs; **leave this secret as `openrouter/free`** — the action retries and uses provider fallbacks when a route is temporarily unavailable. You only spend [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) minutes while the job runs. Review duration depends on the model, diff, review mode and retries.
+> `openrouter/free` picks a free model for each review — **$0 from OpenRouter**. OpenRouter rotates which model runs; **leave this secret as `openrouter/free`** — the action retries and uses provider fallbacks when a route is temporarily unavailable. Review duration depends on the model, diff, review mode and retries.
 >
-> Check [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) for included minutes and runner charges. See [Review timing](docs/ADVANCED.md#review-timing) to distinguish queue time from the review itself.
+> The default [Ubicloud runner](https://www.ubicloud.com/use-cases/github-actions) has separate compute billing and does not draw from GitHub-hosted compute allowances. For an explicit GitHub-hosted runner override, check [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions). GitHub artifact and cache storage charges may still apply. See [Review timing](docs/ADVANCED.md#review-timing) to distinguish queue time from the review itself.
 
 Other providers (OpenAI, Groq, Ollama, etc.) work too. See [Supported providers](#supported-providers) or [docs/ADVANCED.md](docs/ADVANCED.md).
 
