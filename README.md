@@ -196,7 +196,7 @@ budget. Robin adds no model requests or usage-request parameters for reporting.
 
 ## Running on a self-hosted runner
 
-By default, the reusable workflow runs on the `ubicloud-standard-2` runner (Ubicloud's GitHub Actions integration). Omit `runner` to use that default when your repo or organization has Ubicloud runners available.
+By default, the reusable workflow runs on the `ubicloud-standard-2` runner (Ubicloud's managed GitHub Actions integration). It requires a Ubicloud account and the integration connected to your repository or organization; follow the [official quickstart](https://www.ubicloud.com/docs/github-actions-integration/quickstart). Omit `runner` when those runners are available.
 
 If you do not use Ubicloud, pass `runner` explicitly — for example GitHub-hosted `ubuntu-latest`:
 

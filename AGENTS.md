@@ -152,6 +152,13 @@ structure guidance of [agent0ai/dox](https://github.com/agent0ai/dox) at pinned 
 **Merge strategy.** Use squash merges for cohesive PRs; squash is the repository's
 only enabled merge method.
 
+**Workflow runners.** Use `ubicloud-standard-2` for Robin's jobs and the reusable
+workflow's default. Owner-approved exception (2026-11-15): only the `publish` job in
+`.github/workflows/publish.yml` stays on GitHub-hosted `ubuntu-latest`, because
+[npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) does not support
+self-hosted runners. Preserve its OIDC authentication, provenance and release guards;
+this exception does not authorize token, secret, settings or release-control changes.
+
 **Verification.** Run the existing checks before pushing:
 
 ```bash

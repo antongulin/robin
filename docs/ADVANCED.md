@@ -271,6 +271,38 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
+### Runner selection and migration
+
+The reusable workflow's default `runner` input on `main` is the JSON string
+`"ubicloud-standard-2"`. Callers that omit `runner` need Ubicloud runners available on
+their repository or organization. To use GitHub-hosted `ubuntu-latest`, pass it
+explicitly; existing nonblank `runner` values stay authoritative:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    with:
+      runner: '"ubuntu-latest"'
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
+
+A floating major or minor workflow tag uses the workflow file of the release it
+currently references, so its runner default can change when that tag moves to a
+release containing this change. A full-version tag or commit SHA keeps that workflow
+file's default. This is separate from the nested action's `@main` reference; see
+[Version pins](../README.md#version-pins).
+
+For this repository's own workflows, all other jobs use `ubicloud-standard-2`, but
+the npm `publish` job in `publish.yml` stays on GitHub-hosted `ubuntu-latest`.
+This is an owner-approved exception dated 2026-11-15:
+[npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) does not support
+self-hosted runners. The exception preserves tokenless OIDC authentication, provenance
+and the release guards; it does not add credentials or change publishing settings.
+
 ### Save GitHub Actions minutes
 
 - Leave `synchronize` out of the trigger (the shipped default) so Robin reviews once when the PR opens and you comment `/review` after fixes (see [Review every push (opt-in)](#review-every-push-opt-in)).
@@ -383,23 +415,6 @@ A recognized nonblank input (`auto` or `off`) wins over base-branch config. Blan
 omitted inputs defer to that config, then to `auto`. If your workflow already passes
 `auto`, change that input to `"off"`; adding config `off` alone will not override it.
 Robin leaves both metadata defaults blank to preserve this precedence.
-
-On `main`, the reusable workflow's default `runner` input is the JSON string
-`"ubicloud-standard-2"`. Callers that omit `runner` need Ubicloud Actions runners
-available on the repository or organization. To keep GitHub-hosted `ubuntu-latest`, pass
-it explicitly; existing nonblank `runner` values stay authoritative:
-
-```yaml
-jobs:
-  review:
-    uses: antongulin/robin/.github/workflows/review.yml@main
-    with:
-      runner: '"ubuntu-latest"'
-    secrets:
-      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
-      LLM_MODEL: ${{ secrets.LLM_MODEL }}
-```
 
 ### Model compatibility and usage
 

@@ -9,7 +9,9 @@ permissions: {}
 
 jobs:
   publish:
-    runs-on: ubicloud-standard-2
+    # npm trusted publishing requires GitHub-hosted runners.
+    # Maintainer-approved exception; other Robin jobs use standard Ubicloud.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # npm trusted publishing (OIDC) — no token secret needed
