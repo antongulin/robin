@@ -142,8 +142,8 @@ Create a new file in your repo:
 **Path:** `.github/workflows/robin.yml`
 
 This example omits `runner`, so it requires Ubicloud runners on your repository or
-organization. Without Ubicloud, add `with: runner: '"ubuntu-latest"'` as a properly
-indented job-level mapping; [runner selection](#running-on-a-self-hosted-runner) shows
+organization. Without Ubicloud, add `runner: '"ubuntu-latest"'` inside a job-level
+`with:` mapping; [runner selection](#running-on-a-self-hosted-runner) shows
 the exact YAML override. The reusable workflow does not fall back to a hosted runner.
 
 **Contents:** copy this exactly:
