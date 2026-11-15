@@ -316,7 +316,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `review-on-synchronize` | `false` | Reusable workflow / action input. When the workflow triggers on `synchronize`, set `true` to review every push to an existing PR; default `false` skips pushes and re-reviews with `/review` |
 | `bot-review-policy` | empty (defer to repo config, then `all`) | Automatic PR review policy: `all`, `none`, or `allowlist`. See [Automatic bot PR reviews](#automatic-bot-pr-reviews); authorized manual commands bypass the filter |
 | `bot-allowlist` | empty (defer to repo config, then empty list) | Comma-separated exact, case-insensitive bot author logins; `[]` clears the base list. An empty list excludes all bots under `allowlist` |
-| `runner` | `'"ubuntu-latest"'` | Reusable workflow only: runner as a JSON string or JSON array |
+| `runner` | `'"ubicloud-standard-2"'` | Reusable workflow only: runner as a JSON string or JSON array |
 | `min-command-permission` | `write` | Minimum repository permission for slash commands: `read`, `triage`, `write`, `maintain`, or `admin` |
 | `review-instructions` | empty | Extra prompt text for code reviews (not `/summary`); appended to the built-in prompt alongside the rules file |
 | `review-instructions-file` | `.github/code-reviewer.md` | Rules file on the base branch for code reviews; empty disables this file. Missing files do not block review |
@@ -383,6 +383,23 @@ A recognized nonblank input (`auto` or `off`) wins over base-branch config. Blan
 omitted inputs defer to that config, then to `auto`. If your workflow already passes
 `auto`, change that input to `"off"`; adding config `off` alone will not override it.
 Robin leaves both metadata defaults blank to preserve this precedence.
+
+On `main`, the reusable workflow's default `runner` input is the JSON string
+`"ubicloud-standard-2"`. Callers that omit `runner` need Ubicloud Actions runners
+available on the repository or organization. To keep GitHub-hosted `ubuntu-latest`, pass
+it explicitly; existing nonblank `runner` values stay authoritative:
+
+```yaml
+jobs:
+  review:
+    uses: antongulin/robin/.github/workflows/review.yml@main
+    with:
+      runner: '"ubuntu-latest"'
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+```
 
 ### Model compatibility and usage
 
@@ -728,7 +745,7 @@ jobs:
           startsWith(github.event.comment.body, '/help')
         )
       )
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     timeout-minutes: 45
     steps:
       - uses: antongulin/robin@main
@@ -938,7 +955,7 @@ jobs:
         startsWith(github.event.comment.body, '/review') ||
         startsWith(github.event.comment.body, '/summary') ||
         startsWith(github.event.comment.body, '/help')))
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     timeout-minutes: 45
     concurrency:
       group: robin-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}

@@ -242,7 +242,7 @@ describe("reusable review workflow", () => {
     expect(reviewWorkflow).toContain(
       'description: "Runner label or JSON array of labels to use for the review job."',
     );
-    expect(reviewWorkflow).toContain("default: '\"ubuntu-latest\"'");
+    expect(reviewWorkflow).toContain("default: '\"ubicloud-standard-2\"'");
     expect(reviewWorkflow).toContain("runs-on: ${{ fromJSON(inputs.runner) }}");
   });
 

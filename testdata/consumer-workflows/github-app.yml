@@ -18,7 +18,7 @@ jobs:
         startsWith(github.event.comment.body, '/review') ||
         startsWith(github.event.comment.body, '/summary') ||
         startsWith(github.event.comment.body, '/help')))
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     timeout-minutes: 45
     concurrency:
       group: robin-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.workflow }}

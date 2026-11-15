@@ -108,7 +108,7 @@ on:
         description: "Runner label or JSON array of labels to use for the review job."
         required: false
         type: string
-        default: '"ubuntu-latest"'
+        default: '"ubicloud-standard-2"'
     outputs:
       usage-report:
         description: "Compact sanitized per-invocation LLM usage JSON, including coverage."

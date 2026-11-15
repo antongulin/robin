@@ -21,7 +21,7 @@ concurrency:
 jobs:
   release-please:
     if: github.ref == 'refs/heads/main' && !inputs.release-pr
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     permissions:
       contents: write
       pull-requests: write
@@ -44,7 +44,7 @@ jobs:
     if: >-
       always() && !cancelled() && github.ref == 'refs/heads/main' &&
       (needs.release-please.result == 'success' || needs.release-please.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     permissions:
       contents: read
       pull-requests: read
@@ -75,7 +75,7 @@ jobs:
     if: >-
       !cancelled() && needs.auto-release.result == 'success' &&
       (needs.auto-release.outputs.state == 'OPEN' || needs.auto-release.outputs.state == 'MERGED')
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     permissions:
       contents: read
       pull-requests: read
@@ -117,7 +117,7 @@ jobs:
     if: >-
       !cancelled() && needs.auto-release.result == 'success' &&
       needs.verify-release.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     permissions:
       contents: write
       pull-requests: write

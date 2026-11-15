@@ -185,7 +185,9 @@ budget. Robin adds no model requests or usage-request parameters for reporting.
 
 ## Running on a self-hosted runner
 
-By default, the reusable workflow runs on GitHub's hosted `ubuntu-latest` runner:
+By default, the reusable workflow runs on the `ubicloud-standard-2` runner (Ubicloud's GitHub Actions integration). Omit `runner` to use that default when your repo or organization has Ubicloud runners available.
+
+If you do not use Ubicloud, pass `runner` explicitly — for example GitHub-hosted `ubuntu-latest`:
 
 ```yaml
 with:
@@ -359,7 +361,7 @@ Triggers, authors, and permissions:
 | `bot-allowlist` | Empty list; exact case-insensitive logins. Comma-separated in workflow, YAML sequence in config | Workflow input or repo config |
 | `min-command-permission` | `write`; minimum permission for slash commands | Workflow input |
 | `github-token` / `ROBIN_TOKEN` | `github.token`; custom review identity | Direct action input / reusable workflow secret |
-| `runner` | JSON string `"ubuntu-latest"`; runner label or array of labels | Reusable workflow only |
+| `runner` | JSON string `"ubicloud-standard-2"`; pass `"ubuntu-latest"` or other labels to override | Reusable workflow only |
 
 The [bot author filter](docs/ADVANCED.md#automatic-bot-pr-reviews) applies only to
 automatic PR reviews. Authorized `/review` commands can review excluded bot PRs.
