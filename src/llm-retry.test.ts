@@ -892,6 +892,13 @@ describe("OpenRouter daily quota classification", () => {
       expect(isRateLimitError(native(identifier))).toBe(true);
     }
   );
+
+  it("keeps an advisory mention of the daily quota on the burst schedule", () => {
+    expect(isRateLimitError({
+      status: 429,
+      message: "Rate limit exceeded: free-models-per-min. Upgrade to raise free-models-per-day too",
+    })).toBe(true);
+  });
 });
 
 describe("computeRateLimitRetryDelayMs", () => {

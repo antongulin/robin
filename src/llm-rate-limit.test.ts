@@ -66,8 +66,8 @@ function rateLimited(message = "429 inference_failed", headers?: Record<string, 
 }
 
 /** The SDK's RateLimitError shape for OpenRouter's free daily quota (numeric `code`). */
-function dailyQuota(identifier = "free-models-per-day") {
-  const message = `Rate limit exceeded: ${identifier}. Add 10 credits`;
+function dailyQuota(identifier = "free-models-per-day", advice = "Add 10 credits") {
+  const message = `Rate limit exceeded: ${identifier}. ${advice}`;
   return Object.assign(rateLimited(`429 ${message}`), {
     code: 429,
     error: {
@@ -490,7 +490,7 @@ describe("LLMClient rate-limit retries", () => {
     jest.useFakeTimers();
     const client = makeClient(3);
     const create = stubOpenAI(client);
-    create.mockRejectedValue(dailyQuota("free-models-per-min"));
+    create.mockRejectedValue(dailyQuota("free-models-per-min", "Add 10 credits to raise free-models-per-day"));
 
     const completion = client.chatCompletion("system", "user");
     await Promise.all([

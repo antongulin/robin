@@ -2538,11 +2538,10 @@ const PERMANENT_RATE_LIMIT_CONDITIONS = new Set([
     "billing_not_active",
 ]);
 /**
- * OpenRouter's free daily quota, matched as a whole token. Its 429 body carries a numeric `code`,
- * so only the message identifies it; the per-minute free limit (`free-models-per-min`) stays a
- * capacity burst.
+ * Matched only in OpenRouter's `Rate limit exceeded: free-models-per-day` wording, so advisory
+ * text that merely mentions the daily quota stays a burst. Its 429 body carries a numeric `code`.
  */
-const OPENROUTER_FREE_DAILY_QUOTA = /(?:^|[^a-z0-9_-])free-models-per-day(?![a-z0-9_-])/i;
+const OPENROUTER_FREE_DAILY_QUOTA = /rate\s+limit\s+exceeded:\s*free-models-per-day(?![a-z0-9_-])/i;
 /**
  * True when the 429 body names a permanent quota/billing condition. Some SDKs expose the parsed
  * body's `code`/`type`/`message` on the error itself and some nest them under `error`, so both
