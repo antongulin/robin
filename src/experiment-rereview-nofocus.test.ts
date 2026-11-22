@@ -330,3 +330,20 @@ describe("rereview-memory-nofocus wiring", () => {
     expect(input.endsWith(buildEarlierRoundsBlock(earlierData(), { focusOnChanged: false }))).toBe(true);
   });
 });
+
+test("N5 near the cap both variants keep the same findings and differ only by the focus line", () => {
+  // Sweep the reply length one character at a time so the full block crosses the cap at every
+  // offset, including the window where only the focus line pushes the focused block over it.
+  let crossed = 0;
+  for (let extra = 0; extra <= 700; extra++) {
+    const findings = Array.from({ length: 60 }, (_, i) => ({ round: 1, severity: "MEDIUM" as const, path: `src/f${i}.ts`, line: i + 1, description: "d".repeat(150) + i, reply: "r".repeat(extra) }));
+    const data = { rounds: 2, lastReviewedCommit: "b".repeat(40), changes: { kind: "none" as const }, findings };
+    const focused = buildEarlierRoundsBlock(data).split("\n");
+    const plain = buildEarlierRoundsBlock(data, { focusOnChanged: false }).split("\n");
+    const focusLine = focused.findIndex((l) => l.startsWith("- Spend most of the investigation"));
+    expect(focusLine).toBeGreaterThan(-1);
+    expect(plain).toEqual(focused.filter((_, i) => i !== focusLine));
+    if (focused.some((l) => /earlier findings not shown/.test(l))) crossed++;
+  }
+  expect(crossed).toBeGreaterThan(0);
+});

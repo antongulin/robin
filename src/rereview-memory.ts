@@ -229,12 +229,18 @@ export function buildEarlierRoundsBlock(
   options: EarlierRoundsOptions = {}
 ): string {
   const focusOnChanged = options.focusOnChanged ?? true;
+  // Findings are selected with the focused block so both variants show the same findings and
+  // differ only by the focus line; the no-focus block is then one line shorter, never longer.
   let shown = data.findings.slice(-MAX_REREVIEW_FINDINGS);
   for (;;) {
-    const block = renderEarlierRounds(data, shown, focusOnChanged);
-    if (block.length <= MAX_REREVIEW_BLOCK_CHARS) return block;
+    const focused = renderEarlierRounds(data, shown, true);
+    if (focused.length <= MAX_REREVIEW_BLOCK_CHARS) {
+      return focusOnChanged ? focused : renderEarlierRounds(data, shown, false);
+    }
     // Hard cap even with no findings left (for example an enormous changed-file line).
-    if (shown.length === 0) return ellipsize(block, MAX_REREVIEW_BLOCK_CHARS);
+    if (shown.length === 0) {
+      return ellipsize(focusOnChanged ? focused : renderEarlierRounds(data, shown, false), MAX_REREVIEW_BLOCK_CHARS);
+    }
     shown = shown.slice(1);
   }
 }
