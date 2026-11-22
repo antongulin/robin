@@ -53,6 +53,8 @@ export interface AgentReviewOptions {
   calibrate?: boolean;
   /** Experiment `attach-files`: rendered changed-file block appended to the immutable input. */
   attachmentSection?: string;
+  /** Experiment `rereview-memory`: earlier-rounds block appended after any attachments. */
+  earlierRoundsSection?: string;
 }
 
 export interface AgentReviewResult {
@@ -122,7 +124,8 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
   const baseInput = buildAgentReviewInput(
     options.annotatedDiff,
     options.changedFiles,
-    options.attachmentSection
+    options.attachmentSection,
+    options.earlierRoundsSection
   );
   const immutableMessages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
@@ -495,7 +498,8 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
 export function buildAgentReviewInput(
   annotatedDiff: string,
   changedFiles: string[],
-  attachmentSection = ""
+  attachmentSection = "",
+  earlierRoundsSection = ""
 ): string {
   const fileList = changedFiles.length > 0 ? changedFiles.map((file) => `- ${file}`).join("\n") : "- (none listed)";
   const input = [
@@ -513,6 +517,7 @@ export function buildAgentReviewInput(
     "```",
   ];
   if (attachmentSection) input.push("", attachmentSection);
+  if (earlierRoundsSection) input.push("", earlierRoundsSection);
   return input.join("\n");
 }
 

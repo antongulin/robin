@@ -7,6 +7,7 @@ import * as github from "@actions/github";
 import { CompletionLengthError, LLMClient, LLMRequestError, ToolsUnsupportedError } from "./llm-client";
 import { runAgentReview } from "./agent-review";
 import { buildAgentAttachmentSection } from "./agent-attachments";
+import { buildEarlierRoundsBlock, collectEarlierRounds } from "./rereview-memory";
 import { isCancellationError, isContextLengthError } from "./llm-retry";
 import { createRepoSnapshot } from "./repo-snapshot";
 import { ReviewToolbox } from "./review-tools";
@@ -986,8 +987,9 @@ async function runAgentOrSingleShotReview(
   });
 
   let snapshot: Awaited<ReturnType<typeof createRepoSnapshot>>;
+  let headSha = params.headSha;
   try {
-    const headSha = params.headSha || (await fetchHeadSha(params.octokit, params.owner, params.repo, params.prNumber));
+    headSha = params.headSha || (await fetchHeadSha(params.octokit, params.owner, params.repo, params.prNumber));
     if (!params.headSha) params.usage?.configure({ head_sha: headSha, head_provenance: "observed" });
     reporter.setMode("code review (agent)");
     reporter.setStep("Downloading the repository snapshot for context…");
@@ -1017,6 +1019,26 @@ async function runAgentOrSingleShotReview(
         core.warning(`Experiment attach-files failed (${error}); continuing without attachments.`);
       }
     }
+    let earlierRoundsSection = "";
+    if (params.experiments.has("rereview-memory")) {
+      const earlier = headSha
+        ? await collectEarlierRounds(
+            params.octokit as any,
+            params.owner,
+            params.repo,
+            params.prNumber,
+            headSha
+          )
+        : undefined;
+      if (earlier) {
+        earlierRoundsSection = buildEarlierRoundsBlock(earlier);
+        core.info(
+          `Experiment rereview-memory: ${earlier.findings.length} earlier findings from ${earlier.rounds} rounds.`
+        );
+      } else {
+        core.info("Experiment rereview-memory: no earlier Robin review.");
+      }
+    }
     core.info(`Running agent review (max ${maxTurns} turns)...`);
     const result = await runAgentReview({
       llm: params.llm,
@@ -1025,6 +1047,7 @@ async function runAgentOrSingleShotReview(
       planBatch: params.experiments.has("plan-batch"),
       calibrate: params.experiments.has("calibrate"),
       attachmentSection,
+      earlierRoundsSection,
       annotatedDiff: annotateDiffWithLineNumbers(params.agentDiff),
       changedFiles: params.changedFiles,
       instructions: params.reviewInstructions,
