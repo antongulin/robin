@@ -25,3 +25,28 @@ test("F6 deadline reached after the final answer prevents repair", async () => {
   expect(result.content).toBe("oops");
   expect(chatWithTools).toHaveBeenCalledTimes(1);
 });
+
+test("F8 repair keeps the tool investigation and sends no private reasoning on the repair message", async () => {
+  const calls: Array<{ messages: ChatMessage[]; choice?: string }> = [];
+  const responses = [
+    { content: "", toolCalls: [{ id: "t1", name: "read_file", arguments: '{"path":"src/a.ts"}' }], reasoningContent: "private" },
+    { content: "Looks fine overall.", reasoningContent: "private-final" },
+    { content: json },
+  ];
+  const llm = { chatWithTools: jest.fn(async (messages: ChatMessage[], _tools: unknown, options?: { toolChoice?: string }) => { calls.push({ messages: messages.map(m => ({ ...m })), choice: options?.toolChoice }); return responses.shift()!; }), chatCompletion: jest.fn() };
+  const toolbox = { execute: jest.fn(async () => "File: src/a.ts (lines 1-1 of 1)\n    1  x"), describe: jest.fn(() => "Reading `src/a.ts`") };
+  const result = await runAgentReview({ llm, toolbox, annotatedDiff: "diff", changedFiles: [], instructions: "", repairUnparseableFinal: true, budgets: { maxTurns: 5 } });
+  expect(result.content).toBe(json);
+  expect(result.turns).toBe(3);
+  const repair = calls[2];
+  expect(repair.choice).toBe("none");
+  expect(repair.messages.some(m => m.role === "tool" && String(m.content).includes("src/a.ts"))).toBe(true);
+  const repairAssistant = repair.messages.filter(m => m.role === "assistant").pop() as ChatMessage & { reasoning_content?: string };
+  expect(repairAssistant.content).toBe("Looks fine overall.");
+  expect(repairAssistant.reasoning_content).toBeUndefined();
+});
+
+test("F9 an empty forced-final answer still fails the agent review when repair stays empty", async () => {
+  const s = setup(["", ""], true, 0);
+  await expect(s.run()).rejects.toThrow("Agent review returned no final answer after the tool budget was used.");
+});

@@ -74,7 +74,7 @@ async function run(): Promise<void> {
     const experiments = parseExperimentSwitches(rawExperiment);
     if (rawExperiment?.trim()) {
       core.info(`Robin experiment switches: ${[...experiments.enabled].sort().join(", ") || "none"}`);
-      if (experiments.unknown.length) core.warning(experiments.unknown.join(", "));
+      if (experiments.unknown.length) core.warning(`Unknown Robin experiment switches ignored: ${experiments.unknown.join(", ")}`);
     }
 
     core.info(`Event: ${eventName}`);

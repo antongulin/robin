@@ -470,7 +470,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     "none"
   );
   const repaired = await repairFinal(final.content);
-  if (!repaired.content.trim() && !options.repairUnparseableFinal) {
+  if (!repaired.content.trim()) {
     throw new Error("Agent review returned no final answer after the tool budget was used.");
   }
   return { content: repaired.content, turns: turns + 1 + (repaired.repaired ? 1 : 0), toolCalls: toolCallCount, compactions };

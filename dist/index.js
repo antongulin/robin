@@ -472,7 +472,7 @@ async function runAgentReview(options) {
     });
     const final = await callModel(`Investigation ${stopReason.replace(/^reached/, "hit")} — writing the final review`, "none");
     const repaired = await repairFinal(final.content);
-    if (!repaired.content.trim() && !options.repairUnparseableFinal) {
+    if (!repaired.content.trim()) {
         throw new Error("Agent review returned no final answer after the tool budget was used.");
     }
     return { content: repaired.content, turns: turns + 1 + (repaired.repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
@@ -2909,7 +2909,7 @@ async function run() {
         if (rawExperiment?.trim()) {
             core.info(`Robin experiment switches: ${[...experiments.enabled].sort().join(", ") || "none"}`);
             if (experiments.unknown.length)
-                core.warning(experiments.unknown.join(", "));
+                core.warning(`Unknown Robin experiment switches ignored: ${experiments.unknown.join(", ")}`);
         }
         core.info(`Event: ${eventName}`);
         const owner = github.context.repo.owner;
