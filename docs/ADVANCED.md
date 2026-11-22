@@ -638,7 +638,8 @@ the ordinary schedule; its per-minute free limit keeps the rate-limit schedule. 
 retriable failures keep the existing attempt count and linear waits (three attempts for a
 fixed model, five for OpenRouter routers). In agent mode every wait is cancellable through
 the agent deadline; single-shot and `/summary` requests have no request deadline, so only
-the workflow job timeout bounds their waits. SDK-internal retries stay disabled so the two retry loops are never multiplied.
+the workflow job timeout bounds their waits. SDK-internal retries stay disabled so the two retry
+loops are never multiplied.
 
 To compare providers, match repository, review mode, diff size, Robin revision and
 retry behavior, and check that requests started after the provider change. Masked
@@ -1087,7 +1088,7 @@ No daily quota from this action. Real limits:
 | `Empty response from LLM` | Provider returned no usable text or tool calls without an explicit length stop | Action retries with bounded backoff and retains the finish reason (`unknown` if absent) |
 | `Incomplete LLM output (finish_reason=length...)` | Provider explicitly reported truncated generation; the reason alone does not identify the responsible limit | Robin discards partial text/tools and stops without unchanged retries or a diff-only fallback. Check output/reasoning generation limits and reduce scope. If input is too large, use smaller logically complete PRs (keep implementation/tests together) or larger effective context capacity; retry `/robin` after adjusting the cause |
 | Provider context/input-limit error | Review input exceeds the model/provider’s effective capacity | Use smaller logically complete PRs (keep related implementation/tests together) or a model/provider with larger effective context capacity; retry `/robin` after adjusting input or capacity |
-| `OpenRouter stall: no first response` | Auto-router hung, or failed before its first chunk, before picking a provider | Action retries every 45s (up to 5×) and the PR status comment updates each attempt. When the underlying failure was a provider 429, the stall text is only the wrapper: the native error is retained and the rate-limit row below applies |
+| `OpenRouter stall: no first response` | Auto-router hung, or failed before its first chunk, before picking a provider | Action retries every 45s (up to 5×) and the PR status comment updates each attempt. When the underlying failure was a provider 429, the stall text is only the wrapper: the native error is retained and the rate-limit row below applies, except that a permanent quota 429 (such as `insufficient_quota` or OpenRouter's free daily quota, `free-models-per-day`) keeps the ordinary 5 attempts |
 | Job cancelled / 45 min with no review | Hung LLM or concurrency cancel while waiting | Status comment should say interrupted — comment `/robin` again; pin `@v2.0.4`+ for stall detect |
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |
 | `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
