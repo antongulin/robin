@@ -480,7 +480,8 @@ export class LLMClient {
         attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
 
         if (!isRetriableLlmError(error, this.retryContext()) || attempt >= attemptLimit) {
-          core.error(`LLM API error: ${providerFailureSummary(error)}`);
+          const attempts = `${attempt} attempt${attempt === 1 ? "" : "s"}`;
+          core.error(`LLM API error after ${attempts}: ${providerFailureSummary(error)}`);
           throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
         }
       }

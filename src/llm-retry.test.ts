@@ -1,3 +1,4 @@
+import { LLMRequestError } from "./llm-client";
 import {
   computeRateLimitRetryDelayMs,
   computeRetryDelayMs,
@@ -862,6 +863,35 @@ describe("isRateLimitError", () => {
     ).toBe(false);
     expect(isRateLimitError(new Error("wrapper", { cause: quota }))).toBe(false);
   });
+});
+
+describe("OpenRouter daily quota classification", () => {
+  /** The SDK's RateLimitError shape for an OpenRouter free-model 429 (numeric `code`). */
+  const native = (identifier: string) => {
+    const message = `Rate limit exceeded: ${identifier}. Add 10 credits`;
+    return Object.assign(new Error(`429 ${message}`), {
+      status: 429,
+      code: 429,
+      error: { message, code: 429, metadata: { headers: { "X-RateLimit-Limit": "50" } } },
+    });
+  };
+
+  it("treats the daily quota as permanent, directly, in the nested message and when wrapped", () => {
+    const quota = native("FREE-models-per-day");
+    expect(isRateLimitError(quota)).toBe(false);
+    expect(
+      isRateLimitError(Object.assign(native("free-models-per-day"), { message: "429 status code" }))
+    ).toBe(false);
+    expect(isRateLimitError(new LLMRequestError("failure", { cause: quota }))).toBe(false);
+    expect(isRateLimitError(openRouterStallError(45000, quota))).toBe(false);
+  });
+
+  it.each(["free-models-per-min", "free-models-per-day-x", "xfree-models-per-day"])(
+    "keeps the rate-limit schedule for %s",
+    (identifier) => {
+      expect(isRateLimitError(native(identifier))).toBe(true);
+    }
+  );
 });
 
 describe("computeRateLimitRetryDelayMs", () => {

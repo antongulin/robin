@@ -1686,7 +1686,8 @@ class LLMClient {
                 core.warning(`LLM attempt ${attempt}/${attemptLimit} failed: ${providerFailureSummary(error)}`);
                 attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
                 if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt >= attemptLimit) {
-                    core.error(`LLM API error: ${providerFailureSummary(error)}`);
+                    const attempts = `${attempt} attempt${attempt === 1 ? "" : "s"}`;
+                    core.error(`LLM API error after ${attempts}: ${providerFailureSummary(error)}`);
                     throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
                 }
             }
@@ -2537,13 +2538,22 @@ const PERMANENT_RATE_LIMIT_CONDITIONS = new Set([
     "billing_not_active",
 ]);
 /**
+ * OpenRouter's free daily quota, matched as a whole token. Its 429 body carries a numeric `code`,
+ * so only the message identifies it; the per-minute free limit (`free-models-per-min`) stays a
+ * capacity burst.
+ */
+const OPENROUTER_FREE_DAILY_QUOTA = /(?:^|[^a-z0-9_-])free-models-per-day(?![a-z0-9_-])/i;
+/**
  * True when the 429 body names a permanent quota/billing condition. Some SDKs expose the parsed
- * body's `code`/`type` on the error itself and some nest them under `error`, so both are read.
+ * body's `code`/`type`/`message` on the error itself and some nest them under `error`, so both
+ * are read. The message is only matched here, never logged or returned.
  */
 function hasPermanentRateLimitCondition(error) {
     const nested = error.error;
     const nestedBody = nested && typeof nested === "object" ? nested : undefined;
-    return [error.code, error.type, nestedBody?.code, nestedBody?.type].some((value) => typeof value === "string" && PERMANENT_RATE_LIMIT_CONDITIONS.has(value.trim().toLowerCase()));
+    const namesPermanentCode = [error.code, error.type, nestedBody?.code, nestedBody?.type].some((value) => typeof value === "string" && PERMANENT_RATE_LIMIT_CONDITIONS.has(value.trim().toLowerCase()));
+    const namesDailyQuota = [error.message, nestedBody?.message].some((value) => typeof value === "string" && OPENROUTER_FREE_DAILY_QUOTA.test(value));
+    return namesPermanentCode || namesDailyQuota;
 }
 /** Reads a `Retry-After` header (SDK `Headers` or a plain object) from the error or its causes. */
 function retryAfterHeaderValue(error) {
