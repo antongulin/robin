@@ -156,7 +156,10 @@ jobs:
     steps:
       - name: Robin
         id: robin
-        uses: antongulin/robin@main
+        uses: antongulin/robin@experiment/review-speed
+        env:
+          # Set the live variant here on the experiment branch only.
+          ROBIN_EXPERIMENT: ""
         with:
           github-token: ${{ secrets.ROBIN_TOKEN || github.token }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}

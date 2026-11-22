@@ -84,7 +84,7 @@ export class ReviewToolbox {
   private readonly root: string;
   private readonly maxOutputChars: number;
 
-  constructor(root: string, maxOutputChars = DEFAULT_TOOL_OUTPUT_CHARS) {
+  constructor(root: string, maxOutputChars = DEFAULT_TOOL_OUTPUT_CHARS, private readonly options: { refuseSkippedReads?: boolean } = {}) {
     // Resolved so realpath checks compare like with like when the temp dir itself is a symlink.
     this.root = realpathSync(path.resolve(root));
     this.maxOutputChars = maxOutputChars;
@@ -146,6 +146,10 @@ export class ReviewToolbox {
   private async readFile(args: ToolArgs): Promise<string> {
     const relInput = requireString(args.path, "path");
     const { absolute, relative } = await this.resolve(relInput);
+    const cleaned = relInput.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
+    if (this.options.refuseSkippedReads && (shouldSkipPath(cleaned, DEFAULT_SKIP_PATH_PATTERNS) || shouldSkipPath(relative, DEFAULT_SKIP_PATH_PATTERNS))) {
+      return `${cleaned} is a generated, bundled, vendored or lockfile path; Robin excludes it from review, so it is not read. Read the source files instead.`;
+    }
     const stat = await fs.stat(absolute);
     if (stat.isDirectory()) {
       throw new Error(`${relative} is a directory; use list_files instead.`);

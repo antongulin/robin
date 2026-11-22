@@ -43,6 +43,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DEFAULT_AGENT_CONTEXT_BYTES = exports.DEFAULT_AGENT_DEADLINE_MS = void 0;
 exports.runAgentReview = runAgentReview;
 exports.buildAgentReviewInput = buildAgentReviewInput;
+const review_parser_1 = __nccwpck_require__(2141);
+const review_retry_1 = __nccwpck_require__(450);
 const request_budget_1 = __nccwpck_require__(5188);
 const core = __importStar(__nccwpck_require__(7484));
 const llm_retry_1 = __nccwpck_require__(4069);
@@ -362,6 +364,32 @@ async function runAgentReview(options) {
             }
         }
     };
+    const repairFinal = async (content) => {
+        if (!options.repairUnparseableFinal)
+            return { content, repaired: false };
+        const parsed = review_parser_1.ReviewParser.parseDetailed(content);
+        if (!(0, review_retry_1.shouldRetryStructuredReview)(parsed.findings, parsed.usedJson) || now() >= deadline)
+            return { content, repaired: false };
+        if (content.trim())
+            messages.push({ role: "assistant", content });
+        messages.push({ role: "user", content: "Using the investigation so far, return only the single JSON object described in the system prompt, with no markdown and no prose." });
+        try {
+            const result = await callModel("Repairing the final review", "none");
+            const repaired = review_parser_1.ReviewParser.parseDetailed(result.content);
+            if (!(0, review_retry_1.shouldRetryStructuredReview)(repaired.findings, repaired.usedJson))
+                return { content: result.content, repaired: true };
+        }
+        catch (error) {
+            if (error instanceof llm_retry_1.AgentDeadlineError)
+                return { content, repaired: false };
+            if ((0, llm_retry_1.isCancellationError)(error))
+                throw error;
+            if (now() >= deadline)
+                return { content, repaired: false };
+            core.warning(`Final review repair failed (${errorCategory(error)}).`);
+        }
+        return { content, repaired: false };
+    };
     let stopReason = `reached the ${budgets.maxTurns}-turn limit`;
     while (turns < budgets.maxTurns) {
         if (now() >= investigationCutoff) {
@@ -384,7 +412,8 @@ async function runAgentReview(options) {
         const calls = result.toolCalls ?? [];
         if (calls.length === 0) {
             core.info(`Agent finished after ${turns} turn(s), ${toolCallCount} tool call(s), ${compactions} compaction(s).`);
-            return { content: result.content, turns, toolCalls: toolCallCount, compactions };
+            const repaired = await repairFinal(result.content);
+            return { content: repaired.content, turns: turns + (repaired.repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
         }
         messages.push(assistantToolMessage(result.content, calls, result.reasoningContent));
         let executed = 0;
@@ -442,10 +471,11 @@ async function runAgentReview(options) {
             "Return the final review now as the single JSON object described in the system prompt.",
     });
     const final = await callModel(`Investigation ${stopReason.replace(/^reached/, "hit")} — writing the final review`, "none");
-    if (!final.content.trim()) {
+    const repaired = await repairFinal(final.content);
+    if (!repaired.content.trim() && !options.repairUnparseableFinal) {
         throw new Error("Agent review returned no final answer after the tool budget was used.");
     }
-    return { content: final.content, turns: turns + 1, toolCalls: toolCallCount, compactions };
+    return { content: repaired.content, turns: turns + 1 + (repaired.repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
 }
 function buildAgentReviewInput(annotatedDiff, changedFiles) {
     const fileList = changedFiles.length > 0 ? changedFiles.map((file) => `- ${file}`).join("\n") : "- (none listed)";
@@ -819,6 +849,32 @@ function filterDiff(diff, extraSkipPatterns = []) {
     return { filtered: kept.join(""), removedFiles };
 }
 //# sourceMappingURL=diff-filter.js.map
+
+/***/ }),
+
+/***/ 7422:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.EXPERIMENT_IDS = void 0;
+exports.parseExperimentSwitches = parseExperimentSwitches;
+exports.experimentEnabled = experimentEnabled;
+exports.EXPERIMENT_IDS = ["read-skip", "final-repair", "rereview-memory", "plan-batch", "attach-files", "calibrate", "turn-budget"];
+function parseExperimentSwitches(raw) {
+    const enabled = new Set();
+    const unknown = [];
+    for (const id of (raw ?? "").toLowerCase().split(/[\s,]+/).filter(Boolean)) {
+        if (exports.EXPERIMENT_IDS.includes(id))
+            enabled.add(id);
+        else if (!unknown.includes(id))
+            unknown.push(id);
+    }
+    return { enabled, unknown };
+}
+function experimentEnabled(enabled, id) { return enabled.has(id); }
+//# sourceMappingURL=experiment.js.map
 
 /***/ }),
 
@@ -2804,6 +2860,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.actionCompletion = void 0;
+const experiment_1 = __nccwpck_require__(7422);
 const request_budget_1 = __nccwpck_require__(5188);
 const usage_report_1 = __nccwpck_require__(9837);
 const llm_provider_1 = __nccwpck_require__(710);
@@ -2847,6 +2904,13 @@ async function run() {
         octokit = github.getOctokit(token);
         const minCommandPermission = core.getInput("min-command-permission") || "write";
         const reviewOnSynchronize = core.getBooleanInput("review-on-synchronize");
+        const rawExperiment = process.env.ROBIN_EXPERIMENT;
+        const experiments = (0, experiment_1.parseExperimentSwitches)(rawExperiment);
+        if (rawExperiment?.trim()) {
+            core.info(`Robin experiment switches: ${[...experiments.enabled].sort().join(", ") || "none"}`);
+            if (experiments.unknown.length)
+                core.warning(experiments.unknown.join(", "));
+        }
         core.info(`Event: ${eventName}`);
         const owner = github.context.repo.owner;
         const repo = github.context.repo.repo;
@@ -3072,6 +3136,7 @@ async function run() {
                 useJsonMode,
                 agentMode,
                 agentMaxTurns,
+                experiments: experiments.enabled,
                 reporter,
                 usage,
             }));
@@ -3540,7 +3605,8 @@ async function runAgentOrSingleShotReview(params) {
         core.info(`Running agent review (max ${params.agentMaxTurns} turns)...`);
         const result = await (0, agent_review_1.runAgentReview)({
             llm: params.llm,
-            toolbox: new review_tools_1.ReviewToolbox(snapshot.root),
+            toolbox: new review_tools_1.ReviewToolbox(snapshot.root, undefined, { refuseSkippedReads: params.experiments.has("read-skip") }),
+            repairUnparseableFinal: params.experiments.has("final-repair"),
             annotatedDiff: (0, diff_annotate_1.annotateDiffWithLineNumbers)(params.agentDiff),
             changedFiles: params.changedFiles,
             instructions: params.reviewInstructions,
@@ -5120,9 +5186,11 @@ exports.REVIEW_TOOLS = [
 ];
 /** Read-only tools over an extracted repository snapshot. Every path is confined to `root`. */
 class ReviewToolbox {
+    options;
     root;
     maxOutputChars;
-    constructor(root, maxOutputChars = exports.DEFAULT_TOOL_OUTPUT_CHARS) {
+    constructor(root, maxOutputChars = exports.DEFAULT_TOOL_OUTPUT_CHARS, options = {}) {
+        this.options = options;
         // Resolved so realpath checks compare like with like when the temp dir itself is a symlink.
         this.root = (0, fs_1.realpathSync)(path.resolve(root));
         this.maxOutputChars = maxOutputChars;
@@ -5182,6 +5250,10 @@ class ReviewToolbox {
     async readFile(args) {
         const relInput = requireString(args.path, "path");
         const { absolute, relative } = await this.resolve(relInput);
+        const cleaned = relInput.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
+        if (this.options.refuseSkippedReads && ((0, diff_filter_1.shouldSkipPath)(cleaned, diff_filter_1.DEFAULT_SKIP_PATH_PATTERNS) || (0, diff_filter_1.shouldSkipPath)(relative, diff_filter_1.DEFAULT_SKIP_PATH_PATTERNS))) {
+            return `${cleaned} is a generated, bundled, vendored or lockfile path; Robin excludes it from review, so it is not read. Read the source files instead.`;
+        }
         const stat = await fs_1.promises.stat(absolute);
         if (stat.isDirectory()) {
             throw new Error(`${relative} is a directory; use list_files instead.`);

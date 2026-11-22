@@ -1,3 +1,5 @@
+import { ReviewParser } from "./review-parser";
+import { shouldRetryStructuredReview } from "./review-retry";
 import { EstimatedRequestBudgetError, serializedJsonBytes } from "./request-budget";
 import * as core from "@actions/core";
 import type { ChatCompletionResult, ChatMessage, LLMClient, ToolCall } from "./llm-client";
@@ -44,6 +46,7 @@ export interface AgentReviewOptions {
   budgets?: Partial<AgentBudgets>;
   onProgress?: (progress: AgentProgress) => void | Promise<void>;
   now?: () => number;
+  repairUnparseableFinal?: boolean;
 }
 
 export interface AgentReviewResult {
@@ -359,6 +362,25 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     }
   };
 
+  const repairFinal = async (content: string): Promise<{ content: string; repaired: boolean }> => {
+    if (!options.repairUnparseableFinal) return { content, repaired: false };
+    const parsed = ReviewParser.parseDetailed(content);
+    if (!shouldRetryStructuredReview(parsed.findings, parsed.usedJson) || now() >= deadline) return { content, repaired: false };
+    if (content.trim()) messages.push({ role: "assistant", content });
+    messages.push({ role: "user", content: "Using the investigation so far, return only the single JSON object described in the system prompt, with no markdown and no prose." });
+    try {
+      const result = await callModel("Repairing the final review", "none");
+      const repaired = ReviewParser.parseDetailed(result.content);
+      if (!shouldRetryStructuredReview(repaired.findings, repaired.usedJson)) return { content: result.content, repaired: true };
+    } catch (error) {
+      if (error instanceof AgentDeadlineError) return { content, repaired: false };
+      if (isCancellationError(error)) throw error;
+      if (now() >= deadline) return { content, repaired: false };
+      core.warning(`Final review repair failed (${errorCategory(error)}).`);
+    }
+    return { content, repaired: false };
+  };
+
   let stopReason = `reached the ${budgets.maxTurns}-turn limit`;
 
   while (turns < budgets.maxTurns) {
@@ -387,7 +409,8 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
       core.info(
         `Agent finished after ${turns} turn(s), ${toolCallCount} tool call(s), ${compactions} compaction(s).`
       );
-      return { content: result.content, turns, toolCalls: toolCallCount, compactions };
+      const repaired = await repairFinal(result.content);
+      return { content: repaired.content, turns: turns + (repaired.repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
     }
 
     messages.push(assistantToolMessage(result.content, calls, result.reasoningContent));
@@ -446,10 +469,11 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     `Investigation ${stopReason.replace(/^reached/, "hit")} — writing the final review`,
     "none"
   );
-  if (!final.content.trim()) {
+  const repaired = await repairFinal(final.content);
+  if (!repaired.content.trim() && !options.repairUnparseableFinal) {
     throw new Error("Agent review returned no final answer after the tool budget was used.");
   }
-  return { content: final.content, turns: turns + 1, toolCalls: toolCallCount, compactions };
+  return { content: repaired.content, turns: turns + 1 + (repaired.repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
 }
 
 export function buildAgentReviewInput(annotatedDiff: string, changedFiles: string[]): string {

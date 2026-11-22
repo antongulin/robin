@@ -1,3 +1,4 @@
+import { parseExperimentSwitches, ExperimentId } from "./experiment";
 import { positiveSafeInteger } from "./request-budget";
 import { UsageLedger, UsageContext, publishUsageReport } from "./usage-report";
 import { detectLlmProvider } from "./llm-provider";
@@ -68,6 +69,13 @@ async function run(): Promise<void> {
     octokit = github.getOctokit(token);
     const minCommandPermission = core.getInput("min-command-permission") || "write";
     const reviewOnSynchronize = core.getBooleanInput("review-on-synchronize");
+
+    const rawExperiment = process.env.ROBIN_EXPERIMENT;
+    const experiments = parseExperimentSwitches(rawExperiment);
+    if (rawExperiment?.trim()) {
+      core.info(`Robin experiment switches: ${[...experiments.enabled].sort().join(", ") || "none"}`);
+      if (experiments.unknown.length) core.warning(experiments.unknown.join(", "));
+    }
 
     core.info(`Event: ${eventName}`);
 
@@ -389,6 +397,7 @@ async function run(): Promise<void> {
         useJsonMode,
         agentMode,
         agentMaxTurns,
+        experiments: experiments.enabled,
         reporter,
         usage,
       }));
@@ -922,6 +931,7 @@ interface AgentOrSingleShotParams {
   useJsonMode: boolean;
   agentMode: AgentMode;
   agentMaxTurns: number;
+  experiments: Set<ExperimentId>;
   reporter: StatusReporter;
   usage?: UsageLedger;
 }
@@ -991,7 +1001,8 @@ async function runAgentOrSingleShotReview(
     core.info(`Running agent review (max ${params.agentMaxTurns} turns)...`);
     const result = await runAgentReview({
       llm: params.llm,
-      toolbox: new ReviewToolbox(snapshot.root),
+      toolbox: new ReviewToolbox(snapshot.root, undefined, { refuseSkippedReads: params.experiments.has("read-skip") }),
+      repairUnparseableFinal: params.experiments.has("final-repair"),
       annotatedDiff: annotateDiffWithLineNumbers(params.agentDiff),
       changedFiles: params.changedFiles,
       instructions: params.reviewInstructions,
