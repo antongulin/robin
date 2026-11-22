@@ -364,12 +364,13 @@ async function runAgentReview(options) {
             }
         }
     };
+    /** `attempted` is true once the extra model call was dispatched, whether or not its answer is used. */
     const repairFinal = async (content) => {
         if (!options.repairUnparseableFinal)
-            return { content, repaired: false };
+            return { content, attempted: false };
         const parsed = review_parser_1.ReviewParser.parseDetailed(content);
         if (!(0, review_retry_1.shouldRetryStructuredReview)(parsed.findings, parsed.usedJson) || now() >= deadline)
-            return { content, repaired: false };
+            return { content, attempted: false };
         if (content.trim())
             messages.push({ role: "assistant", content });
         messages.push({ role: "user", content: "Using the investigation so far, return only the single JSON object described in the system prompt, with no markdown and no prose." });
@@ -377,18 +378,18 @@ async function runAgentReview(options) {
             const result = await callModel("Repairing the final review", "none");
             const repaired = review_parser_1.ReviewParser.parseDetailed(result.content);
             if (!(0, review_retry_1.shouldRetryStructuredReview)(repaired.findings, repaired.usedJson))
-                return { content: result.content, repaired: true };
+                return { content: result.content, attempted: true };
         }
         catch (error) {
             if (error instanceof llm_retry_1.AgentDeadlineError)
-                return { content, repaired: false };
+                return { content, attempted: true };
             if ((0, llm_retry_1.isCancellationError)(error))
                 throw error;
             if (now() >= deadline)
-                return { content, repaired: false };
+                return { content, attempted: true };
             core.warning(`Final review repair failed (${errorCategory(error)}).`);
         }
-        return { content, repaired: false };
+        return { content, attempted: true };
     };
     let stopReason = `reached the ${budgets.maxTurns}-turn limit`;
     while (turns < budgets.maxTurns) {
@@ -413,7 +414,7 @@ async function runAgentReview(options) {
         if (calls.length === 0) {
             core.info(`Agent finished after ${turns} turn(s), ${toolCallCount} tool call(s), ${compactions} compaction(s).`);
             const repaired = await repairFinal(result.content);
-            return { content: repaired.content, turns: turns + (repaired.repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
+            return { content: repaired.content, turns: turns + (repaired.attempted ? 1 : 0), toolCalls: toolCallCount, compactions };
         }
         messages.push(assistantToolMessage(result.content, calls, result.reasoningContent));
         let executed = 0;
@@ -471,11 +472,13 @@ async function runAgentReview(options) {
             "Return the final review now as the single JSON object described in the system prompt.",
     });
     const final = await callModel(`Investigation ${stopReason.replace(/^reached/, "hit")} — writing the final review`, "none");
+    // Count the forced-final call before a repair so the repair gets the next agent turn number.
+    turns++;
     const repaired = await repairFinal(final.content);
     if (!repaired.content.trim()) {
         throw new Error("Agent review returned no final answer after the tool budget was used.");
     }
-    return { content: repaired.content, turns: turns + 1 + (repaired.repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
+    return { content: repaired.content, turns: turns + (repaired.attempted ? 1 : 0), toolCalls: toolCallCount, compactions };
 }
 function buildAgentReviewInput(annotatedDiff, changedFiles) {
     const fileList = changedFiles.length > 0 ? changedFiles.map((file) => `- ${file}`).join("\n") : "- (none listed)";
@@ -5249,11 +5252,14 @@ class ReviewToolbox {
     }
     async readFile(args) {
         const relInput = requireString(args.path, "path");
-        const { absolute, relative } = await this.resolve(relInput);
         const cleaned = relInput.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
-        if (this.options.refuseSkippedReads && ((0, diff_filter_1.shouldSkipPath)(cleaned, diff_filter_1.DEFAULT_SKIP_PATH_PATTERNS) || (0, diff_filter_1.shouldSkipPath)(relative, diff_filter_1.DEFAULT_SKIP_PATH_PATTERNS))) {
-            return `${cleaned} is a generated, bundled, vendored or lockfile path; Robin excludes it from review, so it is not read. Read the source files instead.`;
-        }
+        const skipNotice = `${cleaned} is a generated, bundled, vendored or lockfile path; Robin excludes it from review, so it is not read. Read the source files instead.`;
+        // Check the requested path first so a missing or dangling skipped path gets the same notice.
+        if (this.options.refuseSkippedReads && (0, diff_filter_1.shouldSkipPath)(cleaned, diff_filter_1.DEFAULT_SKIP_PATH_PATTERNS))
+            return skipNotice;
+        const { absolute, relative } = await this.resolve(relInput);
+        if (this.options.refuseSkippedReads && (0, diff_filter_1.shouldSkipPath)(relative, diff_filter_1.DEFAULT_SKIP_PATH_PATTERNS))
+            return skipNotice;
         const stat = await fs_1.promises.stat(absolute);
         if (stat.isDirectory()) {
             throw new Error(`${relative} is a directory; use list_files instead.`);

@@ -145,11 +145,12 @@ export class ReviewToolbox {
 
   private async readFile(args: ToolArgs): Promise<string> {
     const relInput = requireString(args.path, "path");
-    const { absolute, relative } = await this.resolve(relInput);
     const cleaned = relInput.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
-    if (this.options.refuseSkippedReads && (shouldSkipPath(cleaned, DEFAULT_SKIP_PATH_PATTERNS) || shouldSkipPath(relative, DEFAULT_SKIP_PATH_PATTERNS))) {
-      return `${cleaned} is a generated, bundled, vendored or lockfile path; Robin excludes it from review, so it is not read. Read the source files instead.`;
-    }
+    const skipNotice = `${cleaned} is a generated, bundled, vendored or lockfile path; Robin excludes it from review, so it is not read. Read the source files instead.`;
+    // Check the requested path first so a missing or dangling skipped path gets the same notice.
+    if (this.options.refuseSkippedReads && shouldSkipPath(cleaned, DEFAULT_SKIP_PATH_PATTERNS)) return skipNotice;
+    const { absolute, relative } = await this.resolve(relInput);
+    if (this.options.refuseSkippedReads && shouldSkipPath(relative, DEFAULT_SKIP_PATH_PATTERNS)) return skipNotice;
     const stat = await fs.stat(absolute);
     if (stat.isDirectory()) {
       throw new Error(`${relative} is a directory; use list_files instead.`);

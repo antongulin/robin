@@ -50,3 +50,20 @@ test("F9 an empty forced-final answer still fails the agent review when repair s
   const s = setup(["", ""], true, 0);
   await expect(s.run()).rejects.toThrow("Agent review returned no final answer after the tool budget was used.");
 });
+
+test("F10 an attempted repair counts as a turn even when its answer is not used", async () => {
+  const s = setup(["oops", "again"]);
+  const result = await s.run();
+  expect(result.content).toBe("oops");
+  expect(result.turns).toBe(2);
+});
+
+test("F11 the forced-final repair gets the next agent turn number in usage", async () => {
+  const turnsSeen: Array<number | undefined> = [];
+  const responses = ["oops", "still prose"];
+  const llm = { chatWithTools: jest.fn(async (_m: ChatMessage[], _t: unknown, options?: { usageContext?: { agentTurn?: number } }) => { turnsSeen.push(options?.usageContext?.agentTurn); return { content: responses.shift()! }; }), chatCompletion: jest.fn() };
+  const result = await runAgentReview({ llm, toolbox: { execute: jest.fn(), describe: jest.fn() }, annotatedDiff: "diff", changedFiles: [], instructions: "", repairUnparseableFinal: true, budgets: { maxTurns: 0 } });
+  expect(turnsSeen).toEqual([1, 2]);
+  expect(result.turns).toBe(2);
+  expect(result.content).toBe("oops");
+});

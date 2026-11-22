@@ -20,3 +20,17 @@ test("R1-R4 skipped reads, symlinks, source and search compatibility", async () 
     for (const [name, args] of [["grep", '{"pattern":"secret-marker"}'], ["list_files", '{"recursive":true}']]) expect(await on.execute(name, args)).toEqual(await off.execute(name, args));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("R5 missing and dangling skipped paths get the skip notice; missing source paths keep today's error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "robin-skip-missing-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    symlinkSync("dist/gone.js", join(root, "dangling.min.js"));
+    const on = new ReviewToolbox(root, undefined, { refuseSkippedReads: true });
+    const off = new ReviewToolbox(root);
+    const read = (box: ReviewToolbox, file: string) => box.execute("read_file", JSON.stringify({ path: file }));
+    for (const file of ["dist/index.js", "./dist/index.js", "dist\\index.js", "dangling.min.js"]) expect(await read(on, file)).toContain("excludes it from review");
+    expect(await read(on, "src/missing.ts")).toEqual(await read(off, "src/missing.ts"));
+    expect(await read(off, "dist/index.js")).toContain("does not exist");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
