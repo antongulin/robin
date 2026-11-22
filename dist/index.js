@@ -1905,7 +1905,7 @@ class LLMClient {
             const stringContent = parts.join("");
             const arrayContent = contentParts.join("");
             return {
-                content: stringContent === "" && !toolCalls.length && arrayContent.trim() ? arrayContent : stringContent,
+                content: stringContent.trim() === "" && !toolCalls.length && arrayContent.trim() ? arrayContent : stringContent,
                 ...(reasoningParts.length > 0 ? { reasoningContent: reasoningParts.join("") } : {}),
                 model: resolvedModel,
                 finishReason,

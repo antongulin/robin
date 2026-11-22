@@ -257,6 +257,14 @@ describe("content parts", () => {
     };
     const a = offline(mistral, [stringFixture], "max", "openrouter/free");
     expect((await a.client.chatCompletion("s", "u")).content).toBe("old");
+    const blankWithParts = offline(mistral, [{
+      body: stream([{ content: "\n" }, { content: part }]), status: 200, contentType: "text/event-stream",
+    }], "max", "openrouter/free");
+    expect((await blankWithParts.client.chatCompletion("s", "u")).content).toBe("new");
+    const blankOnly = offline(mistral, [{
+      body: stream([{ content: "\n" }]), status: 200, contentType: "text/event-stream",
+    }], "max", "openrouter/free");
+    expect((await blankOnly.client.chatCompletion("s", "u")).content).toBe("\n");
     const toolFixture = {
       body: stream([{ content: part }, { tool_calls: [{ index: 0, ...call }] }]),
       status: 200, contentType: "text/event-stream",

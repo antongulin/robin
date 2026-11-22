@@ -880,8 +880,11 @@ If a provider supplies a string `reasoning_content`, Robin preserves it as priva
 and replays it unchanged on that assistant's tool turn in later requests. This includes
 streamed string deltas, retained compaction tails, and the final request with tool choice
 `none`. Robin keeps this metadata out of summaries, progress updates, logs, and visible
-reviews; only `content` supplies review text. Provider errors can echo the request, so
-Robin reports a failure category and HTTP status instead of the provider's raw error text.
+reviews; only `content` supplies review text. When any provider returns `content` as an
+array of parts, Robin uses the parts with type `text`, and only when the reply would
+otherwise be empty; thinking parts are never published or kept. Provider errors can echo
+the request, so Robin reports a failure category and HTTP status instead of the provider's
+raw error text.
 The native error remains available internally for retry, compatibility and context-limit
 decisions. Empty-response diagnostics show known completion-reason labels, or `unknown`
 if the provider sends an invalid value. Explicit low-level SDK debug logging can still
