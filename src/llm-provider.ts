@@ -71,10 +71,16 @@ export function isOpenCodeGoEndpoint(baseUrl: string): boolean {
   );
 }
 
-/** True only for the official Mistral API host. */
+/** True only for the official Mistral API endpoint (`https://api.mistral.ai/v1`) after normalizing pasted suffixes. */
 export function isMistralEndpoint(baseUrl: string): boolean {
   const url = parseUrl(normalizeLlmBaseUrl(baseUrl));
-  return Boolean(url && url.protocol === "https:" && url.hostname.toLowerCase() === "api.mistral.ai" && !url.port);
+  return Boolean(
+    url &&
+      url.protocol === "https:" &&
+      url.hostname.toLowerCase() === "api.mistral.ai" &&
+      !url.port &&
+      url.pathname === "/v1",
+  );
 }
 
 /** Adapt Mistral's validation errors to the SDK's error envelope. */

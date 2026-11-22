@@ -864,7 +864,9 @@ reasoning-effort: max
 The request shape depends on `LLM_BASE_URL`:
 
 - `api.openai.com`: OpenAI-native `reasoning_effort: "<value>"`.
-- `api.mistral.ai`: top-level `reasoning_effort: "<value>"`.
+- Official `https://api.mistral.ai/v1` endpoint (including normalized trailing slashes and
+  `/chat/completions` suffixes): top-level `reasoning_effort: "<value>"`. Other paths on
+  that host use the generic shape below.
 - Official `https://opencode.ai/zen/go/v1` endpoint (including normalized trailing slashes
   and `/chat/completions` suffixes): top-level `reasoning_effort: "<value>"`, with no nested
   `reasoning` object. Robin retains any configured effort across retries. If Go rejects it,
@@ -898,7 +900,8 @@ reasoning override for the rest of the run. When the retry succeeds, the review 
 normally. If you set the value yourself (input or `.github/robin.yml`), the final status
 comment also keeps a visible warning telling you to update `reasoning-effort`. With no value
 configured, no reasoning control is sent in the first place, so this fallback only ever runs
-for a value you configured. Mistral error formats are recognized for this fallback only on `api.mistral.ai`.
+for a value you configured. Mistral error formats are recognized for this fallback only on the official
+`https://api.mistral.ai/v1` endpoint.
 
 Auth, rate-limit, server, timeout, and unrelated validation errors do not trigger this
 fallback. The retry omits the optional reasoning override; it does not guess a different

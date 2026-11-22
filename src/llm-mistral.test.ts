@@ -74,7 +74,11 @@ afterEach(() => jest.useRealTimers());
 describe("host scope", () => {
   it.each([
     ["https://api.mistral.ai/v1", true],
+    ["https://api.mistral.ai/v1/", true],
     ["https://API.MISTRAL.AI:443/v1/chat/completions", true],
+    ["https://api.mistral.ai", false],
+    ["https://api.mistral.ai/chat/completions", false],
+    ["https://api.mistral.ai/v2", false],
     ["https://api.mistral.ai:8443/v1", false],
     ["http://api.mistral.ai/v1", false],
     ["https://x.api.mistral.ai", false],
@@ -92,6 +96,7 @@ describe("non-Mistral compatibility", () => {
     ["https://opencode.ai/zen/go/v1", { reasoning_effort: "high" }],
     ["https://api.anthropic.com/v1", {}],
     ["https://provider.invalid/v1", { reasoning: { effort: "high", exclude: true } }],
+    ["https://api.mistral.ai", { reasoning: { effort: "high", exclude: true } }],
   ])("T2 wire compatibility %s", async (base, controls) => {
     const { client, requests } = offline(base, [plain], "high");
     await client.chatCompletion("system", "user");

@@ -2122,10 +2122,14 @@ function isOpenCodeGoEndpoint(baseUrl) {
         !url.port &&
         url.pathname === "/zen/go/v1");
 }
-/** True only for the official Mistral API host. */
+/** True only for the official Mistral API endpoint (`https://api.mistral.ai/v1`) after normalizing pasted suffixes. */
 function isMistralEndpoint(baseUrl) {
     const url = parseUrl(normalizeLlmBaseUrl(baseUrl));
-    return Boolean(url && url.protocol === "https:" && url.hostname.toLowerCase() === "api.mistral.ai" && !url.port);
+    return Boolean(url &&
+        url.protocol === "https:" &&
+        url.hostname.toLowerCase() === "api.mistral.ai" &&
+        !url.port &&
+        url.pathname === "/v1");
 }
 /** Adapt Mistral's validation errors to the SDK's error envelope. */
 function normalizeMistralErrorBody(status, body) {
