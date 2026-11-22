@@ -66,8 +66,8 @@ function rateLimited(message = "429 inference_failed", headers?: Record<string, 
 }
 
 /** The SDK's RateLimitError shape for OpenRouter's free daily quota (numeric `code`). */
-function dailyQuota() {
-  const message = "Rate limit exceeded: free-models-per-day. Add 10 credits";
+function dailyQuota(identifier = "free-models-per-day") {
+  const message = `Rate limit exceeded: ${identifier}. Add 10 credits`;
   return Object.assign(rateLimited(`429 ${message}`), {
     code: 429,
     error: {
@@ -87,12 +87,18 @@ function dailyQuota() {
 const PROVIDER_QUOTA_TEXT = /free-models-per-day|Add 10 credits/;
 
 /** Every log line Robin wrote, for checks that provider text never reaches the log. */
+function checkedText(calls: unknown[][]): string {
+  const args = calls.flat();
+  for (const arg of args) expect(typeof arg).toBe("string");
+  return args.join(" ");
+}
+
 function loggedText(): string {
-  return String([
+  return checkedText([
     jest.mocked(core.info).mock.calls,
     jest.mocked(core.warning).mock.calls,
     jest.mocked(core.error).mock.calls,
-  ]);
+  ].flat());
 }
 
 function streamOf(chunks: unknown[]) {
@@ -416,7 +422,7 @@ describe("LLMClient rate-limit retries", () => {
       { waitMs: 2000, attempt: 2, limit: 3 },
       { waitMs: 4000, attempt: 3, limit: 3 },
     ]);
-    expect(String(progress.mock.calls)).not.toMatch(PROVIDER_QUOTA_TEXT);
+    expect(checkedText(progress.mock.calls)).not.toMatch(PROVIDER_QUOTA_TEXT);
     expect(loggedText()).not.toMatch(PROVIDER_QUOTA_TEXT);
   });
 
@@ -448,7 +454,7 @@ describe("LLMClient rate-limit retries", () => {
         { waitMs: 9000, attempt: 4, limit: 5 },
         { waitMs: 12000, attempt: 5, limit: 5 },
       ]);
-      expect(String(progress.mock.calls)).not.toMatch(PROVIDER_QUOTA_TEXT);
+      expect(checkedText(progress.mock.calls)).not.toMatch(PROVIDER_QUOTA_TEXT);
       expect(loggedText()).not.toMatch(PROVIDER_QUOTA_TEXT);
     }
   );
@@ -478,6 +484,24 @@ describe("LLMClient rate-limit retries", () => {
     expect(jest.mocked(core.error)).toHaveBeenCalledWith(
       "LLM API error after 4 attempts: Provider server error (HTTP 500)"
     );
+  });
+
+  it("R18 keeps the rate-limit schedule for the free per-minute quota", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create.mockRejectedValue(dailyQuota("free-models-per-min"));
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toThrow(
+        "Failed to get response from LLM: Provider rate limit exceeded (HTTP 429)"
+      ),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(6);
+    expect(retryWaits().map((retry) => retry.waitMs)).toEqual([5000, 10000, 20000, 40000, 60000]);
   });
 
   it("R17 reports a single attempt for a non-retriable failure", async () => {
