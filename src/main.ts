@@ -1020,7 +1020,10 @@ async function runAgentOrSingleShotReview(
       }
     }
     let earlierRoundsSection = "";
-    if (params.experiments.has("rereview-memory")) {
+    if (
+      params.experiments.has("rereview-memory") ||
+      params.experiments.has("rereview-memory-nofocus")
+    ) {
       const earlier = headSha
         ? await collectEarlierRounds(
             params.octokit as any,
@@ -1031,7 +1034,9 @@ async function runAgentOrSingleShotReview(
           )
         : undefined;
       if (earlier) {
-        earlierRoundsSection = buildEarlierRoundsBlock(earlier);
+        earlierRoundsSection = buildEarlierRoundsBlock(earlier, {
+          focusOnChanged: !params.experiments.has("rereview-memory-nofocus"),
+        });
         core.info(
           `Experiment rereview-memory: ${earlier.findings.length} earlier findings from ${earlier.rounds} rounds.`
         );

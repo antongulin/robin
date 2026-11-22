@@ -1,4 +1,4 @@
-export const EXPERIMENT_IDS = ["read-skip", "final-repair", "rereview-memory", "plan-batch", "attach-files", "calibrate", "turn-budget"] as const;
+export const EXPERIMENT_IDS = ["read-skip", "final-repair", "rereview-memory", "rereview-memory-nofocus", "plan-batch", "attach-files", "calibrate", "turn-budget"] as const;
 export type ExperimentId = typeof EXPERIMENT_IDS[number];
 export function parseExperimentSwitches(raw: string | undefined): { enabled: Set<ExperimentId>; unknown: string[] } {
   const enabled = new Set<ExperimentId>();
