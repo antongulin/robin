@@ -5,6 +5,8 @@ import { DEFAULT_SKIP_PATH_PATTERNS, shouldSkipPath } from "./diff-filter";
 /** Experiment `attach-files`: changed files are attached whole only below these limits. */
 export const MAX_ATTACHED_FILE_CHARS = 40_000;
 export const MAX_AGENT_ATTACHMENT_CHARS = 120_000;
+/** The not-attached notice is part of the section and never longer than this. */
+export const MAX_ATTACHMENT_NOTICE_CHARS = 10_000;
 const BINARY_SCAN_BYTES = 8_000;
 const NUMBER_WIDTH = 5;
 
@@ -58,7 +60,8 @@ export async function readAgentAttachments(
       if (!stat.isFile()) continue;
       // Every UTF-16 code unit needs at most 3 UTF-8 bytes, so a longer file cannot fit.
       if (stat.size > MAX_ATTACHED_FILE_CHARS * 3) {
-        omitted.push(cleaned);
+        // Name only text files: a binary file is never attachable, so it is not "too large".
+        if (!(await startsWithBinary(real))) omitted.push(cleaned);
         continue;
       }
       buffer = await fs.readFile(real);
@@ -83,6 +86,16 @@ export async function readAgentAttachments(
   }
 
   return { files, omitted };
+}
+
+async function startsWithBinary(file: string): Promise<boolean> {
+  const handle = await fs.open(file, "r");
+  try {
+    const { buffer, bytesRead } = await handle.read(Buffer.alloc(BINARY_SCAN_BYTES), 0, BINARY_SCAN_BYTES, 0);
+    return buffer.subarray(0, bytesRead).includes(0);
+  } finally {
+    await handle.close();
+  }
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -120,7 +133,19 @@ export function renderAgentAttachments(data: AgentAttachmentData): string {
   // The omission notice counts toward the cap: drop the last attached files until it fits.
   const notice = () => {
     const names = [...data.omitted, ...overLimit];
-    return names.length > 0 ? `Not attached (too large or over the limit): ${names.join(", ")}` : "";
+    if (names.length === 0) return "";
+    // The notice itself is bounded: list names while they fit, then count the rest.
+    const prefix = "Not attached (too large or over the limit): ";
+    const listed: string[] = [];
+    let used = prefix.length;
+    for (const name of names) {
+      const extra = (listed.length ? 2 : 0) + name.length;
+      if (used + extra > MAX_ATTACHMENT_NOTICE_CHARS) break;
+      listed.push(name);
+      used += extra;
+    }
+    const rest = names.length - listed.length;
+    return prefix + listed.join(", ") + (rest > 0 ? `${listed.length ? ", " : ""}and ${rest} more` : "");
   };
   while (blocks.length > 0 && notice() && total + 1 + notice().length > MAX_AGENT_ATTACHMENT_CHARS) {
     const dropped = blocks.pop()!;
