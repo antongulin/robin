@@ -57,3 +57,27 @@ test('caller inputs: direct action steps in both list forms', async () => {
  const dashed = 'jobs:\n  review:\n    steps:\n      - uses: antongulin/robin@v2\n        with:\n          agent-mode: off\n';
  assert.deepEqual(parseCallerInputs(dashed), { ref: 'v2', inputs: { 'agent-mode': 'off' } });
 });
+test('caller inputs: with before uses in a job and in a step; a previous step with is not taken', async () => {
+ const { parseCallerInputs } = await import('./caller-inputs.mjs');
+ const job = 'jobs:\n  review:\n    with:\n      reasoning-effort: high\n    uses: antongulin/robin/.github/workflows/review.yml@main\n    secrets: inherit\n';
+ assert.deepEqual(parseCallerInputs(job).inputs, { 'reasoning-effort': 'high' });
+ const step = 'jobs:\n  r:\n    steps:\n      - name: Robin\n        with:\n          agent-mode: off\n        uses: antongulin/robin@v2\n';
+ assert.deepEqual(parseCallerInputs(step).inputs, { 'agent-mode': 'off' });
+ const prev = 'jobs:\n  r:\n    steps:\n      - name: Other\n        with:\n          foo: bar\n      - uses: antongulin/robin@v2\n      - run: echo\n';
+ assert.deepEqual(parseCallerInputs(prev).inputs, {});
+});
+test('summarize: excluded and failed runs do not enter comparison metrics', async () => {
+ const dir = await tempfile();
+ try {
+  const write = async (arm, id, result) => { const p = join(dir, arm, id, 'rep1'); await mkdir(p, { recursive: true }); await writeFile(join(p, 'result.json'), JSON.stringify({ arm, case: { id }, rep: 1, ...result })); };
+  const base = { exit_code: 0, timed_out: false, excluded: null, wall_duration_seconds: 100, turns: 10, tool_calls: 20, exact_repeats: 1, stop_reason: null, structured_retry: false, final_repair_calls: 0, diff_only_fallback: false, counts_by_severity: { high: 0, medium: 1, low: 1, suggestion: 0 }, usage: { prompt: 1000, cached_input: 500, completion: 100, reasoning: 50 }, cost_usd: 0.01 };
+  await write('a', 'ok', base);
+  await write('a', 'excluded', { ...base, excluded: 'diff-unavailable', wall_duration_seconds: 5, turns: null, cost_usd: null });
+  await write('a', 'failed', { ...base, exit_code: 1, wall_duration_seconds: 2000, turns: 40, cost_usd: 0.5 });
+  const out = await execute(['experiment/replay/summarize.mjs', dir, '--json'], {});
+  const s = JSON.parse(out.output).groups.a;
+  assert.equal(s.runs, 3); assert.equal(s.eligible, 1); assert.equal(s.failures, 1); assert.equal(s.excluded, 1);
+  assert.equal(s.median_seconds, 100); assert.equal(s.mean_turns, 10); assert.equal(s.prompt_tokens, 1000);
+  assert.ok(Math.abs(s.spend_usd_all_runs - 0.51) < 1e-9); assert.equal(s.runs_without_cost, 1);
+ } finally { await rm(dir, { recursive: true, force: true }); }
+});

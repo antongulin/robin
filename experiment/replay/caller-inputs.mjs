@@ -13,22 +13,39 @@ export function parseCallerInputs(text) {
   // Sibling keys of `uses:` start at its column (after an optional `- ` list marker).
   const indent = ' '.repeat(prefix.length);
   const inputs = {};
-  let i = at + 1;
-  // `with:` is a sibling key of `uses:` in the same job mapping.
-  for (; i < lines.length; i++) {
-    const line = lines[i];
+  const col = indent.length;
+  // Column where a line's key starts (after indentation and an optional `- ` list marker).
+  const keyColumn = line => /^[ \t]*(?:-[ \t]+)?/.exec(line)[0].length;
+  const isWith = line => /^[ \t]*(?:-[ \t]+)?with:\s*(#.*)?$/.test(line);
+  const isListStart = line => /^[ \t]*-[ \t]+/.test(line);
+  let withAt = -1;
+  // `with:` is a sibling key of `uses:` in the same mapping, before or after it.
+  // When `uses:` opens its own list item, earlier lines belong to a previous item.
+  for (let j = isListStart(lines[at]) ? -1 : at - 1; j >= 0 && withAt < 0; j--) {
+    const line = lines[j];
     if (!line.trim() || line.trim().startsWith('#')) continue;
-    const lead = /^[ \t]*/.exec(line)[0];
-    if (lead.length < indent.length) return { ref, inputs };
-    if (lead.length === indent.length && /^\s*with:\s*(#.*)?$/.test(line)) { i++; break; }
-    if (lead.length === indent.length && !/^\s*[A-Za-z_-]+:/.test(line)) return { ref, inputs };
+    const key = keyColumn(line);
+    if (key < col) break;
+    if (key === col && isWith(line)) withAt = j;
+    if (key === col && isListStart(line)) break;
   }
+  if (withAt < 0) {
+    for (let j = at + 1; j < lines.length && withAt < 0; j++) {
+      const line = lines[j];
+      if (!line.trim() || line.trim().startsWith('#')) continue;
+      const key = keyColumn(line);
+      if (key < col || (key === col && isListStart(line))) break;
+      if (key === col && isWith(line)) withAt = j;
+    }
+  }
+  if (withAt < 0) return { ref, inputs };
+  let i = withAt + 1;
   let keyIndent = null;
   while (i < lines.length) {
     const line = lines[i];
     if (!line.trim() || line.trim().startsWith('#')) { i++; continue; }
     const lead = /^[ \t]*/.exec(line)[0].length;
-    if (lead <= indent.length) break;
+    if (lead <= col) break;
     if (keyIndent === null) keyIndent = lead;
     if (lead !== keyIndent) { i++; continue; }
     const m = /^\s*([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(line);

@@ -4,7 +4,7 @@ Runs an unmodified Robin build against a past pull request at the commit an earl
 
 ## What it guarantees
 
-- **No writes.** The action talks to GitHub only through a local proxy (`github-proxy.mjs`) on `127.0.0.1`. The proxy forwards `GET` and `HEAD` for the case's repository only. Every other method, and all GraphQL, is answered with a synthetic success and recorded in `writes.jsonl`; nothing is sent upstream.
+- **No writes.** The action's GitHub API calls go through a local proxy (`github-proxy.mjs`) on `127.0.0.1`. The proxy forwards `GET` and `HEAD` for the case's repository only. One read leaves the proxy: the repository archive download follows GitHub's redirect to its archive host with a short-lived signed URL (no token is involved). Every other method, and all GraphQL, is answered with a synthetic success and recorded in `writes.jsonl`; nothing is sent upstream.
 - **No write-capable token in the action.** The action gets the dummy token `replay-dummy-token`. The real read token stays in the harness process and is added only to upstream reads.
 - **The PR as it was.** The proxy serves the diff and file list from `compare/<base_sha>...<head_sha>`, patches the PR's head and base SHAs, hides reviews and comments created at or after the case's `cutoff`, and refuses to download any tarball except `head_sha`.
 - **No native Git.** GitHub's "diff too large" (406) response is never passed to the action, and `GITHUB_SERVER_URL` points at a closed local port, so Robin's native-Git fallback cannot reach GitHub. A case whose diff the compare API cannot serve is marked `excluded: "diff-unavailable"`.
@@ -73,7 +73,7 @@ Load them inside a subshell so nothing is printed, for example:
 4. **Summarize.**
 
    ```sh
-   node experiment/replay/summarize.mjs results          # Markdown table per arm and per case
+   node experiment/replay/summarize.mjs results          # Markdown table per arm and per case (metrics from eligible runs only)
    node experiment/replay/summarize.mjs results --json
    ```
 

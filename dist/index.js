@@ -125,33 +125,42 @@ function isInside(root, candidate) {
  * the model knows to read them with tools. Returns "" when no file qualifies.
  */
 function renderAgentAttachments(data) {
-    if (data.files.length === 0)
+    if (data.files.length === 0 && data.omitted.length === 0)
         return "";
     const header = ATTACHMENT_HEADER.join("\n");
     const blocks = [];
-    const omitted = [...data.omitted];
+    const overLimit = [];
     let total = header.length;
-    let stopped = false;
     for (const file of data.files) {
-        if (stopped) {
-            omitted.push(file.path);
+        if (overLimit.length > 0) {
+            overLimit.push(file.path);
             continue;
         }
-        const block = renderFileBlock(file);
-        if (total + 1 + block.length > exports.MAX_AGENT_ATTACHMENT_CHARS) {
-            stopped = true;
-            omitted.push(file.path);
+        const text = renderFileBlock(file);
+        if (total + 1 + text.length > exports.MAX_AGENT_ATTACHMENT_CHARS) {
+            overLimit.push(file.path);
             continue;
         }
-        blocks.push(block);
-        total += 1 + block.length;
+        blocks.push({ path: file.path, text });
+        total += 1 + text.length;
     }
-    if (blocks.length === 0)
-        return "";
-    const section = [header, ...blocks];
-    if (omitted.length > 0) {
-        section.push(`Not attached (too large or over the limit): ${omitted.join(", ")}`);
+    // The omission notice counts toward the cap: drop the last attached files until it fits.
+    const notice = () => {
+        const names = [...data.omitted, ...overLimit];
+        return names.length > 0 ? `Not attached (too large or over the limit): ${names.join(", ")}` : "";
+    };
+    while (blocks.length > 0 && notice() && total + 1 + notice().length > exports.MAX_AGENT_ATTACHMENT_CHARS) {
+        const dropped = blocks.pop();
+        total -= 1 + dropped.text.length;
+        overLimit.unshift(dropped.path);
     }
+    if (blocks.length === 0) {
+        // Nothing fits, but the model should still know which changed files to read with tools.
+        return notice() ? ["---", notice()].join("\n") : "";
+    }
+    const section = [header, ...blocks.map((block) => block.text)];
+    if (notice())
+        section.push(notice());
     return section.join("\n");
 }
 /** Reads and renders in one step for the agent review caller. */
