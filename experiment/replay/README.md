@@ -1,27 +1,100 @@
-# Historical review replay
+# Replay harness (experiment branch only)
 
-Replay an unmodified Robin build against a past PR commit and compare review duration, tool usage, findings and reported token usage. This is an experiment, not a replacement for live review or a quality judgment.
+Runs an unmodified Robin build against a past pull request at the commit an earlier review saw, without writing anything to GitHub, and records how the review went. It exists for the review-speed experiment in issue #140 and never ships.
 
-The local proxy forwards only GET and HEAD requests for the case repository. It substitutes the past commit and cutoff for supported PR endpoints. Every write, including GraphQL, is intercepted and recorded with a synthetic response; it is never sent upstream. The action receives a dummy GitHub token. The read token stays in the harness process and is attached only to upstream requests. The action's server URL points to a closed local port to prevent native Git fallback from reaching GitHub. Use a trusted build and a read-only GitHub token: this is not an operating-system network sandbox for arbitrary code.
+## What it guarantees
 
-Prerequisites: Node 24, `tar`, an unmodified build containing `dist/index.js` and `package.json`, GitHub repository read access, and an OpenAI-compatible endpoint. Keep case files and output directories private: they contain PR data, findings, and review payloads. The harness does not send credentials in command-line arguments. For example, within a subshell, obtain credentials from your local secret manager without printing them:
+- **No writes.** The action talks to GitHub only through a local proxy (`github-proxy.mjs`) on `127.0.0.1`. The proxy forwards `GET` and `HEAD` for the case's repository only. Every other method, and all GraphQL, is answered with a synthetic success and recorded in `writes.jsonl`; nothing is sent upstream.
+- **No write-capable token in the action.** The action gets the dummy token `replay-dummy-token`. The real read token stays in the harness process and is added only to upstream reads.
+- **The PR as it was.** The proxy serves the diff and file list from `compare/<base_sha>...<head_sha>`, patches the PR's head and base SHAs, hides reviews and comments created at or after the case's `cutoff`, and refuses to download any tarball except `head_sha`.
+- **No native Git.** GitHub's "diff too large" (406) response is never passed to the action, and `GITHUB_SERVER_URL` points at a closed local port, so Robin's native-Git fallback cannot reach GitHub. A case whose diff the compare API cannot serve is marked `excluded: "diff-unavailable"`.
+
+This is not an operating-system sandbox: run only trusted builds.
+
+## Requirements
+
+Node 24, `tar`, `gh` (or another way to get a GitHub read token), and an OpenAI-compatible endpoint.
+
+Credentials come only from environment variables, never from command-line arguments:
+
+| Variable | Meaning |
+| --- | --- |
+| `REPLAY_GITHUB_TOKEN` | GitHub token with read access to the case repositories |
+| `REPLAY_LLM_API_KEY` | Provider key |
+| `REPLAY_LLM_BASE_URL` | Provider base URL (the action detects provider-specific behavior from it, so use the real URL) |
+| `REPLAY_LLM_MODEL` | Model id |
+
+Load them inside a subshell so nothing is printed, for example:
 
 ```sh
 (
-  export REPLAY_GITHUB_TOKEN="$(your-secret-manager read github-read-token)"
+  export REPLAY_GITHUB_TOKEN="$(gh auth token)"
   export REPLAY_LLM_API_KEY="$(your-secret-manager read llm-key)"
-  export REPLAY_LLM_BASE_URL="https://example.invalid/v1"
+  export REPLAY_LLM_BASE_URL="https://provider.example/v1"
   export REPLAY_LLM_MODEL="example-model"
-  node experiment/replay/prepare-case.mjs --repo example/demo --pr 123 --round 1 > cases.jsonl
-  mkdir -p /tmp/robin-control
-  git archive <ref> dist/index.js package.json | tar -x -C /tmp/robin-control
-  node experiment/replay/run-replay.mjs --cases cases.jsonl --arm control --build /tmp/robin-control --out replay-results --reps 2 --concurrency 2 --price-input 0.30 --price-cached 0.007 --price-output 1.20
-  node experiment/replay/run-replay.mjs --cases cases.jsonl --arm variant --build /tmp/robin-variant --out replay-results --reps 2 --concurrency 2 --env ROBIN_EXPERIMENT=read-skip,final-repair --price-input 0.30 --price-cached 0.007 --price-output 1.20
-  node experiment/replay/summarize.mjs replay-results
-  node experiment/replay/summarize.mjs replay-results --json
+  node experiment/replay/run-replay.mjs ...
 )
 ```
 
-Prepare the variant build directory using the same archive command with its ref. `--case <id>` selects a case and may be repeated; `--input name=value` overrides workflow defaults. Environment overrides cannot replace runtime, input, credential, or Node control variables. Never put secrets in override arguments. For each arm, case and repetition the runner creates `result.json`, `proxy.jsonl`, `writes.jsonl`, timestamped `stdout.log` and `stderr.log`, `event.json`, `output.txt`, `summary.md`, and, when available, `usage-report.json`. Results include exit and timeout, exclusion, wall time, agent turns, tools and repeats, limit and fallback signals, findings, usage attempts and optional computed cost. Unknown data is null. Price flags are per million tokens; cached tokens are a subset of prompt tokens. Logs redact the exact supplied LLM key and GitHub token; treat all outputs as sensitive regardless.
+## Steps
 
-`prepare-case` identifies a Robin review in submission order. It uses the merge commit's first parent for merged PRs, otherwise the base ref, to compute a merge base. Its cutoff is one second before submission, not the start of the original run; historical context can therefore include material added during the review. It reports the filtered diff character count. The compare diff equals the PR diff only when `base_sha` is the correct merge base. GitHub compare responses can have pagination and size limits; compare file and commit arrays use only their first page. Replay covers PRs whose diff the compare API can serve: compare errors produce a 502, mark `excluded: diff-unavailable`, and never expose a structured 406 to the action. Native Git attempts are recorded and cannot connect through the configured server URL. GraphQL is blocked, and other historical repository reads are not a full reconstruction of the PR at cutoff. Run the local checks with `node --test experiment/replay/`.
+1. **Builds.** Each arm needs a directory with `dist/index.js` and `package.json`:
+
+   ```sh
+   mkdir -p /tmp/robin-control /tmp/robin-variant
+   git archive <control-ref> dist/index.js package.json | tar -x -C /tmp/robin-control
+   git archive <variant-ref> dist/index.js package.json | tar -x -C /tmp/robin-variant
+   ```
+
+2. **Cases.** One JSON line per review to replay (read-only API calls):
+
+   ```sh
+   node experiment/replay/prepare-case.mjs --repo owner/name --pr 123 --round 1 >> cases.jsonl
+   ```
+
+   `--round K` picks the K-th Robin review on the PR by submission time. The case records `head_sha` (the commit that review saw), `base_sha` (the merge base; for merged PRs computed from the merge commit's first parent), `cutoff` (one second before that review was submitted), `diff_chars` (filtered diff size), and the repository's Robin caller `with:` inputs at the base commit (`inputs`, `caller_file`, `caller_ref`). Inputs that use `${{ }}` expressions and `runner` are skipped.
+
+3. **Run an arm.**
+
+   ```sh
+   node experiment/replay/run-replay.mjs --cases cases.jsonl --arm control --build /tmp/robin-control \
+     --out results --reps 2 --concurrency 1 \
+     --price-input 0.30 --price-cached 0.007 --price-output 1.20
+   node experiment/replay/run-replay.mjs --cases cases.jsonl --arm read-skip+final-repair --build /tmp/robin-variant \
+     --env ROBIN_EXPERIMENT=read-skip,final-repair --out results --reps 2 --concurrency 1 \
+     --price-input 0.30 --price-cached 0.007 --price-output 1.20
+   ```
+
+   - Inputs: the reusable workflow's defaults, then the case's caller inputs, then `--input name=value` (for example `--input reasoning-effort=high`). Every arm in a comparison must use the same provider, model and inputs except the one under test.
+   - `--env` sets extra environment variables for the action (for example `ROBIN_EXPERIMENT`); runtime, input, credential and Node variables cannot be overridden.
+   - `--case <id>` limits the run to listed cases; `--reps` must be the same for every arm.
+   - Keep `--concurrency 1` when the key is shared with live reviews, and stop on HTTP 429.
+
+4. **Summarize.**
+
+   ```sh
+   node experiment/replay/summarize.mjs results          # Markdown table per arm and per case
+   node experiment/replay/summarize.mjs results --json
+   ```
+
+## Output
+
+Per arm, case and repetition, `<out>/<arm>/<case>/rep<k>/` holds:
+
+- `result.json`: exit code, timeout, exclusion, wall time, turns, tool calls, compactions, exact-repeat tool calls, turn timestamps, stop reason (turn or time limit), structured retry, final-repair calls, diff-only fallback, the experiment-switch and reasoning-effort log lines, effective inputs, findings (severity, confidence, file, line, description, recommendation) parsed from the review Robin would have posted, token usage (prompt, cached, completion, reasoning) per attempt and in total, cost from the price flags, the number of blocked writes and any refused proxy requests. Unknown values are `null`.
+- `stdout.log`, `stderr.log` (timestamped; the supplied key and token are replaced by `***`), `writes.jsonl`, `proxy.jsonl`, `event.json`, `output.txt`, `summary.md`, `usage-report.json`.
+
+Treat case files and outputs as private: they contain repository names, code and review text.
+
+## Limitations
+
+- The compare diff equals the PR diff only when `base_sha` is the right merge base. Compare file and commit lists use the first page only.
+- `cutoff` is the review's submission time, not the start of its run.
+- GraphQL is blocked; other repository reads come from the current repository, not a reconstruction at `cutoff`.
+- Caller inputs are read with a small YAML subset parser (scalars and block scalars); check `effective_inputs` in `result.json`.
+
+## Tests
+
+```sh
+node --test experiment/replay/
+```
