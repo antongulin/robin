@@ -1375,6 +1375,17 @@ const config_1 = __nccwpck_require__(4008);
 const llm_retry_1 = __nccwpck_require__(4069);
 const llm_provider_1 = __nccwpck_require__(710);
 const core = __importStar(__nccwpck_require__(7484));
+class MistralCompatibleOpenAI extends openai_1.OpenAI {
+    makeStatusError(status, error, message, headers) {
+        return super.makeStatusError(status, (0, llm_provider_1.normalizeMistralErrorBody)(status, error), message, headers);
+    }
+}
+function textFromContentParts(content) {
+    if (!Array.isArray(content))
+        return undefined;
+    return content.filter(part => part && typeof part === "object" && part.type === "text" && typeof part.text === "string")
+        .map(part => part.text).join("");
+}
 /** An explicitly truncated completion must not be accepted or retried unchanged. */
 class CompletionLengthError extends Error {
     usage;
@@ -1467,6 +1478,7 @@ class LLMClient {
     model;
     provider;
     openCodeGo;
+    mistral;
     maxOutputTokens;
     maxAttempts;
     /** Attempts allowed for native 429s; equals `maxAttempts` when the caller configured one. */
@@ -1499,6 +1511,7 @@ class LLMClient {
         const normalizedBaseUrl = (0, llm_provider_1.normalizeLlmBaseUrl)(baseUrl);
         this.provider = (0, llm_provider_1.detectLlmProvider)(normalizedBaseUrl);
         this.openCodeGo = (0, llm_provider_1.isOpenCodeGoEndpoint)(normalizedBaseUrl);
+        this.mistral = (0, llm_provider_1.isMistralEndpoint)(normalizedBaseUrl);
         if (normalizedBaseUrl !== baseUrl.trim()) {
             core.info(`Normalized LLM base URL: ${baseUrl} -> ${normalizedBaseUrl}`);
         }
@@ -1507,13 +1520,17 @@ class LLMClient {
         const defaultHeaders = this.openCodeGo
             ? { "x-opencode-session": (0, node_crypto_1.randomUUID)(), "user-agent": "robin-review/2" }
             : undefined;
-        this.client = new openai_1.OpenAI({
+        const Client = this.mistral ? MistralCompatibleOpenAI : openai_1.OpenAI;
+        this.client = new Client({
             baseURL: normalizedBaseUrl,
             apiKey: apiKey || "ollama",
             maxRetries: 0,
             timeout: effectiveTimeoutMs,
             defaultHeaders,
         });
+        if (this.mistral && this.reasoningEffort) {
+            core.info("Mistral API detected — sending reasoning-effort as native reasoning_effort. Rejected values fall back once without reasoning; tool-calling turns may skip reasoning.");
+        }
         if (this.routerModel) {
             core.info(`OpenRouter router model — ${config_1.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS / 1000}s first-chunk stall detect, ${effectiveTimeoutMs / 1000}s stream cap, provider fallbacks.`);
         }
@@ -1829,6 +1846,7 @@ class LLMClient {
             (0, llm_retry_1.throwIfAborted)(signal);
             const stream = await this.client.chat.completions.create({ ...request, stream: true }, { signal: controller.signal });
             const parts = [];
+            const contentParts = [];
             const reasoningParts = [];
             const toolCallParts = new Map();
             let resolvedModel = this.model;
@@ -1858,6 +1876,9 @@ class LLMClient {
                 if (typeof delta?.content === "string" && delta.content) {
                     parts.push(delta.content);
                 }
+                const arrayText = textFromContentParts(delta?.content);
+                if (arrayText !== undefined)
+                    contentParts.push(arrayText);
                 for (const toolDelta of delta?.tool_calls ?? []) {
                     const index = toolDelta.index ?? 0;
                     const current = toolCallParts.get(index) ?? { id: "", name: "", arguments: "" };
@@ -1881,8 +1902,10 @@ class LLMClient {
                 .sort(([a], [b]) => a - b)
                 .map(([index, call]) => ({ ...call, id: call.id || `call_${index}` }))
                 .filter((call) => call.name);
+            const stringContent = parts.join("");
+            const arrayContent = contentParts.join("");
             return {
-                content: parts.join(""),
+                content: stringContent.trim() === "" && !toolCalls.length && arrayContent.trim() ? arrayContent : stringContent,
                 ...(reasoningParts.length > 0 ? { reasoningContent: reasoningParts.join("") } : {}),
                 model: resolvedModel,
                 finishReason,
@@ -1963,8 +1986,8 @@ class LLMClient {
                     : { type: "json_object" };
         }
         if (this.reasoningEffort && !this.reasoningFallbackActive) {
-            if (this.provider === "openai" || this.openCodeGo) {
-                // OpenAI and OpenCode Go use the native top-level field.
+            if (this.provider === "openai" || this.openCodeGo || this.mistral) {
+                // These endpoints use the native top-level field.
                 request.reasoning_effort = this.reasoningEffort;
             }
             else if (this.provider !== "anthropic") {
@@ -2013,6 +2036,9 @@ class LLMClient {
         if (hasToolCalls) {
             return "";
         }
+        const arrayContent = textFromContentParts(content);
+        if (arrayContent?.trim())
+            return arrayContent;
         core.warning(`LLM choice has no text content (finish_reason=${finishReasonLabel(choice.finish_reason)}).`);
         return "";
     }
@@ -2031,6 +2057,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.detectLlmProvider = detectLlmProvider;
 exports.normalizeLlmBaseUrl = normalizeLlmBaseUrl;
 exports.isOpenCodeGoEndpoint = isOpenCodeGoEndpoint;
+exports.isMistralEndpoint = isMistralEndpoint;
+exports.normalizeMistralErrorBody = normalizeMistralErrorBody;
 exports.isOpenAIReasoningModel = isOpenAIReasoningModel;
 const OPENAI_CHAT_SUFFIX = /\/chat\/completions\/?$/i;
 const ANTHROPIC_MESSAGES_SUFFIX = /\/messages\/?$/i;
@@ -2093,6 +2121,58 @@ function isOpenCodeGoEndpoint(baseUrl) {
         url.hostname.toLowerCase() === "opencode.ai" &&
         !url.port &&
         url.pathname === "/zen/go/v1");
+}
+/** True only for the official Mistral API endpoint (`https://api.mistral.ai/v1`) after normalizing pasted suffixes. */
+function isMistralEndpoint(baseUrl) {
+    const url = parseUrl(normalizeLlmBaseUrl(baseUrl));
+    return Boolean(url &&
+        url.protocol === "https:" &&
+        url.hostname.toLowerCase() === "api.mistral.ai" &&
+        !url.port &&
+        url.pathname === "/v1");
+}
+/** Adapt Mistral's validation errors to the SDK's error envelope. */
+function normalizeMistralErrorBody(status, body) {
+    if ((status !== 400 && status !== 422) || !body || typeof body !== "object" ||
+        (Object.getPrototypeOf(body) !== Object.prototype && Object.getPrototypeOf(body) !== null) ||
+        Object.prototype.hasOwnProperty.call(body, "error"))
+        return body;
+    const value = body;
+    if (value.object !== "error")
+        return body;
+    let message;
+    let fieldParam;
+    if (typeof value.message === "string" && value.message.trim()) {
+        message = value.message;
+    }
+    else if (value.message && typeof value.message === "object" && !Array.isArray(value.message)) {
+        const detail = value.message.detail;
+        if (Array.isArray(detail)) {
+            const entries = [];
+            for (const item of detail) {
+                if (!item || typeof item !== "object" || Array.isArray(item) || typeof item.msg !== "string")
+                    continue;
+                const loc = item.loc;
+                const validLoc = Array.isArray(loc) && loc.every(part => typeof part === "string" || typeof part === "number");
+                const parts = validLoc ? [...loc] : [];
+                if (parts[0] === "body")
+                    parts.shift();
+                const field = parts.join(".");
+                entries.push({ text: field ? `${field}: ${item.msg}` : item.msg,
+                    param: validLoc && loc.length === 2 && loc[0] === "body" && typeof loc[1] === "string" ? loc[1] : undefined });
+            }
+            if (entries.length) {
+                message = entries.map(entry => entry.text).join("; ");
+                if (entries.length === 1)
+                    fieldParam = entries[0].param;
+            }
+        }
+    }
+    if (!message?.trim())
+        return body;
+    return { error: { message, type: typeof value.type === "string" ? value.type : undefined,
+            code: typeof value.code === "string" || (typeof value.code === "number" && Number.isFinite(value.code)) ? value.code : undefined,
+            param: fieldParam ?? (typeof value.param === "string" ? value.param : undefined) } };
 }
 /**
  * OpenAI reasoning families (o-series, GPT-5, codex) reject sampling controls such as

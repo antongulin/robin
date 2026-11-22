@@ -771,6 +771,7 @@ for the hosts below. Self-hosted and proxy URLs are passed through unchanged.
 | Anthropic (Claude) | `https://api.anthropic.com/v1` | Uses Anthropic's [OpenAI SDK compatibility](https://docs.anthropic.com/en/api/openai-sdk) endpoint with your regular Anthropic API key (`LLM_API_KEY`). `https://api.anthropic.com` without `/v1` is accepted. JSON mode sends Robin's review schema as a best-effort `response_format: json_schema`, but Anthropic's compatibility endpoint ignores `response_format` (guaranteed structured output requires the native Claude API), so the review relies on the prompt plus the markdown fallback parser. If a model rejects the field, Robin drops it and falls back the same way. Anthropic ignores reasoning controls — Robin sends none there and Claude picks its own thinking depth. `temperature` above `1` is capped by Anthropic |
 | OpenRouter | `https://openrouter.ai/api/v1` | `reasoning-effort` uses the OpenRouter `reasoning: { effort, exclude }` object; router models get stall detection and provider fallbacks |
 | OpenCode Go | `https://opencode.ai/zen/go/v1` | Keep your existing `LLM_API_KEY` and provider settings; Robin supplies the required User-Agent and one UUID `x-opencode-session` per client run, reusing it across retries and turns. This is automatic only for the official Go endpoint. Configured effort uses top-level `reasoning_effort`; rejections surface without dropping it. See [OpenCode Go](https://opencode.ai/docs/go/#where-can-i-use-it) |
+| Mistral | `https://api.mistral.ai/v1` | Configured reasoning effort uses top-level `reasoning_effort`. Rejected values fall back once without it. For example, `deepseek-v4-1-flash-1017` accepted `none`, `low`, `high`, `xhigh`, and `max`, but rejected `medium` on 2026-11-22. Text parts supply the reply; thinking parts are never published. Tool-calling turns may receive no reasoning. |
 | Anything else (Groq, Ollama, vLLM, gateways) | provider URL | Default request shape; unsupported parameters are recovered as described below |
 
 ### Models that reject request parameters
@@ -863,6 +864,9 @@ reasoning-effort: max
 The request shape depends on `LLM_BASE_URL`:
 
 - `api.openai.com`: OpenAI-native `reasoning_effort: "<value>"`.
+- Official `https://api.mistral.ai/v1` endpoint (including normalized trailing slashes and
+  `/chat/completions` suffixes): top-level `reasoning_effort: "<value>"`. Other paths on
+  that host use the generic shape below.
 - Official `https://opencode.ai/zen/go/v1` endpoint (including normalized trailing slashes
   and `/chat/completions` suffixes): top-level `reasoning_effort: "<value>"`, with no nested
   `reasoning` object. Robin retains any configured effort across retries. If Go rejects it,
@@ -878,8 +882,11 @@ If a provider supplies a string `reasoning_content`, Robin preserves it as priva
 and replays it unchanged on that assistant's tool turn in later requests. This includes
 streamed string deltas, retained compaction tails, and the final request with tool choice
 `none`. Robin keeps this metadata out of summaries, progress updates, logs, and visible
-reviews; only `content` supplies review text. Provider errors can echo the request, so
-Robin reports a failure category and HTTP status instead of the provider's raw error text.
+reviews; only `content` supplies review text. When any provider returns `content` as an
+array of parts, Robin uses the parts with type `text`, and only when the reply would
+otherwise be empty; thinking parts are never published or kept. Provider errors can echo
+the request, so Robin reports a failure category and HTTP status instead of the provider's
+raw error text.
 The native error remains available internally for retry, compatibility and context-limit
 decisions. Empty-response diagnostics show known completion-reason labels, or `unknown`
 if the provider sends an invalid value. Explicit low-level SDK debug logging can still
@@ -893,7 +900,8 @@ reasoning override for the rest of the run. When the retry succeeds, the review 
 normally. If you set the value yourself (input or `.github/robin.yml`), the final status
 comment also keeps a visible warning telling you to update `reasoning-effort`. With no value
 configured, no reasoning control is sent in the first place, so this fallback only ever runs
-for a value you configured.
+for a value you configured. Mistral error formats are recognized for this fallback only on the official
+`https://api.mistral.ai/v1` endpoint.
 
 Auth, rate-limit, server, timeout, and unrelated validation errors do not trigger this
 fallback. The retry omits the optional reasoning override; it does not guess a different
@@ -1100,6 +1108,7 @@ No daily quota from this action. Real limits:
 | Slash command ignored | Wrong format or permission | `/robin` or `/review` as first line; need write access |
 | `/robin` does nothing on `@v1` | Stale `v1` tag before v1.4.0 | Use `/review`, pin `@v1.4.0`+, or `@v2`; floating `v1` tracks latest `1.x` on release |
 | Shallow review | Small model, or files removed by `skip-paths`/built-in exclusions | Stronger model, or review the excluded paths separately |
+| `Provider rejected request parameters (HTTP 422)` on Mistral with `reasoning-effort` set | Robin before this fix sent Mistral an unsupported `reasoning` object | Use `@main` or a later release, or set `reasoning-effort: off` |
 
 ## Comparison
 

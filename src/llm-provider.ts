@@ -71,6 +71,55 @@ export function isOpenCodeGoEndpoint(baseUrl: string): boolean {
   );
 }
 
+/** True only for the official Mistral API endpoint (`https://api.mistral.ai/v1`) after normalizing pasted suffixes. */
+export function isMistralEndpoint(baseUrl: string): boolean {
+  const url = parseUrl(normalizeLlmBaseUrl(baseUrl));
+  return Boolean(
+    url &&
+      url.protocol === "https:" &&
+      url.hostname.toLowerCase() === "api.mistral.ai" &&
+      !url.port &&
+      url.pathname === "/v1",
+  );
+}
+
+/** Adapt Mistral's validation errors to the SDK's error envelope. */
+export function normalizeMistralErrorBody(status: number | undefined, body: unknown): unknown {
+  if ((status !== 400 && status !== 422) || !body || typeof body !== "object" ||
+      (Object.getPrototypeOf(body) !== Object.prototype && Object.getPrototypeOf(body) !== null) ||
+      Object.prototype.hasOwnProperty.call(body, "error")) return body;
+  const value = body as Record<string, unknown>;
+  if (value.object !== "error") return body;
+  let message: string | undefined;
+  let fieldParam: string | undefined;
+  if (typeof value.message === "string" && value.message.trim()) {
+    message = value.message;
+  } else if (value.message && typeof value.message === "object" && !Array.isArray(value.message)) {
+    const detail = (value.message as Record<string, unknown>).detail;
+    if (Array.isArray(detail)) {
+      const entries: { text: string; param?: string }[] = [];
+      for (const item of detail) {
+        if (!item || typeof item !== "object" || Array.isArray(item) || typeof item.msg !== "string") continue;
+        const loc: unknown = item.loc;
+        const validLoc = Array.isArray(loc) && loc.every(part => typeof part === "string" || typeof part === "number");
+        const parts = validLoc ? [...loc] : [];
+        if (parts[0] === "body") parts.shift();
+        const field = parts.join(".");
+        entries.push({ text: field ? `${field}: ${item.msg}` : item.msg,
+          param: validLoc && loc.length === 2 && loc[0] === "body" && typeof loc[1] === "string" ? loc[1] : undefined });
+      }
+      if (entries.length) {
+        message = entries.map(entry => entry.text).join("; ");
+        if (entries.length === 1) fieldParam = entries[0].param;
+      }
+    }
+  }
+  if (!message?.trim()) return body;
+  return { error: { message, type: typeof value.type === "string" ? value.type : undefined,
+    code: typeof value.code === "string" || (typeof value.code === "number" && Number.isFinite(value.code)) ? value.code : undefined,
+    param: fieldParam ?? (typeof value.param === "string" ? value.param : undefined) } };
+}
+
 /**
  * OpenAI reasoning families (o-series, GPT-5, codex) reject sampling controls such as
  * `temperature` and only accept `max_completion_tokens`. Detect them up front so the
