@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.13.4](https://github.com/antongulin/robin/compare/v2.13.3...v2.13.4) (2026-11-22)
+
+
+### Bug Fixes
+
+* **llm:** keep the ordinary schedule for OpenRouter's free daily quota ([#136](https://github.com/antongulin/robin/issues/136)) ([e50d0b0](https://github.com/antongulin/robin/commit/e50d0b0951af1132cd36e0bb102ba7fc00baf293))
+* **llm:** support Mistral reasoning effort and content-part replies ([#138](https://github.com/antongulin/robin/issues/138)) ([35d134c](https://github.com/antongulin/robin/commit/35d134c0d4ea38f714c78b73f3b23888047c1976))
+
+
+### Documentation
+
+* state the router stall threshold and retry waits ([3664a23](https://github.com/antongulin/robin/commit/3664a23ab8096dbf944f11e518f796bd692eeee2))
+
 ## [2.13.3](https://github.com/antongulin/robin/compare/v2.13.2...v2.13.3) (2026-11-07)
 
 
