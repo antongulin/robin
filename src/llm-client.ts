@@ -2,6 +2,7 @@ import { EstimatedRequestBudgetError, EstimatedRequestTokenBudget, assertRequest
 import { UsageLedger, UsageAttempt, UsageContext, AttemptTrigger, CompatibilityAdjustment } from "./usage-report";
 import { randomUUID } from "node:crypto";
 import { OpenAI } from "openai";
+import type { Headers } from "openai/core";
 import { REVIEW_JSON_SCHEMA } from "./prompts/review-schema";
 import {
   DEFAULT_LLM_COMPLETION_ATTEMPTS,
@@ -36,12 +37,27 @@ import {
 import {
   detectLlmProvider,
   isOpenCodeGoEndpoint,
+  isMistralEndpoint,
+  normalizeMistralErrorBody,
   isOpenAIReasoningModel,
   LlmProvider,
   normalizeLlmBaseUrl,
 } from "./llm-provider";
 import { ReasoningFallbackReason } from "./reasoning-fallback";
 import * as core from "@actions/core";
+
+class MistralCompatibleOpenAI extends OpenAI {
+  protected override makeStatusError(status: number | undefined, error: NonNullable<unknown> | undefined,
+    message: string | undefined, headers: Headers | undefined) {
+    return super.makeStatusError(status, normalizeMistralErrorBody(status, error) as NonNullable<unknown> | undefined, message, headers);
+  }
+}
+
+function textFromContentParts(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  return content.filter(part => part && typeof part === "object" && part.type === "text" && typeof part.text === "string")
+    .map(part => part.text as string).join("");
+}
 
 export type ChatMessage =
   | Exclude<OpenAI.Chat.Completions.ChatCompletionMessageParam, OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam>
@@ -205,6 +221,7 @@ export class LLMClient {
   private model: string;
   private provider: LlmProvider;
   private openCodeGo: boolean;
+  private readonly mistral: boolean;
   private maxOutputTokens?: number;
   private maxAttempts: number;
   /** Attempts allowed for native 429s; equals `maxAttempts` when the caller configured one. */
@@ -249,6 +266,7 @@ export class LLMClient {
     const normalizedBaseUrl = normalizeLlmBaseUrl(baseUrl);
     this.provider = detectLlmProvider(normalizedBaseUrl);
     this.openCodeGo = isOpenCodeGoEndpoint(normalizedBaseUrl);
+    this.mistral = isMistralEndpoint(normalizedBaseUrl);
     if (normalizedBaseUrl !== baseUrl.trim()) {
       core.info(`Normalized LLM base URL: ${baseUrl} -> ${normalizedBaseUrl}`);
     }
@@ -261,13 +279,18 @@ export class LLMClient {
     const defaultHeaders = this.openCodeGo
       ? { "x-opencode-session": randomUUID(), "user-agent": "robin-review/2" }
       : undefined;
-    this.client = new OpenAI({
+    const Client = this.mistral ? MistralCompatibleOpenAI : OpenAI;
+    this.client = new Client({
       baseURL: normalizedBaseUrl,
       apiKey: apiKey || "ollama",
       maxRetries: 0,
       timeout: effectiveTimeoutMs,
       defaultHeaders,
     });
+
+    if (this.mistral && this.reasoningEffort) {
+      core.info("Mistral API detected — sending reasoning-effort as native reasoning_effort. Rejected values fall back once without reasoning; tool-calling turns may skip reasoning.");
+    }
 
     if (this.routerModel) {
       core.info(
@@ -654,6 +677,7 @@ export class LLMClient {
       );
 
       const parts: string[] = [];
+      const contentParts: string[] = [];
       const reasoningParts: string[] = [];
       const toolCallParts = new Map<number, ToolCall>();
       let resolvedModel = this.model;
@@ -682,6 +706,8 @@ export class LLMClient {
         if (typeof delta?.content === "string" && delta.content) {
           parts.push(delta.content);
         }
+        const arrayText = textFromContentParts(delta?.content);
+        if (arrayText !== undefined) contentParts.push(arrayText);
         for (const toolDelta of delta?.tool_calls ?? []) {
           const index = toolDelta.index ?? 0;
           const current = toolCallParts.get(index) ?? { id: "", name: "", arguments: "" };
@@ -703,8 +729,10 @@ export class LLMClient {
         .sort(([a], [b]) => a - b)
         .map(([index, call]) => ({ ...call, id: call.id || `call_${index}` }))
         .filter((call) => call.name);
+      const stringContent = parts.join("");
+      const arrayContent = contentParts.join("");
       return {
-        content: parts.join(""),
+        content: stringContent === "" && !toolCalls.length && arrayContent.trim() ? arrayContent : stringContent,
         ...(reasoningParts.length > 0 ? { reasoningContent: reasoningParts.join("") } : {}),
         model: resolvedModel,
         finishReason,
@@ -796,8 +824,8 @@ export class LLMClient {
     }
 
     if (this.reasoningEffort && !this.reasoningFallbackActive) {
-      if (this.provider === "openai" || this.openCodeGo) {
-        // OpenAI and OpenCode Go use the native top-level field.
+      if (this.provider === "openai" || this.openCodeGo || this.mistral) {
+        // These endpoints use the native top-level field.
         request.reasoning_effort = this.reasoningEffort;
       } else if (this.provider !== "anthropic") {
         // OpenRouter-style shape, also understood by many OpenAI-compatible gateways.
@@ -855,6 +883,9 @@ export class LLMClient {
     if (hasToolCalls) {
       return "";
     }
+
+    const arrayContent = textFromContentParts(content);
+    if (arrayContent?.trim()) return arrayContent;
 
     core.warning(
       `LLM choice has no text content (finish_reason=${finishReasonLabel(choice.finish_reason)}).`
