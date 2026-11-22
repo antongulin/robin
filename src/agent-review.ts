@@ -47,6 +47,12 @@ export interface AgentReviewOptions {
   onProgress?: (progress: AgentProgress) => void | Promise<void>;
   now?: () => number;
   repairUnparseableFinal?: boolean;
+  /** Experiment `plan-batch`: prompt asks for a plan and batched independent calls. */
+  planBatch?: boolean;
+  /** Experiment `calibrate`: prompt allows a clean review and raises the Low/Suggestion bar. */
+  calibrate?: boolean;
+  /** Experiment `attach-files`: rendered changed-file block appended to the immutable input. */
+  attachmentSection?: string;
 }
 
 export interface AgentReviewResult {
@@ -109,8 +115,15 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     }
   };
 
-  const systemPrompt = getAgentReviewPrompt(options.instructions, budgets.maxTurns);
-  const baseInput = buildAgentReviewInput(options.annotatedDiff, options.changedFiles);
+  const systemPrompt = getAgentReviewPrompt(options.instructions, budgets.maxTurns, {
+    planBatch: options.planBatch,
+    calibrate: options.calibrate,
+  });
+  const baseInput = buildAgentReviewInput(
+    options.annotatedDiff,
+    options.changedFiles,
+    options.attachmentSection
+  );
   const immutableMessages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: baseInput },
@@ -479,9 +492,13 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
   return { content: repaired.content, turns: turns + (repaired.attempted ? 1 : 0), toolCalls: toolCallCount, compactions };
 }
 
-export function buildAgentReviewInput(annotatedDiff: string, changedFiles: string[]): string {
+export function buildAgentReviewInput(
+  annotatedDiff: string,
+  changedFiles: string[],
+  attachmentSection = ""
+): string {
   const fileList = changedFiles.length > 0 ? changedFiles.map((file) => `- ${file}`).join("\n") : "- (none listed)";
-  return [
+  const input = [
     "Review the following pull request. Use the tools to gather the context you need, then return only the strict JSON object described in the system prompt.",
     "Each diff line is prefixed with its line number in the NEW file (blank for removed lines and headers).",
     "For any line-specific finding, copy that exact number into the `line` field. Do not guess or recount.",
@@ -494,7 +511,9 @@ export function buildAgentReviewInput(annotatedDiff: string, changedFiles: strin
     "```diff",
     annotatedDiff,
     "```",
-  ].join("\n");
+  ];
+  if (attachmentSection) input.push("", attachmentSection);
+  return input.join("\n");
 }
 
 function compactedNotesBlock(notes: string): string {

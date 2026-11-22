@@ -1,4 +1,4 @@
-import { parseExperimentSwitches, ExperimentId } from "./experiment";
+import { parseExperimentSwitches, resolveExperimentAgentTurns, ExperimentId } from "./experiment";
 import { positiveSafeInteger } from "./request-budget";
 import { UsageLedger, UsageContext, publishUsageReport } from "./usage-report";
 import { detectLlmProvider } from "./llm-provider";
@@ -6,6 +6,7 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { CompletionLengthError, LLMClient, LLMRequestError, ToolsUnsupportedError } from "./llm-client";
 import { runAgentReview } from "./agent-review";
+import { buildAgentAttachmentSection } from "./agent-attachments";
 import { isCancellationError, isContextLengthError } from "./llm-retry";
 import { createRepoSnapshot } from "./repo-snapshot";
 import { ReviewToolbox } from "./review-tools";
@@ -998,15 +999,36 @@ async function runAgentOrSingleShotReview(
   }
 
   try {
-    core.info(`Running agent review (max ${params.agentMaxTurns} turns)...`);
+    const maxTurns = resolveExperimentAgentTurns(
+      params.agentMaxTurns,
+      params.agentDiff.length,
+      params.experiments.has("turn-budget")
+    );
+    if (maxTurns < params.agentMaxTurns) {
+      core.info(
+        `Experiment turn-budget: ${maxTurns} turns for a ${params.agentDiff.length}-character diff (configured ${params.agentMaxTurns}).`
+      );
+    }
+    let attachmentSection = "";
+    if (params.experiments.has("attach-files")) {
+      try {
+        attachmentSection = await buildAgentAttachmentSection(snapshot.root, params.changedFiles);
+      } catch (error) {
+        core.warning(`Experiment attach-files failed (${error}); continuing without attachments.`);
+      }
+    }
+    core.info(`Running agent review (max ${maxTurns} turns)...`);
     const result = await runAgentReview({
       llm: params.llm,
       toolbox: new ReviewToolbox(snapshot.root, undefined, { refuseSkippedReads: params.experiments.has("read-skip") }),
       repairUnparseableFinal: params.experiments.has("final-repair"),
+      planBatch: params.experiments.has("plan-batch"),
+      calibrate: params.experiments.has("calibrate"),
+      attachmentSection,
       annotatedDiff: annotateDiffWithLineNumbers(params.agentDiff),
       changedFiles: params.changedFiles,
       instructions: params.reviewInstructions,
-      budgets: { maxTurns: params.agentMaxTurns },
+      budgets: { maxTurns },
       onProgress: (progress) => reporter.setAgentProgress(progress),
     });
     params.usage?.recordAgentActivity(result.turns, result.toolCalls, result.compactions);

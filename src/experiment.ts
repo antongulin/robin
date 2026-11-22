@@ -10,3 +10,22 @@ export function parseExperimentSwitches(raw: string | undefined): { enabled: Set
   return { enabled, unknown };
 }
 export function experimentEnabled(enabled: Set<ExperimentId>, id: ExperimentId): boolean { return enabled.has(id); }
+
+/** Experiment `turn-budget`: turn caps chosen from the filtered diff size in characters. */
+export const EXPERIMENT_SMALL_DIFF_CHARS = 10_000;
+export const EXPERIMENT_MEDIUM_DIFF_CHARS = 60_000;
+
+/**
+ * Effective agent turn budget for the `turn-budget` experiment. Off returns the resolved
+ * budget unchanged; on caps small and medium diffs and never raises the configured value.
+ */
+export function resolveExperimentAgentTurns(
+  configured: number,
+  diffChars: number,
+  enabled: boolean
+): number {
+  if (!enabled) return configured;
+  const cap =
+    diffChars < EXPERIMENT_SMALL_DIFF_CHARS ? 20 : diffChars < EXPERIMENT_MEDIUM_DIFF_CHARS ? 32 : null;
+  return cap === null ? configured : Math.min(configured, cap);
+}
