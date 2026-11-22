@@ -41,3 +41,19 @@ test('H4 H6: real build replay, tool mode and unavailable diff',async()=>{
  assert.ok(seen.every(x=>x.method==='GET'));} finally {await llm.close();await upstream.close();await rm(dir,{recursive:true,force:true});}
 });
 test('runner redacts key echoed across child output chunks',async()=>{const dir=await tempfile();try{const build=join(dir,'build');await mkdir(join(build,'dist'),{recursive:true});await writeFile(join(build,'dist/index.js'),"process.stdout.write(process.env['INPUT_LLM-API-KEY'].slice(0,4)); process.stdout.write(process.env['INPUT_LLM-API-KEY'].slice(4)+'\\n');");await writeFile(join(dir,'cases'),JSON.stringify(testCase));const run=await execute(['experiment/replay/run-replay.mjs','--cases',join(dir,'cases'),'--arm','control','--build',build,'--out',dir,'--reps','1'],{REPLAY_GITHUB_TOKEN:'fake-github-token',REPLAY_LLM_API_KEY:'sensitive-secret',REPLAY_LLM_BASE_URL:'http://127.0.0.1:9',REPLAY_LLM_MODEL:'fake'});assert.equal(run.code,0,run.output);const log=await readFile(join(dir,'control','sample','rep1','stdout.log'),'utf8');assert.ok(log.includes('***'));assert.ok(!log.includes('sensitive-secret'));}finally{await rm(dir,{recursive:true,force:true});}});
+test('caller inputs: scalars, quotes, block scalars; expressions and runner skipped; stops at the job boundary', async () => {
+ const { parseCallerInputs } = await import('./caller-inputs.mjs');
+ const text = ['name: Robin','jobs:','  review:','    if: github.event_name == \'pull_request\'','    uses: antongulin/robin/.github/workflows/review.yml@main','    with:','      runner: ${{ vars.CI_RUNNER_ROBIN || \'"ubicloud-standard-2"\' }}','      agent-mode: auto','      agent-max-turns: "40"','      reasoning-effort: max # comment','      max-output-tokens: \'16384\'','      model-hint: ${{ secrets.X }}','      review-instructions: |','        Line one.','          Indented two.','        Line three.','    secrets:','      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}','  other:','    runs-on: x'].join('\n');
+ const parsed = parseCallerInputs(text);
+ assert.equal(parsed.ref, 'main');
+ assert.deepEqual(parsed.inputs, { 'agent-mode': 'auto', 'agent-max-turns': '40', 'reasoning-effort': 'max', 'max-output-tokens': '16384', 'review-instructions': 'Line one.\n  Indented two.\nLine three.\n' });
+ assert.deepEqual(parseCallerInputs('jobs:\n  review:\n    uses: antongulin/robin/.github/workflows/review.yml@v2\n    secrets:\n      A: b\n').inputs, {});
+ assert.equal(parseCallerInputs('jobs:\n  x:\n    runs-on: y\n'), null);
+});
+test('caller inputs: direct action steps in both list forms', async () => {
+ const { parseCallerInputs } = await import('./caller-inputs.mjs');
+ const named = 'jobs:\n  review:\n    steps:\n      - name: Robin\n        uses: antongulin/robin@3c3c2adf29f06277761f827c64ee9d08d90c00c6 # v2.12.3\n        with:\n          github-token: ${{ github.token }}\n          reasoning-effort: max\n          agent-max-diff-size: "50000"\n      - name: Next\n        run: echo\n';
+ assert.deepEqual(parseCallerInputs(named), { ref: '3c3c2adf29f06277761f827c64ee9d08d90c00c6', inputs: { 'reasoning-effort': 'max', 'agent-max-diff-size': '50000' } });
+ const dashed = 'jobs:\n  review:\n    steps:\n      - uses: antongulin/robin@v2\n        with:\n          agent-mode: off\n';
+ assert.deepEqual(parseCallerInputs(dashed), { ref: 'v2', inputs: { 'agent-mode': 'off' } });
+});
