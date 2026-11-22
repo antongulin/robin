@@ -138,9 +138,12 @@ export function renderAgentAttachments(data: AgentAttachmentData): string {
     const prefix = "Not attached (too large or over the limit): ";
     const listed: string[] = [];
     let used = prefix.length;
-    for (const name of names) {
+    for (const [index, name] of names.entries()) {
       const extra = (listed.length ? 2 : 0) + name.length;
-      if (used + extra > MAX_ATTACHMENT_NOTICE_CHARS) break;
+      // Unless this is the last name, keep room for a ", and N more" suffix.
+      const remaining = names.length - index - 1;
+      const suffix = remaining > 0 ? `, and ${remaining} more`.length : 0;
+      if (used + extra + suffix > MAX_ATTACHMENT_NOTICE_CHARS) break;
       listed.push(name);
       used += extra;
     }

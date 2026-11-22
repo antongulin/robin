@@ -20,7 +20,7 @@ test("A6 the not-attached notice counts toward the total cap and is itself bound
   expect(section.length).toBeLessThanOrEqual(MAX_AGENT_ATTACHMENT_CHARS);
   const notice = section.split("\n").pop()!;
   expect(notice.startsWith("Not attached (too large or over the limit): ")).toBe(true);
-  expect(notice.length).toBeLessThanOrEqual(MAX_ATTACHMENT_NOTICE_CHARS + 30);
+  expect(notice.length).toBeLessThanOrEqual(MAX_ATTACHMENT_NOTICE_CHARS);
   const more = /and (\d+) more$/.exec(notice);
   expect(more).not.toBeNull();
   const listed = many.filter((name) => notice.includes(name)).length;
@@ -47,4 +47,13 @@ test("A8 an oversized binary file is not reported as too large", async () => {
     expect(data.omitted).toEqual(["big.ts"]);
     expect(renderAgentAttachments(await readAgentAttachments(root, ["image.dat"]))).toBe("");
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("A9 the notice never exceeds its own cap at the boundary", () => {
+  for (const count of [79, 80, 81, 200]) {
+    const names = Array.from({ length: count }, (_, index) => `${"p".repeat(120)}/${index}.ts`);
+    const section = renderAgentAttachments({ files: [], omitted: names });
+    const notice = section.split("\n").pop()!;
+    expect(notice.length).toBeLessThanOrEqual(MAX_ATTACHMENT_NOTICE_CHARS);
+  }
 });
