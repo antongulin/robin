@@ -220,6 +220,16 @@ provider messages, including compatibility and tool-support errors. Empty-respon
 and failure messages use known completion-reason labels or `unknown` for invalid values.
 Low-level SDK debug logging can expose raw payloads.
 
+**Host-scoped provider handling.** A provider-specific request shape or error adaptation keys on
+that provider's official endpoint only (OpenCode Go `https://opencode.ai/zen/go/v1`, Mistral
+`https://api.mistral.ai/v1`); every other host keeps the default shape and today's SDK errors.
+Mistral error-body normalization (`normalizeMistralErrorBody`, applied through the client's SDK
+subclass) handles only 400/422 bodies of the form `{object:"error", message}`, never copies the
+`input` echo, and passes 429/5xx through. Array `content` is read from `text` parts only where the
+string or tool-call result would otherwise be empty; thinking parts are never published or kept as
+`reasoning_content`. `src/llm-mistral.test.ts` T2/T8 pin today's request bodies and SDK errors for
+non-Mistral hosts; keep them unedited.
+
 Installers preserve complete custom identity workflows (explicit token mappings, App
 token steps, or inherited secrets), including their refs, rather than reconstructing
 them. Keep the shell and npm preservation tests in sync. The website's `public/install.sh`
