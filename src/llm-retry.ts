@@ -457,17 +457,28 @@ const PERMANENT_RATE_LIMIT_CONDITIONS = new Set([
 ]);
 
 /**
+ * Matched only in OpenRouter's `Rate limit exceeded: free-models-per-day` wording, so advisory
+ * text that merely mentions the daily quota stays a burst. Its 429 body carries a numeric `code`.
+ */
+const OPENROUTER_FREE_DAILY_QUOTA = /rate\s+limit\s+exceeded:\s*free-models-per-day(?![a-z0-9_-])/i;
+
+/**
  * True when the 429 body names a permanent quota/billing condition. Some SDKs expose the parsed
- * body's `code`/`type` on the error itself and some nest them under `error`, so both are read.
+ * body's `code`/`type`/`message` on the error itself and some nest them under `error`, so both
+ * are read. The message is only matched here, never logged or returned.
  */
 function hasPermanentRateLimitCondition(error: Record<string, unknown>): boolean {
   const nested = error.error;
   const nestedBody =
     nested && typeof nested === "object" ? (nested as Record<string, unknown>) : undefined;
-  return [error.code, error.type, nestedBody?.code, nestedBody?.type].some(
+  const namesPermanentCode = [error.code, error.type, nestedBody?.code, nestedBody?.type].some(
     (value) =>
       typeof value === "string" && PERMANENT_RATE_LIMIT_CONDITIONS.has(value.trim().toLowerCase())
   );
+  const namesDailyQuota = [error.message, nestedBody?.message].some(
+    (value) => typeof value === "string" && OPENROUTER_FREE_DAILY_QUOTA.test(value)
+  );
+  return namesPermanentCode || namesDailyQuota;
 }
 
 /** Reads a `Retry-After` header (SDK `Headers` or a plain object) from the error or its causes. */

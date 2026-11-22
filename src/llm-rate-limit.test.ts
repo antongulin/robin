@@ -35,14 +35,16 @@ function providerError(status: number, message: string, headers?: Record<string,
   });
 }
 
-function makeClient(maxAttempts?: number) {
+function makeClient(maxAttempts?: number, onProgress?: (detail: string) => Promise<void>) {
   return new LLMClient(
     "https://provider.invalid/v1",
     "test-key",
     "test-model",
     undefined,
     undefined,
-    maxAttempts
+    maxAttempts,
+    undefined,
+    onProgress
   );
 }
 
@@ -63,6 +65,42 @@ function rateLimited(message = "429 inference_failed", headers?: Record<string, 
   return providerError(429, message, headers);
 }
 
+/** The SDK's RateLimitError shape for OpenRouter's free daily quota (numeric `code`). */
+function dailyQuota(identifier = "free-models-per-day", advice = "Add 10 credits") {
+  const message = `Rate limit exceeded: ${identifier}. ${advice}`;
+  return Object.assign(rateLimited(`429 ${message}`), {
+    code: 429,
+    error: {
+      message,
+      code: 429,
+      metadata: {
+        headers: {
+          "X-RateLimit-Limit": "50",
+          "X-RateLimit-Remaining": "0",
+          "X-RateLimit-Reset": "1741305600000",
+        },
+      },
+    },
+  });
+}
+
+const PROVIDER_QUOTA_TEXT = /free-models-per-day|Add 10 credits/;
+
+/** Every log line Robin wrote, for checks that provider text never reaches the log. */
+function checkedText(calls: unknown[][]): string {
+  const args = calls.flat();
+  for (const arg of args) expect(typeof arg).toBe("string");
+  return args.join(" ");
+}
+
+function loggedText(): string {
+  return checkedText([
+    jest.mocked(core.info).mock.calls,
+    jest.mocked(core.warning).mock.calls,
+    jest.mocked(core.error).mock.calls,
+  ].flat());
+}
+
 function streamOf(chunks: unknown[]) {
   return {
     [Symbol.asyncIterator]: async function* () {
@@ -80,14 +118,16 @@ function streamedResponse(content: string) {
   ]);
 }
 
-function makeRouterClient(maxAttempts?: number) {
+function makeRouterClient(maxAttempts?: number, onProgress?: (detail: string) => Promise<void>) {
   return new LLMClient(
     "https://provider.invalid/v1",
     "test-key",
     "openrouter/free",
     undefined,
     undefined,
-    maxAttempts
+    maxAttempts,
+    undefined,
+    onProgress
   );
 }
 
@@ -143,7 +183,7 @@ describe("LLMClient rate-limit retries", () => {
     expect(create).toHaveBeenCalledTimes(6);
     expect(retryWaits().map((retry) => retry.waitMs)).toEqual([5000, 10000, 20000, 40000, 60000]);
     expect(jest.mocked(core.error)).toHaveBeenCalledWith(
-      "LLM API error: Provider rate limit exceeded (HTTP 429)"
+      "LLM API error after 6 attempts: Provider rate limit exceeded (HTTP 429)"
     );
   });
 
@@ -360,6 +400,123 @@ describe("LLMClient rate-limit retries", () => {
       { waitMs: 10000, attempt: 3, limit: 6 },
       { waitMs: 20000, attempt: 4, limit: 6 },
     ]);
+  });
+
+  it("R14 keeps the ordinary schedule for the daily free quota", async () => {
+    jest.useFakeTimers();
+    const progress = jest.fn().mockResolvedValue(undefined);
+    const client = makeClient(3, progress);
+    const create = stubOpenAI(client);
+    create.mockRejectedValue(dailyQuota());
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toThrow(
+        "Failed to get response from LLM: Provider rate limit exceeded (HTTP 429)"
+      ),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(retryWaits()).toEqual([
+      { waitMs: 2000, attempt: 2, limit: 3 },
+      { waitMs: 4000, attempt: 3, limit: 3 },
+    ]);
+    expect(checkedText(progress.mock.calls)).not.toMatch(PROVIDER_QUOTA_TEXT);
+    expect(loggedText()).not.toMatch(PROVIDER_QUOTA_TEXT);
+  });
+
+  it.each(["insufficient_quota", "daily free quota"])(
+    "R15 keeps the ordinary router stall schedule for a pre-first-chunk %s 429",
+    async (kind) => {
+      jest.useFakeTimers();
+      const progress = jest.fn().mockResolvedValue(undefined);
+      const client = makeRouterClient(3, progress);
+      const create = stubOpenAI(client);
+      create.mockRejectedValue(
+        kind === "insufficient_quota"
+          ? Object.assign(rateLimited(), { code: "insufficient_quota" })
+          : dailyQuota()
+      );
+
+      const completion = client.chatCompletion("system", "user");
+      await Promise.all([
+        expect(completion).rejects.toThrow(
+          "Failed to get response from LLM: OpenRouter stall: no first response"
+        ),
+        jest.runAllTimersAsync(),
+      ]);
+
+      expect(create).toHaveBeenCalledTimes(5);
+      expect(retryWaits()).toEqual([
+        { waitMs: 3000, attempt: 2, limit: 5 },
+        { waitMs: 6000, attempt: 3, limit: 5 },
+        { waitMs: 9000, attempt: 4, limit: 5 },
+        { waitMs: 12000, attempt: 5, limit: 5 },
+      ]);
+      expect(checkedText(progress.mock.calls)).not.toMatch(PROVIDER_QUOTA_TEXT);
+      expect(loggedText()).not.toMatch(PROVIDER_QUOTA_TEXT);
+    }
+  );
+
+  it("R16 reports the attempts made when a server error follows rate limits", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create
+      .mockRejectedValueOnce(rateLimited())
+      .mockRejectedValueOnce(rateLimited())
+      .mockRejectedValueOnce(rateLimited())
+      .mockRejectedValueOnce(providerError(500, "server error"));
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toThrow(
+        "Failed to get response from LLM: Provider server error (HTTP 500)"
+      ),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
+      "LLM attempt 4/6 failed: Provider server error (HTTP 500)"
+    );
+    expect(jest.mocked(core.error)).toHaveBeenCalledWith(
+      "LLM API error after 4 attempts: Provider server error (HTTP 500)"
+    );
+  });
+
+  it("R18 keeps the rate-limit schedule for the free per-minute quota", async () => {
+    jest.useFakeTimers();
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create.mockRejectedValue(dailyQuota("free-models-per-min", "Add 10 credits to raise free-models-per-day"));
+
+    const completion = client.chatCompletion("system", "user");
+    await Promise.all([
+      expect(completion).rejects.toThrow(
+        "Failed to get response from LLM: Provider rate limit exceeded (HTTP 429)"
+      ),
+      jest.runAllTimersAsync(),
+    ]);
+
+    expect(create).toHaveBeenCalledTimes(6);
+    expect(retryWaits().map((retry) => retry.waitMs)).toEqual([5000, 10000, 20000, 40000, 60000]);
+  });
+
+  it("R17 reports a single attempt for a non-retriable failure", async () => {
+    const client = makeClient(3);
+    const create = stubOpenAI(client);
+    create.mockRejectedValue(providerError(401, "bad key"));
+
+    await expect(client.chatCompletion("system", "user")).rejects.toThrow(
+      "Failed to get response from LLM: Provider authentication failed (HTTP 401)"
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(core.error)).toHaveBeenCalledWith(
+      "LLM API error after 1 attempt: Provider authentication failed (HTTP 401)"
+    );
   });
 
   it("R13 keeps the provider failure for a 500 followed by empty replies", async () => {
