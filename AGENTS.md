@@ -200,18 +200,19 @@ not-executed results. See
 missing or outside path keeps its own error, then returns a plain notice (no `Error:`
 prefix) when the lexical requested form or the resolved repository-relative path matches a
 built-in `DEFAULT_SKIP_PATH_PATTERNS` exclusion; the notice names the matched path and
-pattern and ends by pointing to the source or manifest, or, for a small text file with no
-line over 2000 characters that `grep` can search, to `grep` with that exact path.
-`resolve()` shares that lexical cleanup and stays byte-identical, `grep` and `list_files`
-keep their walk-based exclusions, and repository `skip-paths` still filters only the diff.
-After a forced final answer that
-has text but that a silent
+pattern and ends by pointing to the source or manifest, or, for a small text file that
+`grep` can search (not `*.min.js`/`*.min.css`, no line over 2000 characters), to `grep`
+with that exact path. `resolve()` shares that lexical cleanup and stays byte-identical,
+`grep` and `list_files` keep their walk-based exclusions, and repository `skip-paths` still
+filters only the diff. After a forced final answer that has text but that a silent
 `ReviewParser.parseDetailed(content, { quiet: true })` plus `shouldRetryStructuredReview`
-rejects, `repairFinal` sends exactly one extra `toolChoice: "none"` request in the same
-conversation with `FINAL_REPAIR_PROMPT`; a parseable reply replaces the answer and every
-failure, deadline or unparseable reply keeps the original. The natural finish and an empty
-answer are never repaired. The repair counts one agent turn in `turns` and usage
-(`forced-final` phase, next `agentTurn`), never advances the progress turn number, and logs
+rejects, `repairFinal` sends one extra logical `toolChoice: "none"` request in the same
+conversation with `FINAL_REPAIR_PROMPT` (with the usual bounded recovery dispatches); a
+parseable reply replaces the answer and every failure, deadline or unparseable reply keeps
+the original. The natural finish and an empty answer are never repaired. Once attempted,
+the repair counts one agent turn in `turns` (usage: `forced-final` phase, next
+`agentTurn`), even if a deadline or local budget rejection stops it before dispatch. It
+never advances the progress turn number, and logs
 exactly one decision line starting with `Final review repair` (the failure case is the
 warning `Final review repair failed (...)`). A caller cancellation during the repair still
 ends the run. See `docs/ADVANCED.md#investigation-and-limits`.
