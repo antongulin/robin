@@ -4,10 +4,10 @@ jest.mock("@actions/core", () => ({
   error: jest.fn(),
 }));
 
-import { createHash } from "crypto";
 import { Response } from "node-fetch";
 import * as core from "@actions/core";
-import { runAgentReview } from "./agent-review";
+import { buildAgentReviewInput, runAgentReview } from "./agent-review";
+import { getAgentReviewPrompt } from "./prompts/review-prompts";
 import {
   CompletionLengthError,
   LLMClient,
@@ -28,10 +28,60 @@ const REPAIR_PROMPT =
   "Using the investigation so far, return only the single JSON object described in the system prompt, " +
   "with no markdown and no prose.";
 
-const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-
 function toolCall(id: string, name: string, args: Record<string, unknown>) {
   return { id, name, arguments: JSON.stringify(args) };
+}
+
+/** The default turn budget the harness run uses when a test sets none. */
+const DEFAULT_MAX_TURNS = 40;
+
+/**
+ * Today's starting conversation, built from the prompt builders this PR does not change.
+ * `runAgentReview` passes the run's `instructions` and `maxTurns`, plus the annotated diff.
+ */
+function initialMessages(maxTurns: number): ChatMessage[] {
+  return [
+    { role: "system", content: getAgentReviewPrompt("", maxTurns) },
+    { role: "user", content: buildAgentReviewInput("diff", []) },
+  ];
+}
+
+/** The assistant tool message and tool result the scripted first turn produces. */
+const READ_FILE_CALL = {
+  role: "assistant" as const,
+  content: null,
+  tool_calls: [
+    {
+      id: "c1",
+      type: "function" as const,
+      function: { name: "read_file", arguments: '{"path":"src/a.ts"}' },
+    },
+  ],
+};
+
+const READ_FILE_RESULT = {
+  role: "tool" as const,
+  tool_call_id: "c1",
+  content: 'read_file result for {"path":"src/a.ts"}',
+};
+
+/** The forced-final user message, written exactly as `agent-review.ts` builds it. */
+function forcedFinalMessage(maxTurns: number) {
+  return {
+    role: "user" as const,
+    content:
+      `You have reached the ${maxTurns}-turn limit. Do not call any more tools. ` +
+      "Return the final review now as the single JSON object described in the system prompt.",
+  };
+}
+
+/**
+ * Deep equality shows the differing message; the JSON comparison also pins key order and
+ * bytes. Both are asserted so a reordering cannot pass as an equal request.
+ */
+function expectRequest(call: RecordedCall, expected: ChatMessage[]): void {
+  expect(call.messages).toEqual(expected);
+  expect(JSON.stringify(call.messages)).toBe(JSON.stringify(expected));
 }
 
 interface RecordedCall {
@@ -133,22 +183,18 @@ describe("FR1/FR2 a parseable final answer sends today's requests and log lines"
     const result = await scenario.run();
 
     expect(result).toEqual({ content: FINAL_JSON, turns: 2, toolCalls: 1, compactions: 0 });
-    expect(
-      scenario.calls.map((call) => ({
-        toolChoice: call.toolChoice,
-        usageContext: call.usageContext,
-        messages: digest(call.messages),
-      }))
-    ).toEqual([
+    const conversation = initialMessages(DEFAULT_MAX_TURNS);
+    expect(scenario.calls).toHaveLength(2);
+    expectRequest(scenario.calls[0], conversation);
+    expectRequest(scenario.calls[1], [...conversation, READ_FILE_CALL, READ_FILE_RESULT]);
+    expect(scenario.calls.map((call) => ({ toolChoice: call.toolChoice, usageContext: call.usageContext }))).toEqual([
       {
         toolChoice: undefined,
         usageContext: { phase: "agent", agentTurn: 1, recovery: false },
-        messages: "6b41e6a09cd19e7d96043133e536b9bd67f2ca68058363ecac58deb9e56f3108",
       },
       {
         toolChoice: undefined,
         usageContext: { phase: "agent", agentTurn: 2, recovery: false },
-        messages: "417cfedbe541dd4b22100485bf188b72ffe3835711ff9e18255cfc80c8e24ed5",
       },
     ]);
     expect(scenario.calls.every((call) => call.tools === REVIEW_TOOLS)).toBe(true);
@@ -174,31 +220,28 @@ describe("FR1/FR2 a parseable final answer sends today's requests and log lines"
     const result = await scenario.run();
 
     expect(result).toEqual({ content: FINAL_JSON, turns: maxTurns === 0 ? 1 : 2, toolCalls: maxTurns === 0 ? 0 : 1, compactions: 0 });
-    expect(
-      scenario.calls.map((call) => ({
-        toolChoice: call.toolChoice,
-        usageContext: call.usageContext,
-        messages: digest(call.messages),
-      }))
-    ).toEqual(
+    const conversation = initialMessages(maxTurns);
+    const expectedMessages = key === "FR2a"
+      ? [conversation, [...conversation, READ_FILE_CALL, READ_FILE_RESULT, forcedFinalMessage(1)]]
+      : [[...conversation, forcedFinalMessage(0)]];
+    expect(scenario.calls).toHaveLength(expectedMessages.length);
+    scenario.calls.forEach((call, index) => expectRequest(call, expectedMessages[index]));
+    expect(scenario.calls.map((call) => ({ toolChoice: call.toolChoice, usageContext: call.usageContext }))).toEqual(
       key === "FR2a"
         ? [
             {
               toolChoice: undefined,
               usageContext: { phase: "agent", agentTurn: 1, recovery: false },
-              messages: "60f8efb7a41206b797298a43aab56a78648b22300e4b1202c456c2b157525ebf",
             },
             {
               toolChoice: "none",
               usageContext: { phase: "forced-final", agentTurn: 2, recovery: false },
-              messages: "45951c2014a98d62b5bffef12571f26fa986e8cead553ea8eeb690475f1790b8",
             },
           ]
         : [
             {
               toolChoice: "none",
               usageContext: { phase: "forced-final", agentTurn: 1, recovery: false },
-              messages: "54ebc53a5089680d19f5b8f3773ae28ad34be926c603342a33fdd95d9798f065",
             },
           ]
     );
@@ -221,9 +264,8 @@ describe("FR3/FR3b the repair only covers a forced final that the parser cannot 
     const result = await scenario.run();
 
     expect(result).toEqual({ content: answer, turns: 1, toolCalls: 0, compactions: 0 });
-    expect(scenario.calls.map((call) => digest(call.messages))).toEqual([
-      "6b41e6a09cd19e7d96043133e536b9bd67f2ca68058363ecac58deb9e56f3108",
-    ]);
+    expect(scenario.calls).toHaveLength(1);
+    expectRequest(scenario.calls[0], initialMessages(DEFAULT_MAX_TURNS));
     expect(infoLines()).toEqual(["Agent turn 1/40", "Agent finished after 1 turn(s), 0 tool call(s), 0 compaction(s)."]);
     expect(warningLines()).toEqual([]);
   });
@@ -332,11 +374,10 @@ describe("FR4/FR5 the repair request inside the same conversation", () => {
     const result = await scenario.run();
 
     expect(scenario.calls).toHaveLength(3);
-    // The requests before the repair are byte-identical to today's (FR2a goldens).
-    expect(scenario.calls.slice(0, 2).map((call) => digest(call.messages))).toEqual([
-      "60f8efb7a41206b797298a43aab56a78648b22300e4b1202c456c2b157525ebf",
-      "45951c2014a98d62b5bffef12571f26fa986e8cead553ea8eeb690475f1790b8",
-    ]);
+    // The requests before the repair keep FR2a's exact expected messages.
+    const conversation = initialMessages(1);
+    expectRequest(scenario.calls[0], conversation);
+    expectRequest(scenario.calls[1], [...conversation, READ_FILE_CALL, READ_FILE_RESULT, forcedFinalMessage(1)]);
     const forced = scenario.calls[1];
     const repair = scenario.calls[2];
     expect(repair.toolChoice).toBe("none");
