@@ -1,4 +1,6 @@
 export const DEFAULT_LLM_TIMEOUT_MS = 600000; // 10 minutes
+/** How often an in-flight attempt repeats a "still waiting for provider" log line. Not configurable. */
+export const LLM_WAIT_LOG_INTERVAL_MS = 60_000;
 export const DEFAULT_LLM_ROUTER_TIMEOUT_MS = 120000; // 2 minutes — openrouter/free happy path is ~60-90s
 export const DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = 45000; // no SSE = stacked router; fail fast and retry
 export const DEFAULT_LLM_COMPLETION_ATTEMPTS = 3;

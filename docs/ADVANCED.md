@@ -503,6 +503,12 @@ reasoning generation limits and reduce the review scope. If the input is too lar
 split the change into smaller logically complete PRs, keeping related implementation
 and tests together, or select a model/provider with larger effective context capacity.
 After adjusting the cause, comment `/robin` to try again. Missing finish metadata remains compatible.
+When the error adds "Reasoning used the whole output budget", the model spent every output token
+on reasoning and produced no answer text. Raise `max-output-tokens` or lower `reasoning-effort`.
+Large generated or minified files in the diff make this more likely (exclude them with
+`skip-paths`), as do a stale or unrelated `review-instructions` input in the caller workflow, a low
+`max-output-tokens`, and a high `reasoning-effort`. Robin does not retry with lower effort, because
+that would silently change a setting you chose.
 If a compaction summary fails or does not shrink the history enough, Robin keeps the
 previous notes and unsummarized messages, apart from already-consumed tool results safely
 elided in step 1. Proactive cleanup can continue the review; reactive recovery stops if it
@@ -778,6 +784,15 @@ jobs:
 ```
 
 If you raise `llm-timeout-ms` above 10 minutes, also raise the job `timeout-minutes`.
+
+`llm-timeout-ms` bounds the wait for the provider's response to start. While an attempt is in
+flight, Robin logs `LLM attempt N/M: still waiting for provider (S s elapsed)` every 60 seconds.
+When an attempt ends by timeout, it logs one line before the usual failure and retry lines:
+`LLM attempt N/M timed out after S s with no response from the provider.` when `llm-timeout-ms`
+was reached before the response started, or `LLM attempt N/M timed out after S s: the provider
+started a response, then stopped sending data.` when the provider stopped mid-response. A response
+that starts and then stops sending data ends when the HTTP connection has been idle for 5 minutes
+or `llm-timeout-ms` plus 1 second, whichever is longer (about 10 minutes with the default).
 
 ### Provider notes
 
@@ -1116,12 +1131,13 @@ No daily quota from this action. Real limits:
 | `Input required: model` | Missing secret | Add `LLM_MODEL` |
 | `Input required: llm-base-url` | Missing secret | Add `LLM_BASE_URL` |
 | `Empty response from LLM` | Provider returned no usable text or tool calls without an explicit length stop | Action retries with bounded backoff and retains the finish reason (`unknown` if absent) |
-| `Incomplete LLM output (finish_reason=length...)` | Provider explicitly reported truncated generation; the reason alone does not identify the responsible limit | Robin discards partial text/tools and stops without unchanged retries or a diff-only fallback. Check output/reasoning generation limits and reduce scope. If input is too large, use smaller logically complete PRs (keep implementation/tests together) or larger effective context capacity; retry `/robin` after adjusting the cause |
+| `Incomplete LLM output (finish_reason=length...)` | Provider explicitly reported truncated generation; the reason alone does not identify the responsible limit | Robin discards partial text/tools and stops without unchanged retries or a diff-only fallback. Check output/reasoning generation limits and reduce scope. If input is too large, use smaller logically complete PRs (keep implementation/tests together) or larger effective context capacity; retry `/robin` after adjusting the cause. When the message adds `Reasoning used the whole output budget`, the model spent all output tokens on reasoning: raise `max-output-tokens` or lower `reasoning-effort`. Large generated or minified files (exclude them with `skip-paths`), a stale or unrelated `review-instructions` input, a low `max-output-tokens`, and a high `reasoning-effort` drive it; Robin does not lower effort on a retry because that would silently change a setting you chose |
 | Provider context/input-limit error | Review input exceeds the model/provider’s effective capacity | Use smaller logically complete PRs (keep related implementation/tests together) or a model/provider with larger effective context capacity; retry `/robin` after adjusting input or capacity |
 | `OpenRouter stall: no first response` | Auto-router hung, or failed before its first chunk, before picking a provider | Robin waits up to 45 s for the first chunk, then retries (up to 5 attempts, waiting 3, 6, 9 and 12 s between them) and the PR status comment updates each attempt. When the underlying failure was a provider 429, the stall text is only the wrapper: the native error is retained and the rate-limit row below applies, except that a permanent quota 429 (such as `insufficient_quota` or OpenRouter's free daily quota, `free-models-per-day`) keeps the ordinary 5 attempts |
 | Job cancelled / 45 min with no review | Hung LLM or concurrency cancel while waiting | Status comment should say interrupted — comment `/robin` again; pin `@v2.0.4`+ for stall detect |
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |
-| `Request timed out` | Large PR or slow free model | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
+| `LLM attempt N/M timed out after S s` | Large PR or slow free model: the attempt reached its limit before the provider's response started, or the response stalled | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
+| `LLM attempt N/M: still waiting for provider` repeats for many minutes | The provider accepted the request but has not answered | The attempt ends at the timeout above or at the agent deadline. Check the provider's status. Large generated or minified files in the diff make turns slower — exclude them with `skip-paths` |
 | `Provider rate limit exceeded (HTTP 429)` | Provider capacity burst, often 10–30 s | Robin retries up to 6 attempts with 5/10/20/40/60 s waits and honors a longer `Retry-After` (capped at 60 s; a shorter hint never shortens the schedule). Router models (`openrouter/free`, `openrouter/auto`) surface a 429 as `OpenRouter stall: no first response ...` and still get this schedule. A permanent 429 such as `insufficient_quota`, `billing_hard_limit_reached`, or OpenRouter’s free daily quota (`free-models-per-day`) keeps the ordinary attempt count instead (3 for a fixed model, 5 for OpenRouter router models), with linear waits and no `Retry-After`. OpenRouter’s per-minute free limit keeps the rate-limit schedule. If a burst still fails, run `/robin` again after it passes. A permanent quota 429 will not clear by retrying: wait for the quota to reset (OpenRouter's free daily quota resets daily) or add credits or fix billing. |
 | `temperature` / `max_tokens` / `response_format` rejected | Newer model refuses an optional parameter (OpenAI reasoning models, Kimi) | Action warns, retries once with the parameter renamed or omitted (`max_tokens` ↔ `max_completion_tokens`, `temperature` dropped), and keeps that shape for the run. If the endpoint rejects both token-cap spellings, the provider error surfaces instead of running uncapped. Set `llm-temperature` only to pin a specific value (Kimi: `1`) |
 | `404` on `https://api.anthropic.com` | Base URL missing `/v1` on an older Robin | Use `https://api.anthropic.com/v1`; `@v2`/`@main` normalize it automatically |

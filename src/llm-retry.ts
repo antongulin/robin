@@ -389,6 +389,32 @@ export function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new LlmRequestCancelledError();
 }
 
+/**
+ * Which part of a timed-out attempt the native error represents, or undefined when it is not a
+ * timeout. Walks the error and its bounded, cycle-safe cause chain: an SDK timeout before the
+ * provider responds says exactly `Request timed out.`, while a response that starts and then stops
+ * sending data surfaces as a transport `ERR_SOCKET_TIMEOUT`. Any node carrying a numeric `status`
+ * is a provider response, never a client-side timeout, so it stays undefined. Provider text never
+ * leaves this boundary; callers log their own fixed wording.
+ */
+export function requestTimeoutPhase(
+  error: unknown
+): "before-response" | "during-response" | undefined {
+  if (!error || typeof error === "string" || isCancellationError(error)) return undefined;
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+    if (!current || typeof current !== "object" || seen.has(current)) return undefined;
+    seen.add(current);
+    const node = current as { status?: unknown; code?: unknown; message?: unknown; cause?: unknown };
+    if (typeof node.status === "number" && Number.isFinite(node.status)) return undefined;
+    if (node.code === "ERR_SOCKET_TIMEOUT") return "during-response";
+    if (node.message === "Request timed out.") return "before-response";
+    current = node.cause;
+  }
+  return undefined;
+}
+
 export function isRetriableLlmError(error: unknown, context: LlmRetryContext = {}): boolean {
   if (!error) return false;
 

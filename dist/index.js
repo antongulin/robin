@@ -683,10 +683,12 @@ function hasRequiredPermission(permission, minimumPermission) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.MAX_LLM_TEMPERATURE = exports.DEFAULT_LLM_TEMPERATURE = exports.MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS = exports.MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS = exports.DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS = exports.DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
+exports.MAX_LLM_TEMPERATURE = exports.DEFAULT_LLM_TEMPERATURE = exports.MAX_LLM_RATE_LIMIT_RETRY_DELAY_MS = exports.MIN_LLM_RATE_LIMIT_RETRY_DELAY_MS = exports.DEFAULT_LLM_RATE_LIMIT_RETRY_DELAYS_MS = exports.DEFAULT_LLM_RATE_LIMIT_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_RETRY_DELAY_MS = exports.DEFAULT_LLM_RETRY_DELAY_MS = exports.DEFAULT_LLM_ROUTER_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = exports.LLM_WAIT_LOG_INTERVAL_MS = exports.DEFAULT_LLM_TIMEOUT_MS = void 0;
 exports.parseLLMTimeout = parseLLMTimeout;
 exports.parseLLMTemperature = parseLLMTemperature;
 exports.DEFAULT_LLM_TIMEOUT_MS = 600000; // 10 minutes
+/** How often an in-flight attempt repeats a "still waiting for provider" log line. Not configurable. */
+exports.LLM_WAIT_LOG_INTERVAL_MS = 60_000;
 exports.DEFAULT_LLM_ROUTER_TIMEOUT_MS = 120000; // 2 minutes — openrouter/free happy path is ~60-90s
 exports.DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS = 45000; // no SSE = stacked router; fail fast and retry
 exports.DEFAULT_LLM_COMPLETION_ATTEMPTS = 3;
@@ -1450,7 +1452,16 @@ class CompletionLengthError extends Error {
         const counts = usage
             ? Object.entries(usage).map(([key, value]) => `${key}=${value}`).join(", ")
             : "";
-        super(`Incomplete LLM output (finish_reason=length${counts ? `; ${counts}` : ""}). Partial text and tool calls were discarded.`);
+        // Only when the budget clearly went to reasoning: a count that is missing or below the
+        // completion total cannot establish that, and the message must stay unchanged there.
+        const reasoning = usage?.reasoning_tokens;
+        const completion = usage?.completion_tokens;
+        const reasoningExhausted = typeof reasoning === "number" && typeof completion === "number" &&
+            completion > 0 && reasoning >= completion;
+        const reasoningNote = reasoningExhausted
+            ? ` Reasoning used the whole output budget (reasoning_tokens=${reasoning}, completion_tokens=${completion}), so no answer text was produced: raise max-output-tokens or lower reasoning-effort.`
+            : "";
+        super(`Incomplete LLM output (finish_reason=length${counts ? `; ${counts}` : ""}). Partial text and tool calls were discarded.${reasoningNote}`);
         this.usage = usage;
         this.name = "CompletionLengthError";
     }
@@ -1721,9 +1732,19 @@ class LLMClient {
             (0, llm_retry_1.throwIfAborted)(options.signal);
             const useJson = (0, llm_retry_1.shouldUseJsonResponseMode)(attempt, options.jsonResponseMode);
             let rateLimited = false;
+            let attemptStartedAt = Date.now();
+            let waitTimer;
             try {
                 core.info(`LLM attempt ${attempt}/${attemptLimit}: waiting for provider...`);
                 await this.progress(`Waiting for provider (attempt ${attempt}/${attemptLimit})…`);
+                attemptStartedAt = Date.now();
+                // Visibility only: a stalled attempt must not look identical to a slow one. The status
+                // comment keeps its own heartbeat, so this never calls `progress`.
+                waitTimer = setInterval(() => {
+                    const seconds = Math.round((Date.now() - attemptStartedAt) / 1000);
+                    core.info(`LLM attempt ${attempt}/${attemptLimit}: still waiting for provider (${seconds} s elapsed)`);
+                }, config_1.LLM_WAIT_LOG_INTERVAL_MS);
+                waitTimer.unref?.();
                 const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson }, logicalCall, attempt, trigger);
                 // An aborted caller discards any late result: cancellation is terminal, never a success.
                 (0, llm_retry_1.throwIfAborted)(options.signal);
@@ -1756,6 +1777,13 @@ class LLMClient {
                     throw new ToolsUnsupportedError(error);
                 }
                 rateLimited = (0, llm_retry_1.isRateLimitError)(error);
+                const timeoutPhase = (0, llm_retry_1.requestTimeoutPhase)(error);
+                if (timeoutPhase) {
+                    const seconds = Math.round((Date.now() - attemptStartedAt) / 1000);
+                    core.warning(timeoutPhase === "before-response"
+                        ? `LLM attempt ${attempt}/${attemptLimit} timed out after ${seconds} s with no response from the provider.`
+                        : `LLM attempt ${attempt}/${attemptLimit} timed out after ${seconds} s: the provider started a response, then stopped sending data.`);
+                }
                 core.warning(`LLM attempt ${attempt}/${attemptLimit} failed: ${providerFailureSummary(error)}`);
                 attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
                 if (!(0, llm_retry_1.isRetriableLlmError)(error, this.retryContext()) || attempt >= attemptLimit) {
@@ -1763,6 +1791,11 @@ class LLMClient {
                     core.error(`LLM API error after ${attempts}: ${providerFailureSummary(error)}`);
                     throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
                 }
+            }
+            finally {
+                // Stops on success, failure, length error, budget error and cancellation.
+                if (waitTimer)
+                    clearInterval(waitTimer);
             }
             // The loop ceiling covers the longer rate-limit schedule; stop at this attempt's cap.
             if (attempt >= attemptLimit)
@@ -2266,6 +2299,7 @@ exports.isToolsUnsupportedError = isToolsUnsupportedError;
 exports.isContextLengthError = isContextLengthError;
 exports.isCancellationError = isCancellationError;
 exports.throwIfAborted = throwIfAborted;
+exports.requestTimeoutPhase = requestTimeoutPhase;
 exports.isRetriableLlmError = isRetriableLlmError;
 exports.isRateLimitError = isRateLimitError;
 exports.parseRetryAfterMs = parseRetryAfterMs;
@@ -2610,6 +2644,34 @@ function isCancellationError(error) {
 function throwIfAborted(signal) {
     if (signal?.aborted)
         throw new LlmRequestCancelledError();
+}
+/**
+ * Which part of a timed-out attempt the native error represents, or undefined when it is not a
+ * timeout. Walks the error and its bounded, cycle-safe cause chain: an SDK timeout before the
+ * provider responds says exactly `Request timed out.`, while a response that starts and then stops
+ * sending data surfaces as a transport `ERR_SOCKET_TIMEOUT`. Any node carrying a numeric `status`
+ * is a provider response, never a client-side timeout, so it stays undefined. Provider text never
+ * leaves this boundary; callers log their own fixed wording.
+ */
+function requestTimeoutPhase(error) {
+    if (!error || typeof error === "string" || isCancellationError(error))
+        return undefined;
+    const seen = new Set();
+    let current = error;
+    for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+        if (!current || typeof current !== "object" || seen.has(current))
+            return undefined;
+        seen.add(current);
+        const node = current;
+        if (typeof node.status === "number" && Number.isFinite(node.status))
+            return undefined;
+        if (node.code === "ERR_SOCKET_TIMEOUT")
+            return "during-response";
+        if (node.message === "Request timed out.")
+            return "before-response";
+        current = node.cause;
+    }
+    return undefined;
 }
 function isRetriableLlmError(error, context = {}) {
     if (!error)

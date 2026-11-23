@@ -9,6 +9,7 @@ import {
   DEFAULT_LLM_ROUTER_FIRST_CHUNK_MS,
   DEFAULT_LLM_TEMPERATURE,
   DEFAULT_LLM_TIMEOUT_MS,
+  LLM_WAIT_LOG_INTERVAL_MS,
 } from "./config";
 import {
   computeRateLimitRetryDelayMs,
@@ -30,6 +31,7 @@ import {
   LlmRequestCancelledError,
   openRouterStallError,
   parseRetryAfterMs,
+  requestTimeoutPhase,
   resolveLlmTimeoutMs,
   shouldUseJsonResponseMode,
   throwIfAborted,
@@ -100,7 +102,19 @@ export class CompletionLengthError extends Error {
     const counts = usage
       ? Object.entries(usage).map(([key, value]) => `${key}=${value}`).join(", ")
       : "";
-    super(`Incomplete LLM output (finish_reason=length${counts ? `; ${counts}` : ""}). Partial text and tool calls were discarded.`);
+    // Only when the budget clearly went to reasoning: a count that is missing or below the
+    // completion total cannot establish that, and the message must stay unchanged there.
+    const reasoning = usage?.reasoning_tokens;
+    const completion = usage?.completion_tokens;
+    const reasoningExhausted =
+      typeof reasoning === "number" && typeof completion === "number" &&
+      completion > 0 && reasoning >= completion;
+    const reasoningNote = reasoningExhausted
+      ? ` Reasoning used the whole output budget (reasoning_tokens=${reasoning}, completion_tokens=${completion}), so no answer text was produced: raise max-output-tokens or lower reasoning-effort.`
+      : "";
+    super(
+      `Incomplete LLM output (finish_reason=length${counts ? `; ${counts}` : ""}). Partial text and tool calls were discarded.${reasoningNote}`
+    );
     this.name = "CompletionLengthError";
   }
 }
@@ -460,12 +474,22 @@ export class LLMClient {
       throwIfAborted(options.signal);
       const useJson = shouldUseJsonResponseMode(attempt, options.jsonResponseMode);
       let rateLimited = false;
+      let attemptStartedAt = Date.now();
+      let waitTimer: ReturnType<typeof setInterval> | undefined;
 
       try {
         core.info(`LLM attempt ${attempt}/${attemptLimit}: waiting for provider...`);
         await this.progress(
           `Waiting for provider (attempt ${attempt}/${attemptLimit})…`
         );
+        attemptStartedAt = Date.now();
+        // Visibility only: a stalled attempt must not look identical to a slow one. The status
+        // comment keeps its own heartbeat, so this never calls `progress`.
+        waitTimer = setInterval(() => {
+          const seconds = Math.round((Date.now() - attemptStartedAt) / 1000);
+          core.info(`LLM attempt ${attempt}/${attemptLimit}: still waiting for provider (${seconds} s elapsed)`);
+        }, LLM_WAIT_LOG_INTERVAL_MS);
+        waitTimer.unref?.();
         const result = await this.performRequest(messages, { ...options, jsonResponseMode: useJson }, logicalCall, attempt, trigger);
         // An aborted caller discards any late result: cancellation is terminal, never a success.
         throwIfAborted(options.signal);
@@ -499,6 +523,15 @@ export class LLMClient {
           throw new ToolsUnsupportedError(error);
         }
         rateLimited = isRateLimitError(error);
+        const timeoutPhase = requestTimeoutPhase(error);
+        if (timeoutPhase) {
+          const seconds = Math.round((Date.now() - attemptStartedAt) / 1000);
+          core.warning(
+            timeoutPhase === "before-response"
+              ? `LLM attempt ${attempt}/${attemptLimit} timed out after ${seconds} s with no response from the provider.`
+              : `LLM attempt ${attempt}/${attemptLimit} timed out after ${seconds} s: the provider started a response, then stopped sending data.`
+          );
+        }
         core.warning(`LLM attempt ${attempt}/${attemptLimit} failed: ${providerFailureSummary(error)}`);
         attemptLimit = rateLimited ? this.rateLimitAttempts : this.maxAttempts;
 
@@ -507,6 +540,9 @@ export class LLMClient {
           core.error(`LLM API error after ${attempts}: ${providerFailureSummary(error)}`);
           throw new LLMRequestError(`Failed to get response from LLM: ${providerFailureSummary(error)}`, { cause: error });
         }
+      } finally {
+        // Stops on success, failure, length error, budget error and cancellation.
+        if (waitTimer) clearInterval(waitTimer);
       }
 
       // The loop ceiling covers the longer rate-limit schedule; stop at this attempt's cap.
