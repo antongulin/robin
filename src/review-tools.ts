@@ -155,7 +155,7 @@ export class ReviewToolbox {
       const skipped = requestedPattern ? requested : relative;
       return (
         `${skipped} was not read: it matches Robin's built-in review exclusion "${pattern}" ` +
-        "for lockfiles, build output, vendored and minified files. Read the source files instead."
+        `for lockfiles, build output, vendored and minified files. ${await skipNoticeEnding(absolute, pattern)}`
       );
     }
     const stat = await fs.stat(absolute);
@@ -368,6 +368,23 @@ function cleanPathInput(input: string): string {
 function matchedSkipPattern(relative: string): string | undefined {
   if (relative === ".") return undefined;
   return DEFAULT_SKIP_PATH_PATTERNS.find((pattern) => matchPathPattern(pattern, relative));
+}
+
+/**
+ * Last sentence of the skip notice. `grep` walks a file you name directly, but it skips files
+ * over its size cap without saying so and only tests the start of each line, so pointing at it
+ * is only honest for a regular, small, unminified file.
+ */
+async function skipNoticeEnding(absolute: string, pattern: string): Promise<string> {
+  const short = "Read the source or manifest instead.";
+  if (pattern === "**/*.min.js" || pattern === "**/*.min.css") return short;
+  try {
+    const stat = await fs.stat(absolute);
+    if (!stat.isFile() || stat.size > MAX_GREP_FILE_BYTES) return short;
+  } catch {
+    return short;
+  }
+  return "Read the source or manifest instead, or grep this exact path to check specific lines.";
 }
 
 function isBinary(buffer: Buffer): boolean {
