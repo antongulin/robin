@@ -146,6 +146,18 @@ export class ReviewToolbox {
   private async readFile(args: ToolArgs): Promise<string> {
     const relInput = requireString(args.path, "path");
     const { absolute, relative } = await this.resolve(relInput);
+    // Resolve first so a missing or outside path keeps its own error. The requested form keeps
+    // spellings such as `dist/x` that a symlink may redirect away from the exclusion.
+    const requested = this.toRelative(path.resolve(this.root, cleanPathInput(relInput) || "."));
+    const requestedPattern = matchedSkipPattern(requested);
+    const pattern = requestedPattern ?? matchedSkipPattern(relative);
+    if (pattern) {
+      const skipped = requestedPattern ? requested : relative;
+      return (
+        `${skipped} was not read: it matches Robin's built-in review exclusion "${pattern}" ` +
+        `for lockfiles, build output, vendored and minified files. ${await skipNoticeEnding(absolute, pattern)}`
+      );
+    }
     const stat = await fs.stat(absolute);
     if (stat.isDirectory()) {
       throw new Error(`${relative} is a directory; use list_files instead.`);
@@ -309,7 +321,7 @@ export class ReviewToolbox {
 
   /** Resolves a model-supplied path and rejects anything (including symlink targets) outside the root. */
   private async resolve(input: string): Promise<{ absolute: string; relative: string }> {
-    const cleaned = input.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
+    const cleaned = cleanPathInput(input);
     const candidate = path.resolve(this.root, cleaned || ".");
     if (!this.isInside(candidate)) {
       throw new Error(`path "${input}" is outside the repository.`);
@@ -345,6 +357,40 @@ export class ReviewToolbox {
 function matchesGlob(glob: string, relative: string): boolean {
   const target = glob.includes("/") ? relative : relative.slice(relative.lastIndexOf("/") + 1);
   return matchPathPattern(glob, target);
+}
+
+/** The single lexical normalization used for both resolution and the skip check. */
+function cleanPathInput(input: string): string {
+  return input.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
+}
+
+/** First built-in exclusion that matches a repository-relative path; the root itself never does. */
+function matchedSkipPattern(relative: string): string | undefined {
+  if (relative === ".") return undefined;
+  return DEFAULT_SKIP_PATH_PATTERNS.find((pattern) => matchPathPattern(pattern, relative));
+}
+
+/**
+ * Last sentence of the skip notice. `grep` walks a file you name directly, but it skips files
+ * over its size cap without saying so, drops binary files, and only tests the first
+ * `MAX_GREP_LINE_CHARS` characters of each line, so pointing at it is only honest for a
+ * regular, small, text file whose every line it can search whole.
+ */
+async function skipNoticeEnding(absolute: string, pattern: string): Promise<string> {
+  const short = "Read the source or manifest instead.";
+  if (pattern === "**/*.min.js" || pattern === "**/*.min.css") return short;
+  try {
+    const stat = await fs.stat(absolute);
+    if (!stat.isFile() || stat.size > MAX_GREP_FILE_BYTES) return short;
+    // Mirror `grep` exactly: it reads the same way and drops a binary file, or one whose lines
+    // it would only test in part.
+    const buffer = await fs.readFile(absolute);
+    if (isBinary(buffer)) return short;
+    if (buffer.toString("utf8").split("\n").some((line) => line.length > MAX_GREP_LINE_CHARS)) return short;
+  } catch {
+    return short;
+  }
+  return "Read the source or manifest instead, or grep this exact path to check specific lines.";
 }
 
 function isBinary(buffer: Buffer): boolean {

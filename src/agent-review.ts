@@ -4,6 +4,8 @@ import type { ChatCompletionResult, ChatMessage, LLMClient, ToolCall } from "./l
 import { AgentDeadlineError, isCancellationError, isContextLengthError } from "./llm-retry";
 import { getAgentReviewPrompt } from "./prompts/review-prompts";
 import { DEFAULT_AGENT_MAX_TURNS } from "./repo-config";
+import { ReviewParser } from "./review-parser";
+import { shouldRetryStructuredReview } from "./review-retry";
 import { REVIEW_TOOLS, ReviewToolbox } from "./review-tools";
 import type { AgentProgress } from "./status-reporter";
 
@@ -27,6 +29,11 @@ const ELIDED_TOOL_RESULT =
   "[Earlier tool result removed to save context; call the tool again if you still need it.]";
 const NOT_EXECUTED_TOOL_RESULT =
   "Error: not executed — the agent time budget was reached before this call ran.";
+/** One extra request, sent only when a forced final answer has text the parser cannot read as a review. */
+const FINAL_REPAIR_PROMPT =
+  "Your previous reply could not be parsed as the required review. Do not call any tools. " +
+  "Using the investigation so far, return only the single JSON object described in the system prompt, " +
+  "with no markdown and no prose.";
 
 export interface AgentBudgets {
   maxTurns: number;
@@ -295,7 +302,11 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     return currentBytes - removal;
   };
 
-  const callModel = async (activity: string, toolChoice?: "none"): Promise<ChatCompletionResult> => {
+  const callModel = async (
+    activity: string,
+    toolChoice?: "none",
+    agentTurn?: number
+  ): Promise<ChatCompletionResult> => {
     const finalizing = toolChoice === "none";
     const phase = finalizing ? "finalization" : "investigation";
     const phaseDeadline = finalizing ? deadline : investigationCutoff;
@@ -312,7 +323,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
             toolChoice,
             usageContext: {
               phase: finalizing ? "forced-final" : "agent",
-              agentTurn: finalizing ? turns + 1 : turns,
+              agentTurn: finalizing ? (agentTurn ?? turns + 1) : turns,
               recovery: dispatches > 1,
             },
             signal,
@@ -357,6 +368,55 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
         }
       }
     }
+  };
+
+  /**
+   * One repair request for a forced final answer that has text but no parseable review. It runs
+   * in the same conversation and inside the overall deadline, and it never replaces a usable
+   * answer: any failure keeps the original. `dispatched` counts the extra agent turn.
+   */
+  const repairFinal = async (
+    answer: ChatCompletionResult,
+    agentTurn: number
+  ): Promise<{ content: string; dispatched: boolean }> => {
+    const parsed = ReviewParser.parseDetailed(answer.content, { quiet: true });
+    if (!shouldRetryStructuredReview(parsed.findings, parsed.usedJson)) {
+      return { content: answer.content, dispatched: false };
+    }
+    if (now() >= deadline) {
+      core.info("Final review repair: skipped, the time limit was reached; keeping the original answer.");
+      return { content: answer.content, dispatched: false };
+    }
+    messages.push({
+      role: "assistant",
+      content: answer.content,
+      ...(typeof answer.reasoningContent === "string" ? { reasoning_content: answer.reasoningContent } : {}),
+    });
+    messages.push({ role: "user", content: FINAL_REPAIR_PROMPT });
+    let reply: ChatCompletionResult;
+    try {
+      reply = await callModel(
+        "Final answer could not be parsed — asking once for the JSON review",
+        "none",
+        agentTurn
+      );
+    } catch (error) {
+      // The deadline also matches isCancellationError, so it is checked first.
+      if (error instanceof AgentDeadlineError) {
+        core.info("Final review repair: skipped, the time limit was reached; keeping the original answer.");
+        return { content: answer.content, dispatched: true };
+      }
+      if (isCancellationError(error)) throw error;
+      core.warning(`Final review repair failed (${errorCategory(error)}); keeping the original answer.`);
+      return { content: answer.content, dispatched: true };
+    }
+    const repaired = ReviewParser.parseDetailed(reply.content, { quiet: true });
+    if (!shouldRetryStructuredReview(repaired.findings, repaired.usedJson)) {
+      core.info("Final review repair: used the corrected answer.");
+      return { content: reply.content, dispatched: true };
+    }
+    core.info("Final review repair: the reply could not be parsed; keeping the original answer.");
+    return { content: answer.content, dispatched: true };
   };
 
   let stopReason = `reached the ${budgets.maxTurns}-turn limit`;
@@ -446,10 +506,17 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     `Investigation ${stopReason.replace(/^reached/, "hit")} — writing the final review`,
     "none"
   );
-  if (!final.content.trim()) {
+  let finalContent = final.content;
+  let repaired = false;
+  if (final.content.trim()) {
+    const outcome = await repairFinal(final, turns + 2);
+    finalContent = outcome.content;
+    repaired = outcome.dispatched;
+  }
+  if (!finalContent.trim()) {
     throw new Error("Agent review returned no final answer after the tool budget was used.");
   }
-  return { content: final.content, turns: turns + 1, toolCalls: toolCallCount, compactions };
+  return { content: finalContent, turns: turns + 1 + (repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
 }
 
 export function buildAgentReviewInput(annotatedDiff: string, changedFiles: string[]): string {

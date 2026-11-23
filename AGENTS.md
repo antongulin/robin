@@ -196,6 +196,26 @@ at its own deadline, dispatches nothing after it, and gives unrun tool calls exp
 not-executed results. See
 `docs/ADVANCED.md#agent-mode-multi-turn-review-with-repository-context`.
 
+**Agent read exclusions and final repair.** `read_file` resolves the path first, so a
+missing or outside path keeps its own error, then returns a plain notice (no `Error:`
+prefix) when the lexical requested form or the resolved repository-relative path matches a
+built-in `DEFAULT_SKIP_PATH_PATTERNS` exclusion; the notice names the matched path and
+pattern and ends by pointing to the source or manifest, or, for a small text file with no
+line over 2000 characters that `grep` can search, to `grep` with that exact path.
+`resolve()` shares that lexical cleanup and stays byte-identical, `grep` and `list_files`
+keep their walk-based exclusions, and repository `skip-paths` still filters only the diff.
+After a forced final answer that
+has text but that a silent
+`ReviewParser.parseDetailed(content, { quiet: true })` plus `shouldRetryStructuredReview`
+rejects, `repairFinal` sends exactly one extra `toolChoice: "none"` request in the same
+conversation with `FINAL_REPAIR_PROMPT`; a parseable reply replaces the answer and every
+failure, deadline or unparseable reply keeps the original. The natural finish and an empty
+answer are never repaired. The repair counts one agent turn in `turns` and usage
+(`forced-final` phase, next `agentTurn`), never advances the progress turn number, and logs
+exactly one decision line starting with `Final review repair` (the failure case is the
+warning `Final review repair failed (...)`). A caller cancellation during the repair still
+ends the run. See `docs/ADVANCED.md#investigation-and-limits`.
+
 **Usage reporting.** Keep accounting below both retry loops and observe before extraction or
 awaited stream progress. Pass phase context explicitly; never send it to the provider.
 Preserve unknown/nonfinal coverage and preceding attempts; cached/reasoning counts stay
@@ -210,14 +230,16 @@ input blank so the public `ollama` fallback sent to the SDK does not suppress re
 
 **Private assistant replay.** Preserve a provider-supplied string `reasoning_content`
 as private completion metadata, including empty strings and streamed string deltas.
-Replay it unchanged only on its original assistant tool message, including retained
-compaction tails and forced-final requests. Omit absent or invalid values. Keep it out
-of summary prompts, progress/status updates, Robin logs, and visible reviews; use
-`content` for review text. Provider error bodies can echo credentials or replay data:
-retain native causes internally for classification, but use controlled failure categories
-and numeric HTTP status in LLM errors, logs and progress updates. Do not publish raw
-provider messages, including compatibility and tool-support errors. Empty-response logs
-and failure messages use known completion-reason labels or `unknown` for invalid values.
+Replay it unchanged only on its own assistant message: tool turns (including retained
+compaction tails and forced-final requests) and, in the final-answer repair request, the
+forced final answer that request sends back. Omit absent
+or invalid values. Keep it out of summary prompts, progress/status updates, Robin logs, and
+visible reviews; use `content` for review text. Provider error bodies can echo credentials
+or replay data: retain native causes internally for classification, but use controlled
+failure categories and numeric HTTP status in LLM errors, logs and progress updates. Do not
+publish raw provider messages, including compatibility and tool-support errors.
+Empty-response logs and failure messages use known completion-reason labels or `unknown` for
+invalid values.
 Low-level SDK debug logging can expose raw payloads.
 
 **Host-scoped provider handling.** A provider-specific request shape or error adaptation keys on

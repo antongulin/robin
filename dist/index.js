@@ -48,6 +48,8 @@ const core = __importStar(__nccwpck_require__(7484));
 const llm_retry_1 = __nccwpck_require__(4069);
 const review_prompts_1 = __nccwpck_require__(319);
 const repo_config_1 = __nccwpck_require__(2800);
+const review_parser_1 = __nccwpck_require__(2141);
+const review_retry_1 = __nccwpck_require__(450);
 const review_tools_1 = __nccwpck_require__(7635);
 exports.DEFAULT_AGENT_DEADLINE_MS = 30 * 60 * 1000;
 /**
@@ -67,6 +69,10 @@ const MAX_TOOL_CALLS_PER_TURN = 16;
 const MAX_SUMMARY_BYTES = 12_000;
 const ELIDED_TOOL_RESULT = "[Earlier tool result removed to save context; call the tool again if you still need it.]";
 const NOT_EXECUTED_TOOL_RESULT = "Error: not executed — the agent time budget was reached before this call ran.";
+/** One extra request, sent only when a forced final answer has text the parser cannot read as a review. */
+const FINAL_REPAIR_PROMPT = "Your previous reply could not be parsed as the required review. Do not call any tools. " +
+    "Using the investigation so far, return only the single JSON object described in the system prompt, " +
+    "with no markdown and no prose.";
 /** Internal signal: investigation time is gone, but finalization still has its reserve. */
 class InvestigationCutoffError extends Error {
     constructor(message) {
@@ -292,7 +298,7 @@ async function runAgentReview(options) {
         const removal = Math.max(Math.floor(currentBytes / 2), excessBytes);
         return currentBytes - removal;
     };
-    const callModel = async (activity, toolChoice) => {
+    const callModel = async (activity, toolChoice, agentTurn) => {
         const finalizing = toolChoice === "none";
         const phase = finalizing ? "finalization" : "investigation";
         const phaseDeadline = finalizing ? deadline : investigationCutoff;
@@ -307,7 +313,7 @@ async function runAgentReview(options) {
                     toolChoice,
                     usageContext: {
                         phase: finalizing ? "forced-final" : "agent",
-                        agentTurn: finalizing ? turns + 1 : turns,
+                        agentTurn: finalizing ? (agentTurn ?? turns + 1) : turns,
                         recovery: dispatches > 1,
                     },
                     signal,
@@ -361,6 +367,49 @@ async function runAgentReview(options) {
                 }
             }
         }
+    };
+    /**
+     * One repair request for a forced final answer that has text but no parseable review. It runs
+     * in the same conversation and inside the overall deadline, and it never replaces a usable
+     * answer: any failure keeps the original. `dispatched` counts the extra agent turn.
+     */
+    const repairFinal = async (answer, agentTurn) => {
+        const parsed = review_parser_1.ReviewParser.parseDetailed(answer.content, { quiet: true });
+        if (!(0, review_retry_1.shouldRetryStructuredReview)(parsed.findings, parsed.usedJson)) {
+            return { content: answer.content, dispatched: false };
+        }
+        if (now() >= deadline) {
+            core.info("Final review repair: skipped, the time limit was reached; keeping the original answer.");
+            return { content: answer.content, dispatched: false };
+        }
+        messages.push({
+            role: "assistant",
+            content: answer.content,
+            ...(typeof answer.reasoningContent === "string" ? { reasoning_content: answer.reasoningContent } : {}),
+        });
+        messages.push({ role: "user", content: FINAL_REPAIR_PROMPT });
+        let reply;
+        try {
+            reply = await callModel("Final answer could not be parsed — asking once for the JSON review", "none", agentTurn);
+        }
+        catch (error) {
+            // The deadline also matches isCancellationError, so it is checked first.
+            if (error instanceof llm_retry_1.AgentDeadlineError) {
+                core.info("Final review repair: skipped, the time limit was reached; keeping the original answer.");
+                return { content: answer.content, dispatched: true };
+            }
+            if ((0, llm_retry_1.isCancellationError)(error))
+                throw error;
+            core.warning(`Final review repair failed (${errorCategory(error)}); keeping the original answer.`);
+            return { content: answer.content, dispatched: true };
+        }
+        const repaired = review_parser_1.ReviewParser.parseDetailed(reply.content, { quiet: true });
+        if (!(0, review_retry_1.shouldRetryStructuredReview)(repaired.findings, repaired.usedJson)) {
+            core.info("Final review repair: used the corrected answer.");
+            return { content: reply.content, dispatched: true };
+        }
+        core.info("Final review repair: the reply could not be parsed; keeping the original answer.");
+        return { content: answer.content, dispatched: true };
     };
     let stopReason = `reached the ${budgets.maxTurns}-turn limit`;
     while (turns < budgets.maxTurns) {
@@ -442,10 +491,17 @@ async function runAgentReview(options) {
             "Return the final review now as the single JSON object described in the system prompt.",
     });
     const final = await callModel(`Investigation ${stopReason.replace(/^reached/, "hit")} — writing the final review`, "none");
-    if (!final.content.trim()) {
+    let finalContent = final.content;
+    let repaired = false;
+    if (final.content.trim()) {
+        const outcome = await repairFinal(final, turns + 2);
+        finalContent = outcome.content;
+        repaired = outcome.dispatched;
+    }
+    if (!finalContent.trim()) {
         throw new Error("Agent review returned no final answer after the tool budget was used.");
     }
-    return { content: final.content, turns: turns + 1, toolCalls: toolCallCount, compactions };
+    return { content: finalContent, turns: turns + 1 + (repaired ? 1 : 0), toolCalls: toolCallCount, compactions };
 }
 function buildAgentReviewInput(annotatedDiff, changedFiles) {
     const fileList = changedFiles.length > 0 ? changedFiles.map((file) => `- ${file}`).join("\n") : "- (none listed)";
@@ -4744,7 +4800,7 @@ class ReviewParser {
     static parse(rawText) {
         return this.parseDetailed(rawText).findings;
     }
-    static parseDetailed(rawText) {
+    static parseDetailed(rawText, options = {}) {
         const review = {
             summary: "",
             high: [],
@@ -4756,7 +4812,9 @@ class ReviewParser {
         try {
             const jsonReview = this.parseJsonReview(rawText);
             if (jsonReview) {
-                core.info(`Parsed JSON review: ${jsonReview.high.length} high, ${jsonReview.medium.length} medium, ${jsonReview.low.length} low, ${jsonReview.suggestions.length} suggestions`);
+                if (!options.quiet) {
+                    core.info(`Parsed JSON review: ${jsonReview.high.length} high, ${jsonReview.medium.length} medium, ${jsonReview.low.length} low, ${jsonReview.suggestions.length} suggestions`);
+                }
                 return { findings: jsonReview, usedJson: true };
             }
             const markdownReview = this.parseMarkdownReview(rawText, review);
@@ -4765,10 +4823,14 @@ class ReviewParser {
             review.medium = markdownReview.medium;
             review.low = markdownReview.low;
             review.suggestions = markdownReview.suggestions;
-            core.info(`Parsed: ${review.high.length} high, ${review.medium.length} medium, ${review.low.length} low, ${review.suggestions.length} suggestions`);
+            if (!options.quiet) {
+                core.info(`Parsed: ${review.high.length} high, ${review.medium.length} medium, ${review.low.length} low, ${review.suggestions.length} suggestions`);
+            }
         }
         catch (error) {
-            core.warning(`Failed to parse structured review: ${error}. Treating entire response as raw summary.`);
+            if (!options.quiet) {
+                core.warning(`Failed to parse structured review: ${error}. Treating entire response as raw summary.`);
+            }
             review.summary = rawText;
         }
         return { findings: review, usedJson: false };
@@ -5182,6 +5244,16 @@ class ReviewToolbox {
     async readFile(args) {
         const relInput = requireString(args.path, "path");
         const { absolute, relative } = await this.resolve(relInput);
+        // Resolve first so a missing or outside path keeps its own error. The requested form keeps
+        // spellings such as `dist/x` that a symlink may redirect away from the exclusion.
+        const requested = this.toRelative(path.resolve(this.root, cleanPathInput(relInput) || "."));
+        const requestedPattern = matchedSkipPattern(requested);
+        const pattern = requestedPattern ?? matchedSkipPattern(relative);
+        if (pattern) {
+            const skipped = requestedPattern ? requested : relative;
+            return (`${skipped} was not read: it matches Robin's built-in review exclusion "${pattern}" ` +
+                `for lockfiles, build output, vendored and minified files. ${await skipNoticeEnding(absolute, pattern)}`);
+        }
         const stat = await fs_1.promises.stat(absolute);
         if (stat.isDirectory()) {
             throw new Error(`${relative} is a directory; use list_files instead.`);
@@ -5344,7 +5416,7 @@ class ReviewToolbox {
     }
     /** Resolves a model-supplied path and rejects anything (including symlink targets) outside the root. */
     async resolve(input) {
-        const cleaned = input.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
+        const cleaned = cleanPathInput(input);
         const candidate = path.resolve(this.root, cleaned || ".");
         if (!this.isInside(candidate)) {
             throw new Error(`path "${input}" is outside the repository.`);
@@ -5378,6 +5450,43 @@ exports.ReviewToolbox = ReviewToolbox;
 function matchesGlob(glob, relative) {
     const target = glob.includes("/") ? relative : relative.slice(relative.lastIndexOf("/") + 1);
     return (0, diff_filter_1.matchPathPattern)(glob, target);
+}
+/** The single lexical normalization used for both resolution and the skip check. */
+function cleanPathInput(input) {
+    return input.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
+}
+/** First built-in exclusion that matches a repository-relative path; the root itself never does. */
+function matchedSkipPattern(relative) {
+    if (relative === ".")
+        return undefined;
+    return diff_filter_1.DEFAULT_SKIP_PATH_PATTERNS.find((pattern) => (0, diff_filter_1.matchPathPattern)(pattern, relative));
+}
+/**
+ * Last sentence of the skip notice. `grep` walks a file you name directly, but it skips files
+ * over its size cap without saying so, drops binary files, and only tests the first
+ * `MAX_GREP_LINE_CHARS` characters of each line, so pointing at it is only honest for a
+ * regular, small, text file whose every line it can search whole.
+ */
+async function skipNoticeEnding(absolute, pattern) {
+    const short = "Read the source or manifest instead.";
+    if (pattern === "**/*.min.js" || pattern === "**/*.min.css")
+        return short;
+    try {
+        const stat = await fs_1.promises.stat(absolute);
+        if (!stat.isFile() || stat.size > MAX_GREP_FILE_BYTES)
+            return short;
+        // Mirror `grep` exactly: it reads the same way and drops a binary file, or one whose lines
+        // it would only test in part.
+        const buffer = await fs_1.promises.readFile(absolute);
+        if (isBinary(buffer))
+            return short;
+        if (buffer.toString("utf8").split("\n").some((line) => line.length > MAX_GREP_LINE_CHARS))
+            return short;
+    }
+    catch {
+        return short;
+    }
+    return "Read the source or manifest instead, or grep this exact path to check specific lines.";
 }
 function isBinary(buffer) {
     return buffer.subarray(0, 8000).includes(0);
