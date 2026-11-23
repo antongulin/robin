@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.13.5](https://github.com/antongulin/robin/compare/v2.13.4...v2.13.5) (2026-11-23)
+
+
+### Bug Fixes
+
+* **agent:** skip excluded reads and repair an unparseable final answer ([#144](https://github.com/antongulin/robin/issues/144)) ([565c743](https://github.com/antongulin/robin/commit/565c74348df2d5b5e690b076b2f4cc811222ad1d)), closes [#143](https://github.com/antongulin/robin/issues/143)
+* **llm:** log stalled provider attempts and name reasoning-exhausted output ([#146](https://github.com/antongulin/robin/issues/146)) ([297b52d](https://github.com/antongulin/robin/commit/297b52d26dddfa38d10425687e9c7de99224806d)), closes [#141](https://github.com/antongulin/robin/issues/141) [#142](https://github.com/antongulin/robin/issues/142)
+
+
+### Documentation
+
+* **agent:** note the bundle is CI-checked and refine the repair wording ([666f881](https://github.com/antongulin/robin/commit/666f881d165cf2c21c5ea3249a0d65a23ca0ee0f))
+* describe what llm-timeout-ms bounds in the input and troubleshooting tables ([76f7e93](https://github.com/antongulin/robin/commit/76f7e9301d8e820f19942f037c74529fd7ad4f3b))
+
 ## [2.13.4](https://github.com/antongulin/robin/compare/v2.13.3...v2.13.4) (2026-11-22)
 
 
