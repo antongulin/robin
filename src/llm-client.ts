@@ -62,7 +62,7 @@ function textFromContentParts(content: unknown): string | undefined {
 export type ChatMessage =
   | Exclude<OpenAI.Chat.Completions.ChatCompletionMessageParam, OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam>
   | (OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam & {
-      /** Private provider metadata, replayed only on its original assistant tool turn. */
+      /** Private provider metadata, replayed unchanged only on its own assistant message. */
       reasoning_content?: string;
     });
 export type ToolDefinition = OpenAI.Chat.Completions.ChatCompletionTool;

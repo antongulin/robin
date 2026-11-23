@@ -77,10 +77,6 @@ describe("read_file paths that do not match a built-in exclusion", () => {
 
     symlinkSync(join(base, "secret.txt"), join(root, "src", "link.txt"));
     expect(await read("src/link.txt")).toBe('Error: path "src/link.txt" resolves outside the repository.');
-    symlinkSync("dist/index.js", join(root, "link.js"));
-    expect(await read("link.js")).toBe(
-      "File: dist/index.js (lines 1-2 of 2)\n    1  // bundle\n    2  // GREP_MARKER in a bundle"
-    );
   });
 });
 
@@ -172,5 +168,70 @@ describe("tool definitions and status text", () => {
         },
       ])
     );
+  });
+});
+
+const notice = (path: string, pattern: string) =>
+  `${path} was not read: it matches Robin's built-in review exclusion "${pattern}" ` +
+  "for lockfiles, build output, vendored and minified files. Read the source files instead.";
+
+describe("read_file paths that match a built-in exclusion", () => {
+  it("RS1 returns the exact notice for every excluded path class", async () => {
+    const cases: Array<[string, string]> = [
+      ["dist/index.js", "**/dist/**"],
+      ["pkg/dist/x.js", "**/dist/**"],
+      ["package-lock.json", "**/package-lock.json"],
+      ["a/yarn.lock", "**/yarn.lock"],
+      ["pnpm-lock.yaml", "**/pnpm-lock.yaml"],
+      ["Cargo.lock", "**/Cargo.lock"],
+      ["Gemfile.lock", "**/Gemfile.lock"],
+      ["poetry.lock", "**/poetry.lock"],
+      ["node_modules/p/i.js", "**/node_modules/**"],
+      ["app.min.js", "**/*.min.js"],
+      ["style.min.css", "**/*.min.css"],
+    ];
+    for (const [path, pattern] of cases) {
+      expect(await read(path)).toBe(notice(path, pattern));
+    }
+    expect(await read("dist/index.js", { start_line: 1, end_line: 1 })).toBe(notice("dist/index.js", "**/dist/**"));
+    expect(toolbox.describe("read_file", JSON.stringify({ path: "dist/index.js" }))).toBe(
+      "Reading `dist/index.js`"
+    );
+  });
+
+  it("RS2 normalizes spellings to the same notice", async () => {
+    const expected = notice("dist/index.js", "**/dist/**");
+    for (const path of ["./dist/index.js", "/dist/index.js", "dist\\index.js", "  dist/index.js  ", "src/../dist/index.js"]) {
+      expect(await read(path)).toBe(expected);
+    }
+  });
+
+  it("RS3 covers directories and keeps the missing-path error", async () => {
+    expect(await read("dist")).toBe(notice("dist", "**/dist/**"));
+    expect(await read("node_modules/")).toBe(notice("node_modules", "**/node_modules/**"));
+    expect(await read("dist/missing.js")).toBe("Error: dist/missing.js does not exist in the repository.");
+  });
+
+  it("RS4 names the path that matched, through symlinks too", async () => {
+    symlinkSync("dist/index.js", join(root, "link.js"));
+    expect(await read("link.js")).toBe(notice("dist/index.js", "**/dist/**"));
+
+    symlinkSync("dist", join(root, "lib"), "dir");
+    expect(await read("lib/index.js")).toBe(notice("dist/index.js", "**/dist/**"));
+
+    symlinkSync(join(base, "secret.txt"), join(root, "dist", "out.js"));
+    expect(await read("dist/out.js")).toBe('Error: path "dist/out.js" resolves outside the repository.');
+
+    rmSync(join(root, "dist"), { recursive: true, force: true });
+    symlinkSync("src/generated", join(root, "dist"), "dir");
+    expect(await read("dist/types.ts")).toBe(notice("dist/types.ts", "**/dist/**"));
+  });
+
+  it("RS8 reads a path a repository might list in skip-paths normally", async () => {
+    expect(await read("src/generated/types.ts")).toBe(
+      "File: src/generated/types.ts (lines 1-1 of 1)\n    1  export type Generated = 1;"
+    );
+    const pinConstructor: new (root: string, maxOutputChars?: number) => ReviewToolbox = ReviewToolbox;
+    expect(new pinConstructor(root)).toBeInstanceOf(ReviewToolbox);
   });
 });
