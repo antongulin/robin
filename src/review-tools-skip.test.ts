@@ -272,6 +272,26 @@ describe("the skip notice's grep advice stays true", () => {
     );
   });
 
+  it("RS16 a single line over grep's per-line cap gets the short ending", async () => {
+    writeFileSync(join(root, "dist", "main.js"), "var a=1;".repeat(300) + "LONG_MARKER_TOKEN");
+    expect(await read("dist/main.js")).toBe(notice("dist/main.js", "**/dist/**", NOTICE_SHORT));
+  });
+
+  it("RS16b the whole file is checked, not only a prefix", async () => {
+    mkdirSync(join(root, "node_modules", "x"), { recursive: true });
+    writeFileSync(join(root, "node_modules", "x", "index.js"), "var x = 1;\n".repeat(1200) + "y".repeat(2100) + "\n");
+    expect(await read("node_modules/x/index.js")).toBe(
+      notice("node_modules/x/index.js", "**/node_modules/**", NOTICE_SHORT)
+    );
+  });
+
+  it("RS16c grep misses a token past its per-line cap", async () => {
+    writeFileSync(join(root, "dist", "main.js"), "var a=1;".repeat(300) + "LONG_MARKER_TOKEN");
+    expect(await toolbox.execute("grep", JSON.stringify({ pattern: "LONG_MARKER_TOKEN", path: "dist/main.js" }))).toBe(
+      "No matches for /LONG_MARKER_TOKEN/."
+    );
+  });
+
   it("RS13 every notice that recommends grep is backed by a real match", async () => {
     const cases: Array<[string, string]> = [
       ["dist/index.js", "GREP_MARKER"],

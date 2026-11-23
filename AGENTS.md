@@ -200,10 +200,11 @@ not-executed results. See
 missing or outside path keeps its own error, then returns a plain notice (no `Error:`
 prefix) when the lexical requested form or the resolved repository-relative path matches a
 built-in `DEFAULT_SKIP_PATH_PATTERNS` exclusion; the notice names the matched path and
-pattern and ends by pointing to the source or manifest, or, for a small, text, unminified
-file `grep` can search, to `grep` with that exact path. `resolve()` shares that lexical
-cleanup and stays byte-identical, `grep` and `list_files` keep their walk-based exclusions,
-and repository `skip-paths` still filters only the diff. After a forced final answer that
+pattern and ends by pointing to the source or manifest, or, for a small text file with no
+line over 2000 characters that `grep` can search, to `grep` with that exact path.
+`resolve()` shares that lexical cleanup and stays byte-identical, `grep` and `list_files`
+keep their walk-based exclusions, and repository `skip-paths` still filters only the diff.
+After a forced final answer that
 has text but that a silent
 `ReviewParser.parseDetailed(content, { quiet: true })` plus `shouldRetryStructuredReview`
 rejects, `repairFinal` sends exactly one extra `toolChoice: "none"` request in the same

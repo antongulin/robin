@@ -5463,8 +5463,9 @@ function matchedSkipPattern(relative) {
 }
 /**
  * Last sentence of the skip notice. `grep` walks a file you name directly, but it skips files
- * over its size cap without saying so, drops binary files, and only tests the start of each
- * line, so pointing at it is only honest for a regular, small, text, unminified file.
+ * over its size cap without saying so, drops binary files, and only tests the first
+ * `MAX_GREP_LINE_CHARS` characters of each line, so pointing at it is only honest for a
+ * regular, small, text file whose every line it can search whole.
  */
 async function skipNoticeEnding(absolute, pattern) {
     const short = "Read the source or manifest instead.";
@@ -5474,18 +5475,13 @@ async function skipNoticeEnding(absolute, pattern) {
         const stat = await fs_1.promises.stat(absolute);
         if (!stat.isFile() || stat.size > MAX_GREP_FILE_BYTES)
             return short;
-        // `grep` also drops binary files, so check the same 8000-byte window it sniffs. Only that
-        // window is read, never the whole file.
-        const handle = await fs_1.promises.open(absolute, "r");
-        try {
-            const head = Buffer.alloc(8000);
-            const { bytesRead } = await handle.read(head, 0, head.length, 0);
-            if (isBinary(head.subarray(0, bytesRead)))
-                return short;
-        }
-        finally {
-            await handle.close();
-        }
+        // Mirror `grep` exactly: it reads the same way and drops a binary file, or one whose lines
+        // it would only test in part.
+        const buffer = await fs_1.promises.readFile(absolute);
+        if (isBinary(buffer))
+            return short;
+        if (buffer.toString("utf8").split("\n").some((line) => line.length > MAX_GREP_LINE_CHARS))
+            return short;
     }
     catch {
         return short;

@@ -411,10 +411,11 @@ scope to match the model you run; compaction cannot guarantee a fit.
    short notice instead of the file for a path that matches one of Robin's built-in
    exclusions (lockfiles, `dist/`, `node_modules/`, `*.min.js`, `*.min.css`); the notice
    points to the source or manifest and, for a file `grep` can search (a text file up to
-   2 MB, not minified), to `grep` with that exact path. A missing or outside path keeps
-   its own error. `grep` and recursive `list_files` already leave those paths out when they
-   walk a directory; `grep` still searches a file you name in its `path`. `skip-paths` still
-   filters only the diff, so the agent can read a path you list there.
+   2 MB with no line longer than 2000 characters), to `grep` with that exact path. A
+   missing or outside path keeps its own error. `grep` and recursive `list_files` already
+   leave those paths out when they walk a directory; `grep` still searches a file you name
+   in its `path`. `skip-paths` still filters only the diff, so the agent can read a path you
+   list there.
 3. When it has enough context it returns the usual JSON review. Findings can include an
    exact replacement for the affected lines, which Robin posts as a one-click GitHub
    **suggested change** when every line in the range is in the same diff hunk.
