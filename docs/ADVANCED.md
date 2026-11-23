@@ -125,8 +125,8 @@ inputs still defer to repository config.
 and its derived output cap are not applied, while explicit output/character caps still
 apply. There is no automatic disable on provider rejection. Once you set a numeric
 budget, `/summary`, structured retries, outer retries, compatibility rebuilds, compaction
-and forced-final requests all face the same guard. A complete diff-only fallback must fit
-its actual request; Robin never clips the diff.
+and forced-final requests, and final-answer repairs, all face the same guard. A complete
+diff-only fallback must fit its actual request; Robin never clips the diff.
 
 **Limits with the estimate off.** These controls stay in force:
 
@@ -407,7 +407,11 @@ scope to match the model you run; compaction cannot guarantee a fit.
    only read, never executed.
 2. The model gets the line-numbered diff plus three read-only tools: `read_file`, `grep`,
    and `list_files`. It uses them to read full files, find callers of changed functions,
-   and look up definitions before it decides something is a bug.
+   and look up definitions before it decides something is a bug. `read_file` returns a
+   short notice instead of the file for a path that matches one of Robin's built-in
+   exclusions (lockfiles, `dist/`, `node_modules/`, `*.min.js`, `*.min.css`); a missing or
+   outside path keeps its own error. `grep` and `list_files` skip those paths the same way,
+   and `skip-paths` still filters only the diff, so the agent can read a path you list there.
 3. When it has enough context it returns the usual JSON review. Findings can include an
    exact replacement for the affected lines, which Robin posts as a one-click GitHub
    **suggested change** when every line in the range is in the same diff hunk.
@@ -427,6 +431,15 @@ The investigation uses these limits. Match them to your model and workload:
 
 When the turn limit or investigation cutoff is reached, Robin asks the model for its
 final review without tools, provided time remains before the overall deadline.
+
+If that forced final answer has text but Robin cannot turn it into a review — the same
+empty-parse condition that triggers the structured JSON retry in a single-shot review —
+Robin asks once more in the same conversation, without tools, for only the JSON object. A
+parseable reply becomes the review. Any other outcome keeps the original answer and today's
+fallback: an unparseable reply, a provider, budget or context failure, or the deadline. A
+natural finish the model makes on its own is never repaired, and neither is an empty answer.
+The repair counts as one extra agent turn in the stats line and the usage report, is
+reported under the `forced-final` phase, and adds one `Final review repair:` log line.
 
 **Context compaction.** A soft pressure valve targets about 450k UTF-8 bytes of the
 *working history*: everything the investigation added after the system prompt and the
@@ -879,9 +892,10 @@ The request shape depends on `LLM_BASE_URL`:
   parameter reject it, and the fallback below then runs the review without reasoning controls.
 
 If a provider supplies a string `reasoning_content`, Robin preserves it as private metadata
-and replays it unchanged on that assistant's tool turn in later requests. This includes
-streamed string deltas, retained compaction tails, and the final request with tool choice
-`none`. Robin keeps this metadata out of summaries, progress updates, logs, and visible
+and replays it unchanged on that assistant's own message in later requests. This includes
+streamed string deltas, retained compaction tails, the final request with tool choice
+`none`, and the copy of a forced final answer that the repair request sends back. Robin
+keeps this metadata out of summaries, progress updates, logs, and visible
 reviews; only `content` supplies review text. When any provider returns `content` as an
 array of parts, Robin uses the parts with type `text`, and only when the reply would
 otherwise be empty; thinking parts are never published or kept. Provider errors can echo
