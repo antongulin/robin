@@ -310,7 +310,7 @@ Available on the [direct action](../action.yml) and the [reusable workflow](../.
 | `estimated-request-token-budget` | empty (base config, then `off`) | Estimated input + sent output cap + safety per request when numeric; `off` (default) disables this guard and its derived output cap. See [request budgets](#estimated-request-budget) |
 | `max-output-tokens` | empty | Positive safe integer; unset with enabled budget sends a scaled cap up to `32000`; unset with guard off uses provider/model default |
 | `reasoning-effort` | empty (defer to repo config; unset anywhere sends nothing) | Provider reasoning effort, provider-dependent (for example `low`, `medium`, `high`). Empty defers to `.github/robin.yml`; if that is also unset, no reasoning control is sent and the provider/model default applies. `off` also sends no reasoning configuration |
-| `llm-timeout-ms` | `600000` | LLM timeout (10 minutes) |
+| `llm-timeout-ms` | `600000` | Per-attempt wait for the provider's response to start (10 minutes). See [LLM timeout and wait logging](#llm-timeout-and-wait-logging) |
 | `llm-temperature` | `0.1` | Sampling temperature (0–2). Raise only if your model rejects the default — some models accept a single fixed value (Kimi requires `1`) |
 | `max-comments` | `15` | Max inline comments |
 | `review-on-synchronize` | `false` | Reusable workflow / action input. When the workflow triggers on `synchronize`, set `true` to review every push to an existing PR; default `false` skips pushes and re-reviews with `/review` |
@@ -783,6 +783,8 @@ jobs:
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
 ```
 
+### LLM timeout and wait logging
+
 If you raise `llm-timeout-ms` above 10 minutes, also raise the job `timeout-minutes`.
 
 `llm-timeout-ms` bounds the wait for the provider's response to start. While an attempt is in
@@ -1136,7 +1138,7 @@ No daily quota from this action. Real limits:
 | `OpenRouter stall: no first response` | Auto-router hung, or failed before its first chunk, before picking a provider | Robin waits up to 45 s for the first chunk, then retries (up to 5 attempts, waiting 3, 6, 9 and 12 s between them) and the PR status comment updates each attempt. When the underlying failure was a provider 429, the stall text is only the wrapper: the native error is retained and the rate-limit row below applies, except that a permanent quota 429 (such as `insufficient_quota` or OpenRouter's free daily quota, `free-models-per-day`) keeps the ordinary 5 attempts |
 | Job cancelled / 45 min with no review | Hung LLM or concurrency cancel while waiting | Status comment should say interrupted — comment `/robin` again; pin `@v2.0.4`+ for stall detect |
 | `404 Provider returned error` | OpenRouter free route missed one provider | Keep `LLM_MODEL=openrouter/free` — action retries (5×) with provider fallbacks; no secret updates when models rotate |
-| `LLM attempt N/M timed out after S s` | Large PR or slow free model: the attempt reached its limit before the provider's response started, or the response stalled | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 min per attempt) |
+| `LLM attempt N/M timed out after S s` | Large PR or slow free model: the attempt reached its limit before the provider's response started, or the response stalled | Lower `max-diff-size` or raise `llm-timeout-ms` (router models default to 2 minutes). It bounds only the wait for the response to start; a response that started and then stalled ends at the connection idle limit described in [LLM timeout and wait logging](#llm-timeout-and-wait-logging) |
 | `LLM attempt N/M: still waiting for provider` repeats for many minutes | The provider accepted the request but has not answered | The attempt ends at the timeout above or at the agent deadline. Check the provider's status. Large generated or minified files in the diff make turns slower — exclude them with `skip-paths` |
 | `Provider rate limit exceeded (HTTP 429)` | Provider capacity burst, often 10–30 s | Robin retries up to 6 attempts with 5/10/20/40/60 s waits and honors a longer `Retry-After` (capped at 60 s; a shorter hint never shortens the schedule). Router models (`openrouter/free`, `openrouter/auto`) surface a 429 as `OpenRouter stall: no first response ...` and still get this schedule. A permanent 429 such as `insufficient_quota`, `billing_hard_limit_reached`, or OpenRouter’s free daily quota (`free-models-per-day`) keeps the ordinary attempt count instead (3 for a fixed model, 5 for OpenRouter router models), with linear waits and no `Retry-After`. OpenRouter’s per-minute free limit keeps the rate-limit schedule. If a burst still fails, run `/robin` again after it passes. A permanent quota 429 will not clear by retrying: wait for the quota to reset (OpenRouter's free daily quota resets daily) or add credits or fix billing. |
 | `temperature` / `max_tokens` / `response_format` rejected | Newer model refuses an optional parameter (OpenAI reasoning models, Kimi) | Action warns, retries once with the parameter renamed or omitted (`max_tokens` ↔ `max_completion_tokens`, `temperature` dropped), and keeps that shape for the run. If the endpoint rejects both token-cap spellings, the provider error surfaces instead of running uncapped. Set `llm-temperature` only to pin a specific value (Kimi: `1`) |
