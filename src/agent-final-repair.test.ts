@@ -215,7 +215,7 @@ describe("FR1/FR2 a parseable final answer sends today's requests and log lines"
   });
 });
 
-describe("FR3/FR3b the repair only covers a forced final that a robot cannot parse", () => {
+describe("FR3/FR3b the repair only covers a forced final that the parser cannot read", () => {
   it.each(["oops", "no issues"])("FR3 natural finish stays unchanged for %j", async (answer) => {
     const scenario = harness([{ content: answer }]);
     const result = await scenario.run();
@@ -332,6 +332,11 @@ describe("FR4/FR5 the repair request inside the same conversation", () => {
     const result = await scenario.run();
 
     expect(scenario.calls).toHaveLength(3);
+    // The requests before the repair are byte-identical to today's (FR2a goldens).
+    expect(scenario.calls.slice(0, 2).map((call) => digest(call.messages))).toEqual([
+      "60f8efb7a41206b797298a43aab56a78648b22300e4b1202c456c2b157525ebf",
+      "45951c2014a98d62b5bffef12571f26fa986e8cead553ea8eeb690475f1790b8",
+    ]);
     const forced = scenario.calls[1];
     const repair = scenario.calls[2];
     expect(repair.toolChoice).toBe("none");

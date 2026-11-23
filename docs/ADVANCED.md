@@ -410,8 +410,9 @@ scope to match the model you run; compaction cannot guarantee a fit.
    and look up definitions before it decides something is a bug. `read_file` returns a
    short notice instead of the file for a path that matches one of Robin's built-in
    exclusions (lockfiles, `dist/`, `node_modules/`, `*.min.js`, `*.min.css`); a missing or
-   outside path keeps its own error. `grep` and `list_files` skip those paths the same way,
-   and `skip-paths` still filters only the diff, so the agent can read a path you list there.
+   outside path keeps its own error. `grep` and recursive `list_files` already leave those
+   paths out. `skip-paths` still filters only the diff, so the agent can read a path you list
+   there.
 3. When it has enough context it returns the usual JSON review. Findings can include an
    exact replacement for the affected lines, which Robin posts as a one-click GitHub
    **suggested change** when every line in the range is in the same diff hunk.
@@ -432,11 +433,11 @@ The investigation uses these limits. Match them to your model and workload:
 When the turn limit or investigation cutoff is reached, Robin asks the model for its
 final review without tools, provided time remains before the overall deadline.
 
-If that forced final answer has text but Robin cannot turn it into a review — the same
-empty-parse condition that triggers the structured JSON retry in a single-shot review —
-Robin asks once more in the same conversation, without tools, for only the JSON object. A
-parseable reply becomes the review. Any other outcome keeps the original answer and today's
-fallback: an unparseable reply, a provider, budget or context failure, or the deadline. A
+If that forced final answer has text but Robin cannot turn it into a review (the same
+condition that triggers the structured JSON retry), Robin asks once more in the same
+conversation, without tools, for only the JSON object. A parseable reply becomes the review.
+After any other outcome (an unparseable reply, a provider, budget or context failure, or the
+deadline) Robin keeps the original answer, and the structured JSON retry runs as before. A
 natural finish the model makes on its own is never repaired, and neither is an empty answer.
 The repair counts as one extra agent turn in the stats line and the usage report, is
 reported under the `forced-final` phase, and adds one `Final review repair:` log line.

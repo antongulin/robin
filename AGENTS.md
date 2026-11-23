@@ -226,8 +226,9 @@ input blank so the public `ollama` fallback sent to the SDK does not suppress re
 
 **Private assistant replay.** Preserve a provider-supplied string `reasoning_content`
 as private completion metadata, including empty strings and streamed string deltas.
-Replay it unchanged only on its own assistant message: tool turns, retained compaction
-tails, forced-final answers, and the repair request's copy of a final answer. Omit absent
+Replay it unchanged only on its own assistant message: tool turns (including retained
+compaction tails and forced-final requests) and, in the final-answer repair request, the
+forced final answer that request sends back. Omit absent
 or invalid values. Keep it out of summary prompts, progress/status updates, Robin logs, and
 visible reviews; use `content` for review text. Provider error bodies can echo credentials
 or replay data: retain native causes internally for classification, but use controlled
