@@ -260,6 +260,18 @@ describe("the skip notice's grep advice stays true", () => {
     expect(await read("dist/big.js")).toBe(notice("dist/big.js", "**/dist/**", NOTICE_SHORT));
   });
 
+  it("RS15 a binary file under an excluded path gets the short ending", async () => {
+    writeFileSync(join(root, "dist", "logo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]));
+    expect(await read("dist/logo.png")).toBe(notice("dist/logo.png", "**/dist/**", NOTICE_SHORT));
+  });
+
+  it("RS15b grep reports no match for a binary file named in path", async () => {
+    writeFileSync(join(root, "dist", "logo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]));
+    expect(await toolbox.execute("grep", JSON.stringify({ pattern: "PNG", path: "dist/logo.png" }))).toBe(
+      "No matches for /PNG/."
+    );
+  });
+
   it("RS13 every notice that recommends grep is backed by a real match", async () => {
     const cases: Array<[string, string]> = [
       ["dist/index.js", "GREP_MARKER"],
